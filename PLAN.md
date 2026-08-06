@@ -238,7 +238,12 @@ Ami elkészült / döntések:
 - [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás).
 - [x] `discover` route hibakezelése: a catch-ág nem `return`-ölt, csak konstruált egy eldobott `Response`-t — most logol, és a hibás oldal egyszerűen kimarad az eredményből.
 - [ ] `entrypoint.sh` dev módjának tisztázása — jelenleg nem indítja a Next dev szervert, csak a Prisma Studio-t (a dev szervert kézzel indítod a konténerben).
-- [ ] Git repo inicializálása (jelenleg nincs `.git`) + megerősíteni, hogy a `.env` (valós qBittorrent/Jackett credentialokkal) biztosan `.gitignore`-olt, mielőtt bármilyen remote-ra kerülne.
+- [x] **Git repo** — `git init -b main`, első commit 76 fájllal (8094 sor). A `.gitignore` javítva: a generált Prisma kliens `prisma/generated` alatt van, de a `.gitignore` a `/src/generated/prisma` halott útvonalat zárta ki, így 4,9 MB generált kód került volna be. Bekerült még a `/.claude/settings.local.json` és a `/.verify-*.ts` is.
+  - Commit előtt ellenőrizve: a `.env`, `node_modules`, `.next`, `prisma/generated` egyike sincs staged-elve, és a `.env` egyetlen valós értéke (TMDB / Jackett / qBittorrent / DB) sem fordul elő a commitolt 76 fájl egyikében sem.
+  - **Remote nincs** és push sem történt — az a te döntésed. Előtte érdemes újra lefuttatni ugyanezt az ellenőrzést.
+- [x] **`.env.example`** — mind a ~40 env-változó értékek nélkül, kommentelve. A `.env` gitignore-olt, enélkül egy friss klón nem lenne indítható.
+- [ ] **Duplikált `prisma.config.ts`**: van egy a repo gyökerében és egy a `prisma/` alatt is. Tisztázni kell, melyik az élő (a `package.json` / Prisma CLI melyiket olvassa), a másikat törölni.
+- [ ] **CRLF sorvégek**: a `.env` (és valószínűleg több fájl) Windows-os sorvéggel van mentve. Az appot nem zavarja, de shell-scriptnél (`entrypoint.sh`) hibát okozhat — érdemes egy `.gitattributes` (`* text=auto eol=lf`).
 - [ ] **Lint**: `bun run lint` az egész projekten hibára fut (~60 hiba, döntően `prefer-const` és `no-explicit-any`) — vagy lazítani kell a szabályokat az `eslint.config.mjs`-ben, vagy egyszer végigmenni a kódon. A `tsc --noEmit` tiszta.
 - [ ] **Letöltési mappák**: minden a `TORRENT_CATEGORY` (`aioseerr`) kategóriába kerül, film/sorozat szétválasztás és külön save path nélkül. Terv: külön kategória vagy `savepath` filmre és sorozatra (a qBittorrent `add` hívás már fogadja).
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
@@ -259,7 +264,7 @@ Ami elkészült / döntések:
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot:** Fázis 1, 3, 2, 4 és a Fázis 6 nagy része kész (a nyelvi preferenciával együtt). A következő logikus lépés a Fázis 5 (discover bővítés) vagy a Fázis 7-ből a git repo + `entrypoint.sh`.
+**Állapot:** Fázis 1, 3, 2, 4 és a Fázis 6 nagy része kész (a nyelvi preferenciával együtt), a git repo megvan. A következő logikus lépés a Fázis 5 (discover bővítés) vagy a Fázis 7-ből az `entrypoint.sh` + lint.
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **Dev szerver újraindítása** — az `src/instrumentation.ts` a jelenlegi futó szerver indulása után jött létre, tehát a scheduler még nem fut benne. Indulás után ez a sor jelzi, hogy jó: `[scheduler] [dry-run] started, scanning every 15 minutes`.
