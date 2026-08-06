@@ -18,10 +18,15 @@ export type MediaMetadata = {
     year: string | null;
 };
 
-export type MediaSearchPage = {
+export type MediaPage = {
     results: Media[];
     page: number;
     totalPages: number;
+};
+
+export type MediaGenre = {
+    id: number;
+    name: string;
 };
 
 export type MediaEpisode = {

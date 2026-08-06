@@ -1,4 +1,4 @@
-import { Media, MediaMetadata, MediaSearchPage, MediaSeason } from "@/types/media";
+import { Media, MediaGenre, MediaMetadata, MediaPage, MediaSeason } from "@/types/media";
 import axios from "axios";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
@@ -14,7 +14,15 @@ const globalForTmdb = global as unknown as { tmdbCache: Map<string, CacheEntry> 
 const tmdbCache = globalForTmdb.tmdbCache || new Map<string, CacheEntry>();
 globalForTmdb.tmdbCache = tmdbCache;
 
-const cached = async <T>(key: string, loader: () => Promise<T>, isEmpty: (value: T) => boolean): Promise<T> => {
+// discover rows move faster than metadata, so they get their own, shorter ttl
+const DISCOVER_CACHE_TTL_MS = Number(process.env.DISCOVER_CACHE_TTL_MINUTES || 60) * 60 * 1000;
+
+const cached = async <T>(
+    key: string,
+    loader: () => Promise<T>,
+    isEmpty: (value: T) => boolean,
+    ttl: number = CACHE_TTL_MS
+): Promise<T> => {
     const hit = tmdbCache.get(key);
 
     if (hit && hit.expiresAt > Date.now()) {
@@ -25,7 +33,7 @@ const cached = async <T>(key: string, loader: () => Promise<T>, isEmpty: (value:
 
     // never cache a failed lookup, otherwise a TMDB outage sticks
     if (! isEmpty(value)) {
-        tmdbCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+        tmdbCache.set(key, { value, expiresAt: Date.now() + ttl });
     }
 
     return value;
@@ -96,7 +104,7 @@ export async function getMediaMetadata(type: string, id: number): Promise<MediaM
  * Multi search, people filtered out. Not cached: a title that has just been added
  * to TMDB should show up right away.
  */
-export async function searchMedia(query: string, page: number): Promise<MediaSearchPage> {
+export async function searchMedia(query: string, page: number): Promise<MediaPage> {
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/search/multi`, {
             params: {
@@ -123,6 +131,103 @@ export async function searchMedia(query: string, page: number): Promise<MediaSea
     }
 
     return { results: [], page, totalPages: 0 };
+}
+
+const CATEGORIES: Record<string, string[]> = {
+    all: [ "trending" ],
+    movie: [ "trending", "popular", "top_rated", "now_playing", "upcoming" ],
+    tv: [ "trending", "popular", "top_rated", "airing_today", "on_the_air" ]
+};
+
+export const discoverCategories = (type: string): string[] => CATEGORIES[type] || CATEGORIES.all;
+
+const discoverPath = (category: string, type: string): string | null => {
+    if (category === "trending") {
+        return `/trending/${ type }/day`;
+    }
+
+    return isMediaType(type) && discoverCategories(type).includes(category) ? `/${ type }/${ category }` : null;
+};
+
+export type DiscoverOptions = {
+    type: string;
+    category: string;
+    page: number;
+    genre?: string | null;
+};
+
+export async function fetchDiscoverPage({ type, category, page, genre }: DiscoverOptions): Promise<MediaPage> {
+    // a genre filter is a different endpoint, and tmdb genre ids differ per type
+    const byGenre = !! genre && isMediaType(type);
+    const path = byGenre ? `/discover/${ type }` : discoverPath(category, type);
+
+    if (! path) {
+        return { results: [], page, totalPages: 0 };
+    }
+
+    try {
+        const res = await axios.get(`${ TMDB_BASE_URL }${ path }`, {
+            params: {
+                api_key: process.env.TMDB_API_KEY,
+                language: TMDB_LANGUAGE,
+                page,
+                ...(byGenre ? { with_genres: genre, sort_by: "popularity.desc", include_adult: false } : {})
+            }
+        });
+
+        // only the trending endpoints report a media_type per item
+        const results: Media[] = (res.data.results || [])
+            .map((v: any) => {
+                if (isMediaType(v.media_type)) {
+                    return toMedia(v, v.media_type);
+                }
+
+                return isMediaType(type) ? toMedia(v, type) : null;
+            })
+            .filter(Boolean);
+
+        return { results, page: res.data.page || page, totalPages: res.data.total_pages || 0 };
+
+    } catch(err) {
+        console.error(err);
+    }
+
+    return { results: [], page, totalPages: 0 };
+}
+
+export async function getDiscoverPage(options: DiscoverOptions): Promise<MediaPage> {
+    return await cached(
+        `discover:${ options.type }:${ options.category }:${ options.genre || "" }:${ options.page }`,
+        () => fetchDiscoverPage(options),
+        (value) => value.results.length === 0,
+        DISCOVER_CACHE_TTL_MS
+    );
+}
+
+export async function fetchGenres(type: string): Promise<MediaGenre[]> {
+    if (! isMediaType(type)) {
+        return [];
+    }
+
+    try {
+        const res = await axios.get(`${ TMDB_BASE_URL }/genre/${ type }/list`, {
+            params: {
+                api_key: process.env.TMDB_API_KEY,
+                language: TMDB_LANGUAGE
+            }
+        });
+
+        return (res.data.genres || []).map((v: any) => ({ id: v.id, name: v.name }));
+
+    } catch(err) {
+        console.error(err);
+    }
+
+    return [];
+}
+
+export async function getGenres(type: string): Promise<MediaGenre[]> {
+    return await cached(`genres:${ type }`, () => fetchGenres(type), (value) => value.length === 0);
 }
 
 export async function fetchImdbId(type: string, id: number): Promise<string | null> {

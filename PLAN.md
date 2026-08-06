@@ -214,10 +214,17 @@ Ami elkészült / döntések:
 - [x] Elhalt kód eltávolítva: `SearchFormContext` (a törött `submit` listener miatt létezett) és a discover oldal üres „Search results" ága.
 - [ ] *Opcionális:* dropdown gyors-előnézet a keresősáv alatt. Szándékosan kimaradt — a `MediaCard` context menüje nem férne el benne, és a teljes oldal ugyanazt adja.
 
-### Fázis 5 — Discover bővítése
-- [ ] Több sáv: Trending, Popular, Top Rated, Upcoming (film) / Airing Today, On The Air (sorozat) — Overseerr-szerű főoldal.
-- [ ] Genre-szűrők.
-- [ ] Végtelen scroll / lapozás a fix 3-oldal-előretöltés helyett.
+### Fázis 5 — Discover bővítése ✅
+- [x] **Több sáv, oldalanként külön kategóriákkal.** A régi működés 3 oldalnyi *ugyanolyan* trending listát töltött be három sorba; most minden sor másik TMDB végpont.
+  - `/` → Trending today (film+sorozat vegyesen), Popular movies, Popular series, Upcoming movies
+  - `/movies` → Trending, Popular, Now playing, Upcoming, Top rated
+  - `/series` → Trending, Popular, Airing today, On the air, Top rated
+- [x] **Genre-szűrők** a `/movies` és `/series` oldalon (vízszintesen görgethető chipek). A `/`-on szándékosan **nincs**: a TMDB genre id-k típusonként eltérnek (film `28:Action`, sorozat `10759:Action & Adventure`), egy közös lista hazugság lenne. Genre kiválasztásakor a sávok helyett egy szűrt rács jön.
+- [x] **Végtelen scroll** a genre-szűrt rácson (`IntersectionObserver`, 400px `rootMargin`), duplikátum-szűréssel: a TMDB ugyanazt a tételt visszaadhatja két oldalon is, ha közben változik a népszerűségi sorrend.
+- [x] `GET /api/discover?type&category&genre&page` — a régi „3 oldal egyben" válasz helyett egy lapnyi eredmény + `totalPages`. Érvénytelen type/category kombó (`tv/upcoming`, `all/popular`) üres listát ad, a sor egyszerűen nem jelenik meg.
+- [x] `GET /api/genres?type` — TMDB genre lista, cache-elve.
+- [x] Ismeretlen útvonal (`/valami`) mostantól **404** — eddig a discover oldalt rajzolta ki bármilyen egyszegmenses URL-re.
+- [x] Külön, rövidebb cache a discover soroknak (`DISCOVER_CACHE_TTL_MINUTES`, default 60) — a 12 órás metaadat-TTL a trendinghez túl hosszú.
 
 ### Fázis 6 — Torrent-kiválasztás finomítása
 - [x] Konfigurálható felbontás-prioritás, kodek-preferencia, indexer-prioritás, méret-küszöbök, kizáró kulcsszavak (env-ben; DB-s Settings a Fázis 8-ban).
@@ -264,7 +271,7 @@ Ami elkészült / döntések:
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot:** Fázis 1, 3, 2, 4 és a Fázis 6 nagy része kész (a nyelvi preferenciával együtt), a git repo megvan. A következő logikus lépés a Fázis 5 (discover bővítés) vagy a Fázis 7-ből az `entrypoint.sh` + lint.
+**Állapot:** Fázis 1–5 kész, a Fázis 6 nagy része is (a nyelvi preferenciával együtt), a git repo megvan. Ami maradt: a Fázis 6 négy nyitott finomítása (több évadot fedő pack, több-epizódos átfedés, pack méret-plafon, stall-kezelés), a Fázis 7 üzemeltetési tételei (`entrypoint.sh`, lint, letöltési mappák, seedelés, duplikált `prisma.config.ts`, `.gitattributes`), és a teljes Fázis 8.
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **Dev szerver újraindítása** — az `src/instrumentation.ts` a jelenlegi futó szerver indulása után jött létre, tehát a scheduler még nem fut benne. Indulás után ez a sor jelzi, hogy jó: `[scheduler] [dry-run] started, scanning every 15 minutes`.
@@ -297,7 +304,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `SEARCH_BACKOFF_MINUTES`, `MAX_SEARCH_ATTEMPTS`, `PACK_AFTER_ATTEMPTS`, `SCAN_DRY_RUN`, `SCAN_DISABLED`.
+Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `SEARCH_BACKOFF_MINUTES`, `MAX_SEARCH_ATTEMPTS`, `PACK_AFTER_ATTEMPTS`, `SCAN_DRY_RUN`, `SCAN_DISABLED`.
 
 **Nyelv:** a kód, a kommentek és a felület angol. A TMDB metaadat is angolul jön (`TMDB_LANGUAGE`, default `en-US`) — `hu-HU`-ra állítva visszakapható a magyar cím/leírás anélkül, hogy a felület nyelve változna. Ez a terv-dokumentum marad magyar.
 
@@ -318,12 +325,15 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove) |
 | [src/components/searchbar.tsx](src/components/searchbar.tsx) | debounce-olt keresősáv, `/search?q=…` navigációval |
 | [src/app/search/page.tsx](src/app/search/page.tsx) | keresési találatok `MediaCard` griddel + lapozás |
+| [src/components/media-row.tsx](src/components/media-row.tsx) | egy discover kategória vízszintesen görgethető sorként |
+| [src/components/media-grid.tsx](src/components/media-grid.tsx) | lapozó rács végtelen scrollal (genre-szűrt discover) |
 
 ### API végpontok
 
 | Végpont | Leírás |
 |---|---|
-| `GET /api/discover?type&time_window` | TMDB trending, 3 oldal |
+| `GET /api/discover?type&category&genre&page` | TMDB discover: trending / popular / top_rated / upcoming / now_playing / airing_today / on_the_air, vagy genre-szűrt lista |
+| `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
 | `GET /api/details?type&id` | metaadat + tv-nél évadlista |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
 | `GET /api/watchlist` | dúsított lista (TMDB metaadattal) |
