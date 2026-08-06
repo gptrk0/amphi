@@ -277,10 +277,40 @@ Amit ebből átvettem:
 - [ ] Értesítések (böngésző push / Telegram / Discord webhook), amikor egy watchlist-elem letöltésre készen áll.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
-- [ ] **Letöltés-folyamat a felületen**: a badge ma csak `Downloading`-ot mutat, százalékot nem. A qBittorrent `progress` már megvan a syncben, csak nincs eltárolva/kiadva a UI-nak.
 - [ ] **Epizód-szintű nézet**: a részletnézeten évad-szintű összegzés van (`X/Y downloaded`), epizódonkénti lista/állapot nincs.
 - [ ] **Évad-monitorozás kézi váltása a felületen** (a `PATCH` API megvan, csak nincs hozzá kontroll a checkboxos átalakítás után).
 - [ ] **`Stop watching` gomb** a részletnézeten: most a teljes watchlist-sort törli (a letöltés-nyilvántartással együtt). Eldöntendő, hogy maradjon-e így, vagy csak a monitorozást kapcsolja ki.
+
+#### Táblázatos watchlist és downloads nézet (2026-08-06-i kérés)
+
+A `/watchlist` és a `/watchlist/downloaded` ma ugyanaz a poszter-rács ([src/components/watchlist-grid.tsx](src/components/watchlist-grid.tsx)), egyetlen státusz-badge-dzsel. Kérés: **mindkettő legyen táblázat**, több információval — mikor lett felvéve, mikor ellenőrizte utoljára az elérhetőséget, letöltés közben hány százalékon áll, stb. (A discover/keresés marad rácsos, ott a poszter a lényeg — a könyvtár-nézetek viszont adatnézetek, mint a Sonarr sorozatlistája.)
+
+**Mi van már meg, csak nincs kiadva a UI-nak** (`WatchlistEntry` / `WatchlistItem` ma ezeket eldobja):
+| Mező | Hol van | Megjegyzés |
+|---|---|---|
+| `addedAt` | már kiadva | csak nincs megjelenítve |
+| `lastCheckedAt` | `Watchlist` és `WatchlistEpisode` oszlop | sorozatnál a max()-ot kell venni az epizódokon |
+| `searchAttempts` | ugyanott | „hányadik próbálkozás / `MAX_SEARCH_ATTEMPTS`" |
+| `updatedAt` | `Watchlist` oszlop | |
+| `torrentHash` | `Watchlist` és `WatchlistEpisode` oszlop | a qBittorrenthez való összekötéshez kell |
+| `airDate` | `WatchlistEpisode` oszlop | „következő epizód dátuma" számolható belőle |
+
+**Amit a qBittorrentből kell élőben olvasni** — a `TorrentStatus` ma csak `hash`, `name`, `progress`, `state`, `tags`, `isComplete`, `isFailed`. A `/torrents/info` válasz ezen felül ad `dlspeed`, `eta`, `size`, `downloaded`, `num_seeds` mezőket is, ezeket a mappelésbe fel kell venni.
+- **A százalékot nem szabad DB-be írni** — másodpercenként változik. A tábla végpontja olvassa be a DB sorokat, és `listManagedTorrents()` hívással, `torrentHash` alapján kösse hozzá az élő állapotot. Egy qBittorrent-hívás az egész táblára.
+- Ha a qBittorrent nem elérhető, a tábla a DB-állapottal jelenjen meg, százalék nélkül (ne dőljön el az oldal).
+
+**Amit sehol nem tárolunk, és el kell dönteni, kell-e** (ez az egyetlen pont, ami sémamódosítást igényelne): a kiválasztott release **neve, mérete, seeder-száma, felbontása, indexere**. Amíg a torrent él a kliensben, a `name` proxyként használható, de egy befejezett/eltávolított letöltésnél elveszik. Ha a `downloaded` oldalon látni akarod, hogy *melyik* release jött le, akkor kell pár oszlop a `Watchlist`/`WatchlistEpisode` mellé (vagy egy külön `Download` tábla).
+
+**Tervezett oszlopok** (`/watchlist`): poszter-bélyeg + cím · típus · státusz · haladás (film: %; sorozat: `X/Y epizód` + %) · felvéve · utoljára ellenőrizve · próbálkozások · műveletek (Details / Stop watching).
+**`/downloaded`**: poszter-bélyeg + cím · típus · epizódszám · elkészült (`updatedAt`) · felvéve · release neve (ha eltároljuk) · műveletek.
+
+**Amit még el kell dönteni:**
+- Rendezhető oszlopok és szűrés státuszra — kliens oldalon elég (a watchlist néhány száz sor), vagy szerveroldali rendezés kell?
+- Poszter-bélyeg legyen-e a sor elején (Sonarr így csinálja), vagy csak szöveg?
+- Mobilon a táblázat összecsukható kártyákká, vagy vízszintes görgetés?
+- Automatikus frissítés letöltés közben (pl. 5 mp-es polling, amíg van `DOWNLOADING` sor), vagy csak kézi frissítés?
+
+**Technikai előfeltételek:** a shadcn `table` komponens még nincs telepítve (`src/components/ui/` alatt nincs `table.tsx`). A `WatchlistGrid` helyére két nézet kell, vagy egy közös `WatchlistTable` `columns` propszal. A százalékhoz a `GET /api/watchlist` válaszát ki kell bővíteni (vagy egy külön `?live=1` kapcsolóval, hogy a discover főoldal személyes sorai ne fizessék meg a qBittorrent-hívást).
 
 ---
 
