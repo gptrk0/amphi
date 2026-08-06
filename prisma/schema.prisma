@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ContentType {
+  MOVIE
+  TV
+}
+
+enum WatchStatus {
+  PENDING
+  SEARCHING
+  DOWNLOADING
+  DOWNLOADED
+  FAILED
+}
+
+// Identifiers and download state only — titles and images always come from TMDB.
+model Watchlist {
+  id        Int         @id @default(autoincrement())
+  tmdbId    Int
+  type      ContentType @default(MOVIE)
+  addedAt   DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // movies only; for TV the state lives on the episodes
+  status         WatchStatus @default(PENDING)
+  torrentHash    String?
+  searchAttempts Int         @default(0)
+  lastCheckedAt  DateTime?
+
+  seasons WatchlistSeason[]
+
+  @@unique([tmdbId, type])
+}
+
+model WatchlistSeason {
+  id           Int       @id @default(autoincrement())
+  watchlistId  Int
+  watchlist    Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  seasonNumber Int
+  monitored    Boolean   @default(true)
+
+  episodes WatchlistEpisode[]
+
+  @@unique([watchlistId, seasonNumber])
+}
+
+model WatchlistEpisode {
+  id            Int             @id @default(autoincrement())
+  seasonId      Int
+  season        WatchlistSeason @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  episodeNumber Int
+  // the scanner decides from this whether it is worth searching yet
+  airDate       DateTime?
+
+  status         WatchStatus @default(PENDING)
+  torrentHash    String?
+  searchAttempts Int         @default(0)
+  lastCheckedAt  DateTime?
+
+  @@unique([seasonId, episodeNumber])
+}
