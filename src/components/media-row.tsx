@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from "react";
-import axios from "axios";
+import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 
 import { MediaCard } from "@/components/media-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -11,33 +11,11 @@ import { Media } from "@/types/media";
 type Props = {
     title: string;
     description?: string;
-    type: string;
-    category: string;
+    href?: string | null;
+    items?: Media[];
 };
 
-export function MediaRow({ title, description, type, category }: Props) {
-    const [ items, setItems ] = useState<Media[]>();
-
-    useEffect(() => {
-        let cancelled = false;
-
-        axios.get("/api/discover", { params: { type, category } })
-            .then(res => {
-                if (! cancelled) {
-                    setItems(res.data.result || []);
-                }
-            })
-            .catch(err => {
-                console.error(err);
-
-                if (! cancelled) {
-                    setItems([]);
-                }
-            });
-
-        return () => { cancelled = true; };
-    }, [ type, category ]);
-
+export function MediaRow({ title, description, href, items }: Props) {
     // an empty row would be a header with nothing under it
     if (items && items.length === 0) {
         return null;
@@ -45,9 +23,17 @@ export function MediaRow({ title, description, type, category }: Props) {
 
     return (
         <div className="space-y-3">
-            <div className="space-y-1">
-                <h3 className="text-lg font-semibold tracking-tight">{ title }</h3>
-                {description && <p className="text-sm text-muted-foreground">{ description }</p>}
+            <div className="flex items-end justify-between gap-4">
+                <div className="space-y-1">
+                    <h3 className="text-lg font-semibold tracking-tight">{ title }</h3>
+                    {description && <p className="text-sm text-muted-foreground">{ description }</p>}
+                </div>
+
+                {href && (
+                    <Link href={href} className="flex shrink-0 items-center text-sm text-muted-foreground hover:text-foreground">
+                        See more <ChevronRight className="size-4" />
+                    </Link>
+                )}
             </div>
 
             <ScrollArea>

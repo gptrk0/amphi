@@ -1,8 +1,6 @@
 'use client';
 
 import Image from "next/image"
-import axios from "axios"
-import { toast } from "sonner"
 import { Bookmark, BookmarkCheck, BookmarkX, Download } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -17,6 +15,7 @@ import {
 import { Badge } from "./ui/badge"
 import { WatchlistBadge } from "./watchlist-badge"
 import { useWatchlist } from "@/context/watchlist"
+import { useDownload } from "@/hooks/use-download"
 import { Media } from "@/types/media"
 import Link from "next/link"
 
@@ -36,33 +35,8 @@ export function MediaCard({
     ...props
 }: Props) {
     const { getEntry, add, remove } = useWatchlist();
+    const download = useDownload();
     const entry = getEntry(media.type, media.id);
-
-    const downloadNow = () => {
-        toast(`Searching indexers for ${ media.name }...`);
-
-        axios.post("/api/download", { type: media.type, id: media.id })
-            .then(res => {
-                if (res.data.missingMovie) {
-                    toast(res.data.message, {
-                        action: {
-                            label: "Add to watchlist",
-                            onClick: () => add(media.type, media.id, media.name)
-                        }
-                    });
-
-                    return;
-                }
-
-                if (res.data.message) {
-                    toast(res.data.message);
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                toast(err.response?.data?.message || "Could not start the download.");
-            });
-    }
 
     return (
         <div className={cn("space-y-3", className)} {...props}>
@@ -107,7 +81,7 @@ export function MediaCard({
                     {media.type === "movie" && <>
                         <ContextMenuSeparator />
 
-                        <ContextMenuItem className="cursor-pointer" onClick={downloadNow}>
+                        <ContextMenuItem className="cursor-pointer" onClick={() => download(media)}>
                             <Download /> Download now
                         </ContextMenuItem>
                     </>}

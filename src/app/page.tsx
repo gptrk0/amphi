@@ -1,3 +1,11 @@
-import Page from './[discover_media_type]/page';
+'use client';
 
-export default Page;
+import { DiscoverSections } from "@/components/discover-sections";
+
+export default function Page() {
+    return (
+        <div className="p-4">
+            <DiscoverSections view="home" />
+        </div>
+    );
+}

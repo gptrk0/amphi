@@ -216,15 +216,32 @@ Ami elkészült / döntések:
 
 ### Fázis 5 — Discover bővítése ✅
 - [x] **Több sáv, oldalanként külön kategóriákkal.** A régi működés 3 oldalnyi *ugyanolyan* trending listát töltött be három sorba; most minden sor másik TMDB végpont.
-  - `/` → Trending today (film+sorozat vegyesen), Popular movies, Popular series, Upcoming movies
-  - `/movies` → Trending, Popular, Now playing, Upcoming, Top rated
-  - `/series` → Trending, Popular, Airing today, On the air, Top rated
+  - `/` → Downloading now, Ready to watch, On your watchlist, Trending today, Popular movies, Popular series, On the air, Coming soon, All time favourites
+  - `/movies` → Trending, Popular, Coming soon, All time favourites
+  - `/series` → Trending, Popular, Airing today, On the air, All time favourites
 - [x] **Genre-szűrők** a `/movies` és `/series` oldalon (vízszintesen görgethető chipek). A `/`-on szándékosan **nincs**: a TMDB genre id-k típusonként eltérnek (film `28:Action`, sorozat `10759:Action & Adventure`), egy közös lista hazugság lenne. Genre kiválasztásakor a sávok helyett egy szűrt rács jön.
 - [x] **Végtelen scroll** a genre-szűrt rácson (`IntersectionObserver`, 400px `rootMargin`), duplikátum-szűréssel: a TMDB ugyanazt a tételt visszaadhatja két oldalon is, ha közben változik a népszerűségi sorrend.
 - [x] `GET /api/discover?type&category&genre&page` — a régi „3 oldal egyben" válasz helyett egy lapnyi eredmény + `totalPages`. Érvénytelen type/category kombó (`tv/upcoming`, `all/popular`) üres listát ad, a sor egyszerűen nem jelenik meg.
 - [x] `GET /api/genres?type` — TMDB genre lista, cache-elve.
 - [x] Ismeretlen útvonal (`/valami`) mostantól **404** — eddig a discover oldalt rajzolta ki bármilyen egyszegmenses URL-re.
 - [x] Külön, rövidebb cache a discover soroknak (`DISCOVER_CACHE_TTL_MINUTES`, default 60) — a 12 órás metaadat-TTL a trendinghez túl hosszú.
+
+#### Főoldal-átépítés streaming minta alapján (2026-08-06)
+
+Az első verzió sorai erősen ismételték egymást. **Mérve:** 6 sor × 20 hely = 120 helyen mindössze **85 különböző cím**, 35 ismétlés; a `now_playing` a `popular` filmek **15/20**-át megismételte, a `trending` pedig 8-at. Ugyanez a `/movies` oldalon is fennállt.
+
+Két forrást néztem meg:
+- **Netflix Page Generation** — a lapösszeállító *kiszűri a duplikációkat a sorok között*, és a hasonló műfajú sorok ismétlődését is kerüli, hogy megmaradjon az oldal változatossága.
+- **Overseerr `DiscoverSliderType`** — az alapértelmezett sorrend a saját könyvtár tartalmával kezd (`RECENTLY_ADDED`, `RECENT_REQUESTS`, `PLEX_WATCHLIST`), és csak utána jön `TRENDING`, `POPULAR_MOVIES`, `UPCOMING_MOVIES`, `POPULAR_TV`, `UPCOMING_TV`. **Sem `now_playing`, sem `top_rated` nincs az alapértelmezett sorok között.**
+
+Amit ebből átvettem:
+- [x] **Sorok közötti dedup**, a sorrend egyben prioritás is: amit egy feljebbi sor megmutat, az lejjebb nem ismétlődik ([src/lib/sections.ts](src/lib/sections.ts)). Soronként 2 TMDB oldalt (40 tételt) kérünk le, hogy a 20-as sor a dedup után is tele maradjon. **Eredmény: 122 hely / 122 különböző cím, 0 ismétlés** (`/movies` 80/80, `/series` 100/100).
+- [x] **Személyes sorok legelöl** (Overseerr mintája): `Downloading now`, `Ready to watch`, `On your watchlist` — a watchlist DB-ből, TMDB metaadattal. Üres sor nem jelenik meg.
+- [x] **Hero/billboard** a lap tetején ([src/components/media-hero.tsx](src/components/media-hero.tsx)): backdrop kép, cím, leírás, Download / Watchlist / Details gombok. A `backdrop_img` eddig le volt kérve, de sehol nem használtuk. A hero címe a dedupban elsőként foglalt, tehát nem ismétlődik lejjebb.
+- [x] **`Now playing` sor törölve** (kérésre és a mérés alapján is), a `top_rated` viszont maradt: a mérés szerint 0–1 átfedése van a többi sorral, tehát valódi változatosságot ad.
+- [x] A dedup a `/movies` és `/series` nézetre is érvényes, mert ott is fennállt ugyanez.
+- [x] `GET /api/discover/sections?view=home|movies|series` — a kész, dedupált sorok egy kérésben. A sorok kliens oldali, egymástól független letöltése nem tudna dedupálni.
+- [x] A `useDownload` hook kiemelve ([src/hooks/use-download.ts](src/hooks/use-download.ts)), mert a kártya és a hero is használja.
 
 ### Fázis 6 — Torrent-kiválasztás finomítása
 - [x] Konfigurálható felbontás-prioritás, kodek-preferencia, indexer-prioritás, méret-küszöbök, kizáró kulcsszavak (env-ben; DB-s Settings a Fázis 8-ban).
@@ -325,14 +342,18 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove) |
 | [src/components/searchbar.tsx](src/components/searchbar.tsx) | debounce-olt keresősáv, `/search?q=…` navigációval |
 | [src/app/search/page.tsx](src/app/search/page.tsx) | keresési találatok `MediaCard` griddel + lapozás |
-| [src/components/media-row.tsx](src/components/media-row.tsx) | egy discover kategória vízszintesen görgethető sorként |
+| [src/lib/sections.ts](src/lib/sections.ts) | a discover nézetek sorainak összeállítása + sorok közötti dedup + hero választás |
+| [src/components/media-row.tsx](src/components/media-row.tsx) | egy vízszintesen görgethető sor (`See more` linkkel) |
 | [src/components/media-grid.tsx](src/components/media-grid.tsx) | lapozó rács végtelen scrollal (genre-szűrt discover) |
+| [src/components/media-hero.tsx](src/components/media-hero.tsx) | billboard a lap tetején: backdrop + Download / Watchlist / Details |
+| [src/components/discover-sections.tsx](src/components/discover-sections.tsx) | hero + sorok kirajzolása, mindhárom discover nézethez |
 
 ### API végpontok
 
 | Végpont | Leírás |
 |---|---|
 | `GET /api/discover?type&category&genre&page` | TMDB discover: trending / popular / top_rated / upcoming / now_playing / airing_today / on_the_air, vagy genre-szűrt lista |
+| `GET /api/discover/sections?view` | a főoldal / `/movies` / `/series` kész sorai, sorok között dedupálva, hero-val |
 | `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
 | `GET /api/details?type&id` | metaadat + tv-nél évadlista |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
