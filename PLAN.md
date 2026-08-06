@@ -281,6 +281,29 @@ Amit ebből átvettem:
 - [ ] **Évad-monitorozás kézi váltása a felületen** (a `PATCH` API megvan, csak nincs hozzá kontroll a checkboxos átalakítás után).
 - [ ] **`Stop watching` gomb** a részletnézeten: most a teljes watchlist-sort törli (a letöltés-nyilvántartással együtt). Eldöntendő, hogy maradjon-e így, vagy csak a monitorozást kapcsolja ki.
 
+#### Bejelentés: a kész letöltés nem került át a „letöltöttek" közé (2026-08-06)
+
+**Tünet:** a Mortal Kombat II letöltése lement a qBittorrentbe, be is fejeződött, de az aioseerr továbbra is `DOWNLOADING`-ot mutat.
+
+**Csak olvasó diagnózis (2026-08-06), az élő rendszeren:**
+```
+DB  #15 tmdb 931285 DOWNLOADING hash=b8029ac0…8246 updated=2026-08-06T20:57:02
+qB  b8029ac0…8246  100.0%  stalledUP  isComplete=true  tags=[aioseerr-movie-15]
+    Mortal.Kombat.II.2026.1080p.MA.WEBRip.DDP5.1.Atmos.x264.HUN-FULCRUM
+->  a syncDownloads() logikája szerint ez DOWNLOADED lenne
+```
+Tehát **a torrent, a tag és a hash is stimmel, és a `syncDownloads()` helyesen ismeri fel késznek** — a párosítás nem hibás. A státusz azért nem változik, mert a sync **soha nem fut le**, két egymástól független ok miatt:
+
+1. **A scheduler nem indult el.** A `src/instrumentation.ts` a jelenleg futó dev szerver indulása *után* jött létre, tehát a `startScheduler()` abban a processzben soha nem hívódott meg. Ezt közvetve az is alátámasztja, hogy a #14-es sor (The Devil Wears Prada 2) hash-e **már nincs benne** a qBittorrent listájában — egy futó scheduler ezt régen `PENDING`-re állította volna.
+2. **`SCAN_DRY_RUN=1`.** Ez nem csak a letöltés-indítást tiltja: a `syncDownloads()` **összes** DB-írása is `if (! isDryRun())` mögött van. Vagyis még ha a scheduler futna is, dry-run módban a kész letöltés akkor sem kerülne át.
+
+**Teendő legközelebb:**
+- [ ] Dev szerver újraindítása + `SCAN_DRY_RUN=0`, majd ellenőrizni, hogy a Mortal Kombat II átkerül-e. Egyszeri kézi kör: `POST /api/scan`.
+- [ ] **Átgondolni, hogy a `SCAN_DRY_RUN` blokkolja-e a `syncDownloads()`-t.** A dry-run szándéka az volt, hogy *ne induljon letöltés* — a kész torrent állapotának visszaolvasása viszont nem indít semmit, csak a valóságot tükrözi a DB-be. Javaslat: a `syncDownloads()` írjon dry-run módban is (a torrent klienshez nem nyúl), és csak a `scanMovies` / `scanEpisodes` maradjon némán. Így a dry-run tesztelés közben is látszana a valós állapot.
+- [ ] Mellékesen: a **#14 (The Devil Wears Prada 2)** hash-e nincs a kliensben — a torrentet eltávolították. Az első éles sync ezt `PENDING`-re állítja és újra keresni fog rá. Ha ez nem kívánt, előtte le kell venni a watchlistről.
+
+*(Megjegyzés a kiválasztáshoz: a választott release `1080p … x264 … HUN` — pontosan az, amit a mostani minőségi profil preferál.)*
+
 #### Táblázatos watchlist és downloads nézet (2026-08-06-i kérés)
 
 A `/watchlist` és a `/watchlist/downloaded` ma ugyanaz a poszter-rács ([src/components/watchlist-grid.tsx](src/components/watchlist-grid.tsx)), egyetlen státusz-badge-dzsel. Kérés: **mindkettő legyen táblázat**, több információval — mikor lett felvéve, mikor ellenőrizte utoljára az elérhetőséget, letöltés közben hány százalékon áll, stb. (A discover/keresés marad rácsos, ott a poszter a lényeg — a könyvtár-nézetek viszont adatnézetek, mint a Sonarr sorozatlistája.)
