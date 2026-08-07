@@ -432,6 +432,19 @@ Megvalósítás: [src/components/watchlist-table.tsx](src/components/watchlist-t
 - A DTO-ba bekerült a `lastCheckedAt` (a unitok közül a legfrissebb) és a `searchAttempts` (a legnagyobb).
 - **Nincs „mikor készült el" oszlop**: azt sehol nem tároljuk, és az `updatedAt` a `Watchlist` soron nem mozdul, amikor egy unit állapota változik. Ha kell, egy `completedAt` oszlop lenne rá a válasz.
 
+**`Scan now` gomb (2026-08-07-i kérés) ✅** — a `/watchlist` fejlécében (a `/downloaded`-en nincs, ott értelmetlen). A `POST /api/scan` `{ force: true }`-szal megy, ami **mindkét visszatartást kikapcsolja**: a növekvő backoffot és a megjelenési dátum szerinti szűrést is. A `monitored` és a státusz-feltétel megmarad — a gomb „nézd meg most, amit figyelek", nem „nézz meg mindent".
+
+- A `force` a `planSeasonGrab`-ig lemegy, tehát a még nem sugárzott epizódokra is elindul a keresés. Az `aired` mező viszont **továbbra is a TMDB szerinti valóságot mondja**, csak a keresés kényszerített — így a pack-döntés (`shouldUsePack`, `allAired`) nem torzul el egy kézi scan miatt.
+- A gomb dry-runban is használható, a toast ilyenkor kiírja, hogy valójában nem indult letöltés.
+- Élő ellenőrzés: backoffba tett elem (`attempts=5`, 1 perce nézve) + egy még meg nem jelent film (2026-08-26) mellett a **normál** kör egyiket sem vette elő, a **kényszerített** mindkettőt:
+```
+[scheduler] [dry-run] movie 1314481: grabbing The.Devil.Wears.Prada.2…HUN-FULCRUM
+[scheduler] [dry-run] manual scan: every monitored item, backoff and release dates ignored
+[scheduler] [dry-run] movie 1314481: grabbing The.Devil.Wears.Prada.2…HUN-FULCRUM
+[scheduler] [dry-run] movie 1368337: nothing suitable found (attempt 6, next in 24h)
+[scheduler] [dry-run] movie 1516698: nothing suitable found (attempt 1, next in 1h)
+```
+
 ---
 
 ## 5. Javasolt sorrend
@@ -513,4 +526,4 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | `GET`/`DELETE /api/watchlist/:id` | egy elem lekérése (epizódonkénti állapottal) / eltávolítása (cascade) |
 | `PATCH /api/watchlist` | `{ tmdbId, type, monitored, seasonNumber?, episodes? }` — évad vagy egyes epizódok be/ki; felveszi a sort, ha kell, és törli, ha kiürül (`result: null`) |
 | `POST /api/download` | `{ type, id, seasons? }` — `seasons` lehet `[1,2]` vagy `[{ seasonNumber, episodeNumbers }]` → `{ started, missing / missingMovie }` |
-| `POST /api/scan` | egy scanner-kör kézi indítása |
+| `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot és a megjelenési dátumokat is figyelmen kívül hagyja |

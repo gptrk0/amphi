@@ -4,7 +4,8 @@ import { ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
-import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown } from "lucide-react";
+import { toast } from "sonner";
+import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
@@ -90,11 +91,36 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
     const [ items, setItems ] = useState<WatchlistItem[]>();
     const [ status, setStatus ] = useState<WatchStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
+    const [ isScanning, setScanning ] = useState(false);
 
     const load = () => {
         return axios.get("/api/watchlist", { params: { live: 1 } })
             .then(res => setItems(res.data.result || []))
             .catch(err => console.error(err));
+    };
+
+    /**
+     * Unlike the scheduled round this one ignores the backoff and the release
+     * dates — the point of pressing it is to ask right now, even for something
+     * that is not out yet.
+     */
+    const scan = () => {
+        setScanning(true);
+        toast("Checking every watched item on your indexers...");
+
+        axios.post("/api/scan", { force: true })
+            .then(res => {
+                toast(res.data.dryRun
+                    ? `${ res.data.message } SCAN_DRY_RUN is on, so nothing was actually downloaded.`
+                    : res.data.message);
+
+                return load();
+            })
+            .catch(err => {
+                console.error(err);
+                toast(err.response?.data?.message || "Scan failed.");
+            })
+            .finally(() => setScanning(false));
     };
 
     // a change in the slim list (add/remove from anywhere) reloads the table
@@ -222,9 +248,22 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
 
     return (
         <div className="p-4">
-            <div className="space-y-1">
-                <h2 className="text-2xl font-semibold tracking-tight">{ title }</h2>
-                <p className="text-sm text-muted-foreground">{ description }</p>
+            <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                    <h2 className="text-2xl font-semibold tracking-tight">{ title }</h2>
+                    <p className="text-sm text-muted-foreground">{ description }</p>
+                </div>
+
+                {! onlyStatus && <Button
+                    className="shrink-0 cursor-pointer"
+                    onClick={scan}
+                    disabled={isScanning}
+                    title="Check every watched item now, even the ones that are not out yet"
+                >
+                    <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
+                    <RefreshCw className={classNames({ "hidden": isScanning })} />
+                    Scan now
+                </Button>}
             </div>
 
             <Separator className="my-5" />

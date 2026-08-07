@@ -130,21 +130,29 @@ export const syncDownloads = async () => {
     }
 };
 
-export const scanMovies = async () => {
+/**
+ * `force` is the manual scan from the watchlist: look at everything monitored right
+ * now, whether or not its backoff has elapsed and whether or not it is out yet.
+ */
+export type ScanOptions = { force?: boolean };
+
+export const scanMovies = async (options: ScanOptions = {}) => {
     const units = await prisma.watchlistUnit.findMany({
         where: {
             watchlist: { type: ContentType.MOVIE },
             monitored: true,
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
-            // a film that is not out yet cannot be on a tracker; episodes are held
-            // back by the same airDate, just in scanEpisodes
-            AND: [ { OR: [ { airDate: null }, { airDate: { lte: new Date() } } ] } ],
-            ...dueFilter()
+            ...(options.force ? {} : {
+                // a film that is not out yet cannot be on a tracker; episodes are
+                // held back by the same airDate, just in scanEpisodes
+                AND: [ { OR: [ { airDate: null }, { airDate: { lte: new Date() } } ] } ],
+                ...dueFilter()
+            })
         },
         include: { watchlist: true }
     });
 
-    for (const unit of units.filter(isDue)) {
+    for (const unit of options.force ? units : units.filter(isDue)) {
         const tmdbId = unit.watchlist.tmdbId;
         const plan = await planMovieGrab(tmdbId);
 
@@ -183,19 +191,21 @@ export const scanMovies = async () => {
  * Episodes are searched one by one, and `shouldUsePack` decides when one season
  * torrent is the better answer.
  */
-export const scanEpisodes = async () => {
+export const scanEpisodes = async (options: ScanOptions = {}) => {
     const found = await prisma.watchlistUnit.findMany({
         where: {
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
-            airDate: { not: null, lte: new Date() },
             seasonNumber: { not: null },
             monitored: true,
-            ...dueFilter()
+            ...(options.force ? {} : {
+                airDate: { not: null, lte: new Date() },
+                ...dueFilter()
+            })
         },
         include: { watchlist: true }
     });
 
-    const due = found.filter(isDue);
+    const due = options.force ? found : found.filter(isDue);
 
     const groups = new Map<string, { watchlistId: number, tmdbId: number, seasonNumber: number, units: typeof due }>();
 
@@ -219,7 +229,7 @@ export const scanEpisodes = async () => {
     for (const { watchlistId, tmdbId, seasonNumber, units } of groups.values()) {
         const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
 
-        const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
+        const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers, force: options.force });
 
         if (! plan) {
             continue;
@@ -295,7 +305,7 @@ export const refreshMetadata = async () => {
     }
 };
 
-export const runScan = async () => {
+export const runScan = async (options: ScanOptions = {}) => {
     if (globalForScheduler.schedulerRunning) {
         log("previous run is still going, skipping this tick");
 
@@ -304,11 +314,15 @@ export const runScan = async () => {
 
     globalForScheduler.schedulerRunning = true;
 
+    if (options.force) {
+        log("manual scan: every monitored item, backoff and release dates ignored");
+    }
+
     try {
         await syncDownloads();
         await refreshMetadata();
-        await scanMovies();
-        await scanEpisodes();
+        await scanMovies(options);
+        await scanEpisodes(options);
 
     } catch(err) {
         console.error("[scheduler] run failed", err);

@@ -96,7 +96,7 @@ const mapLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Prom
 export const planSeasonGrab = async (
     tmdbId: number,
     seasonNumber: number,
-    options: { episodeNumbers?: number[] } = {}
+    options: { episodeNumbers?: number[], force?: boolean } = {}
 ): Promise<SeasonPlan | null> => {
     const metadata = await getMediaMetadata("tv", tmdbId);
     const seasons = await getTvSeasons(tmdbId);
@@ -122,7 +122,9 @@ export const planSeasonGrab = async (
         const episodeNumber = episode.episode_number;
         const aired = !! episode.air_date && new Date(episode.air_date).getTime() <= now;
 
-        if (! aired) {
+        // `aired` keeps saying what TMDB says — only the search is forced, so the
+        // pack rules below still reason about the real state of the season
+        if (! aired && ! options.force) {
             return { episodeNumber, aired, release: null };
         }
 

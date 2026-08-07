@@ -1,8 +1,13 @@
 import { runScan } from "@/lib/scheduler";
 
-export async function POST() {
+export async function POST(req: Request) {
     try {
-        const started = await runScan();
+        // `force` is the button on the watchlist: check everything monitored now,
+        // backoff and release dates ignored. no body means a plain scheduled round.
+        const body = await req.json().catch(() => null);
+        const force = body?.force === true;
+
+        const started = await runScan({ force });
 
         return Response.json({
             success: true,
