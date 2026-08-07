@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planGrabs, planMovieGrab, planSeasonGrab } from "@/lib/grab";
 import { getTvSeasons } from "@/lib/media";
 import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
-import { markMovieDownloading, syncTvSeasons } from "@/lib/watchlist";
+import { markUnitsDownloading, syncTvSeasons } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
 const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
@@ -54,8 +54,19 @@ const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) 
 };
 
 /**
- * Reads download state back from qBittorrent. Episodes of a season pack share one
- * hash, so a single finished torrent completes all of them at once.
+ * One torrent can cover several units — a season pack — so the log names the item
+ * once and says how much of it the torrent carries.
+ */
+const unitLabel = (units: { episodeNumber: number | null, watchlist: { tmdbId: number } }[]) => {
+    const tmdbId = units[0].watchlist.tmdbId;
+    const episodes = units.filter(unit => unit.episodeNumber !== null).length;
+
+    return episodes === 0 ? `movie ${ tmdbId }` : `show ${ tmdbId }, ${ episodes } episode(s)`;
+};
+
+/**
+ * Reads download state back from qBittorrent. The loop runs over hashes rather than
+ * units, because the episodes of a season pack are finished by one torrent at once.
  *
  * This runs in dry-run too: it starts nothing, it only records what the client
  * already did, and hiding that would leave a finished download stuck DOWNLOADING.
@@ -64,54 +75,23 @@ export const syncDownloads = async () => {
     const torrents = await listManagedTorrents();
     const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
-    const movies = await prisma.watchlist.findMany({
-        where: { type: ContentType.MOVIE, status: WatchStatus.DOWNLOADING, torrentHash: { not: null } }
+    const units = await prisma.watchlistUnit.findMany({
+        where: { status: WatchStatus.DOWNLOADING, torrentHash: { not: null } },
+        include: { watchlist: true }
     });
 
-    const episodes = await prisma.watchlistEpisode.findMany({
-        where: { status: WatchStatus.DOWNLOADING, torrentHash: { not: null } }
-    });
-
-    for (const movie of movies) {
-        const torrent = await resolveTorrent(byHash, String(movie.torrentHash).toLowerCase());
-
-        if (! torrent) {
-            syncLog(`movie ${ movie.tmdbId }: torrent is gone from the client, queued for a new search`);
-
-            await prisma.watchlist.update({
-                where: { id: movie.id },
-                data: { status: WatchStatus.PENDING, torrentHash: null }
-            });
-
-            continue;
-        }
-
-        if (torrent.isComplete) {
-            syncLog(`movie ${ movie.tmdbId }: downloaded (${ torrent.name })`);
-
-            await prisma.watchlist.update({ where: { id: movie.id }, data: { status: WatchStatus.DOWNLOADED } });
-
-        } else if (torrent.isFailed) {
-            syncLog(`movie ${ movie.tmdbId }: torrent failed (${ torrent.state }), queued for a new search`);
-
-            await prisma.watchlist.update({
-                where: { id: movie.id },
-                data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
-            });
-        }
-    }
-
-    const hashes = [ ...new Set(episodes.map(episode => String(episode.torrentHash).toLowerCase())) ];
+    const hashes = [ ...new Set(units.map(unit => String(unit.torrentHash).toLowerCase())) ];
 
     for (const hash of hashes) {
+        const covered = units.filter(unit => String(unit.torrentHash).toLowerCase() === hash);
+        const where = { id: { in: covered.map(unit => unit.id) } };
         const torrent = await resolveTorrent(byHash, hash);
-        const count = episodes.filter(episode => String(episode.torrentHash).toLowerCase() === hash).length;
 
         if (! torrent) {
-            syncLog(`${ count } episode(s): torrent is gone from the client, queued for a new search`);
+            syncLog(`${ unitLabel(covered) }: torrent is gone from the client, queued for a new search`);
 
-            await prisma.watchlistEpisode.updateMany({
-                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
+            await prisma.watchlistUnit.updateMany({
+                where,
                 data: { status: WatchStatus.PENDING, torrentHash: null }
             });
 
@@ -119,18 +99,15 @@ export const syncDownloads = async () => {
         }
 
         if (torrent.isComplete) {
-            syncLog(`${ count } episode(s) downloaded (${ torrent.name })`);
+            syncLog(`${ unitLabel(covered) }: downloaded (${ torrent.name })`);
 
-            await prisma.watchlistEpisode.updateMany({
-                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
-                data: { status: WatchStatus.DOWNLOADED }
-            });
+            await prisma.watchlistUnit.updateMany({ where, data: { status: WatchStatus.DOWNLOADED } });
 
         } else if (torrent.isFailed) {
-            syncLog(`${ count } episode(s): torrent failed (${ torrent.state }), queued for a new search`);
+            syncLog(`${ unitLabel(covered) }: torrent failed (${ torrent.state }), queued for a new search`);
 
-            await prisma.watchlistEpisode.updateMany({
-                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
+            await prisma.watchlistUnit.updateMany({
+                where,
                 data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
             });
         }
@@ -138,38 +115,40 @@ export const syncDownloads = async () => {
 };
 
 export const scanMovies = async () => {
-    const movies = await prisma.watchlist.findMany({
+    const units = await prisma.watchlistUnit.findMany({
         where: {
-            type: ContentType.MOVIE,
+            watchlist: { type: ContentType.MOVIE },
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             ...dueFilter()
-        }
+        },
+        include: { watchlist: true }
     });
 
-    for (const movie of movies) {
-        const plan = await planMovieGrab(movie.tmdbId);
+    for (const unit of units) {
+        const tmdbId = unit.watchlist.tmdbId;
+        const plan = await planMovieGrab(tmdbId);
 
         if (plan?.release) {
-            log(`movie ${ movie.tmdbId }: grabbing ${ plan.release.title }`);
+            log(`movie ${ tmdbId }: grabbing ${ plan.release.title }`);
 
             if (! isDryRun()) {
-                const started = await executeMovieGrab(movie.tmdbId, plan.release);
+                const started = await executeMovieGrab(tmdbId, plan.release);
 
                 if (! started) {
-                    await markMovieDownloading(movie.id, null);
+                    await markUnitsDownloading([ unit.id ], null);
                 }
             }
 
             continue;
         }
 
-        const attempts = movie.searchAttempts + 1;
+        const attempts = unit.searchAttempts + 1;
 
-        log(`movie ${ movie.tmdbId }: nothing suitable found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
+        log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
 
         if (! isDryRun()) {
-            await prisma.watchlist.update({
-                where: { id: movie.id },
+            await prisma.watchlistUnit.update({
+                where: { id: unit.id },
                 data: {
                     status: attempts >= MAX_ATTEMPTS ? WatchStatus.FAILED : WatchStatus.SEARCHING,
                     searchAttempts: attempts,
@@ -185,68 +164,74 @@ export const scanMovies = async () => {
  * episode has failed PACK_AFTER_ATTEMPTS times on its own.
  */
 export const scanEpisodes = async () => {
-    const due = await prisma.watchlistEpisode.findMany({
+    const due = await prisma.watchlistUnit.findMany({
         where: {
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             airDate: { not: null, lte: new Date() },
             season: { monitored: true },
             ...dueFilter()
         },
-        include: { season: { include: { watchlist: true } } }
+        include: { watchlist: true, season: true }
     });
 
-    const seasons = new Map<string, typeof due>();
+    const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
 
-    for (const episode of due) {
-        const key = `${ episode.season.watchlistId }:${ episode.season.seasonNumber }`;
+    for (const unit of due) {
+        if (! unit.season) {
+            continue;
+        }
 
-        seasons.set(key, [ ...(seasons.get(key) || []), episode ]);
+        const key = `${ unit.watchlistId }:${ unit.season.seasonNumber }`;
+        const group = groups.get(key) || {
+            tmdbId: unit.watchlist.tmdbId,
+            seasonNumber: unit.season.seasonNumber,
+            units: []
+        };
+
+        group.units.push(unit);
+        groups.set(key, group);
     }
 
-    for (const episodes of seasons.values()) {
-        const season = episodes[0].season;
-        const tmdbId = season.watchlist.tmdbId;
+    for (const { tmdbId, seasonNumber, units } of groups.values()) {
+        const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
 
-        const plan = await planSeasonGrab(tmdbId, season.seasonNumber, {
-            episodeNumbers: episodes.map(episode => episode.episodeNumber)
-        });
+        const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
 
         if (! plan) {
             continue;
         }
 
         // a pack is only worth it once an episode could not be found on its own
-        const usePack = !! plan.pack && episodes.some(episode => {
-            const available = plan.episodes.find(v => v.episodeNumber === episode.episodeNumber)?.release;
+        const usePack = !! plan.pack && units.some(unit => {
+            const available = plan.episodes.find(v => v.episodeNumber === unit.episodeNumber)?.release;
 
-            return ! available && episode.searchAttempts + 1 >= PACK_AFTER_ATTEMPTS;
+            return ! available && unit.searchAttempts + 1 >= PACK_AFTER_ATTEMPTS;
         });
 
-        const due = episodes.map(episode => episode.episodeNumber);
-        const grabs = planGrabs(plan, due, usePack);
+        const grabs = planGrabs(plan, episodeNumbers, usePack);
 
         for (const grab of grabs) {
-            log(`show ${ tmdbId } S${ season.seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
+            log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
         }
 
         if (! isDryRun() && grabs.length > 0) {
-            await executeSeasonGrab(tmdbId, plan, { episodeNumbers: due, usePack });
+            await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack });
         }
 
         const grabbed = new Set(grabs.flatMap(grab => grab.episodeNumbers));
 
-        for (const episode of episodes) {
-            if (grabbed.has(episode.episodeNumber)) {
+        for (const unit of units) {
+            if (unit.episodeNumber === null || grabbed.has(unit.episodeNumber)) {
                 continue;
             }
 
-            const attempts = episode.searchAttempts + 1;
+            const attempts = unit.searchAttempts + 1;
 
-            log(`show ${ tmdbId } S${ season.seasonNumber }E${ episode.episodeNumber }: nothing found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
+            log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
 
             if (! isDryRun()) {
-                await prisma.watchlistEpisode.update({
-                    where: { id: episode.id },
+                await prisma.watchlistUnit.update({
+                    where: { id: unit.id },
                     data: {
                         status: attempts >= MAX_ATTEMPTS ? WatchStatus.FAILED : WatchStatus.SEARCHING,
                         searchAttempts: attempts,

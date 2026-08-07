@@ -17,7 +17,7 @@ const CATEGORY = process.env.TORRENT_CATEGORY || "aioseerr";
 export const MANUAL_TAG = "aioseerr-manual";
 
 export const movieTag = (watchlistId: number) => `aioseerr-movie-${ watchlistId }`;
-export const episodeTag = (episodeId: number) => `aioseerr-episode-${ episodeId }`;
+export const episodeTag = (unitId: number) => `aioseerr-episode-${ unitId }`;
 export const seasonTag = (watchlistId: number, seasonNumber: number) => `aioseerr-season-${ watchlistId }-${ seasonNumber }`;
 
 const COMPLETE_STATES = [ "uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP", "forcedUP", "checkingUP" ];

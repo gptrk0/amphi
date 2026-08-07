@@ -44,9 +44,11 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 ---
 
-## 3. Adatmodell terve
+## 3. Adatmodell
 
-A jelenlegi `Watchlist` modellt le kell cserélni egy hármas hierarchiára, hogy epizód-szinten lehessen követni a sorozatokat, filmeknél pedig egyszerű maradjon. Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van:
+Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
+
+**2026-08-07: közös `WatchlistUnit` tábla.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig már csak a `monitored` kapcsolót tartja.
 
 ```prisma
 enum ContentType {
@@ -62,51 +64,65 @@ enum WatchStatus {
   FAILED        // sok próbálkozás után sem található / hiba
 }
 
+// csak azonosság; az állapot a unitokon él
 model Watchlist {
-  id             Int         @id @default(autoincrement())
-  tmdbId         Int
-  type           ContentType @default(MOVIE)
-  addedAt        DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id        Int         @id @default(autoincrement())
+  tmdbId    Int
+  type      ContentType @default(MOVIE)
+  addedAt   DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
-  // csak MOVIE típusnál releváns; TV-nél az állapot az epizódokon él
+  seasons WatchlistSeason[]
+  units   WatchlistUnit[]
+
+  @@unique([tmdbId, type])
+}
+
+// csak a monitored kapcsoló; nem költözhet a unitokra, mert egy később
+// megjelenő epizódnak örökölnie kell az évada beállítását
+model WatchlistSeason {
+  id           Int       @id @default(autoincrement())
+  watchlistId  Int
+  watchlist    Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  seasonNumber Int
+  monitored    Boolean   @default(true)
+
+  units WatchlistUnit[]
+
+  @@unique([watchlistId, seasonNumber])
+}
+
+// egy kereshető/letölthető dolog: a film egy unit, a sorozat epizódonként egy
+model WatchlistUnit {
+  id Int @id @default(autoincrement())
+
+  // denormalizált az évadról, hogy egy elem összes unitja egy lekérdezés legyen
+  watchlistId Int
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  // filmnél mindkettő null
+  seasonId      Int?
+  season        WatchlistSeason? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  episodeNumber Int?
+  // nem megjelenítési adat: ez alapján dönti el a scanner, hogy érdemes-e már keresni
+  airDate       DateTime?
+
   status         WatchStatus @default(PENDING)
   torrentHash    String?
   searchAttempts Int         @default(0)
   lastCheckedAt  DateTime?
 
-  seasons        WatchlistSeason[]
-
-  @@unique([tmdbId, type])
-}
-
-model WatchlistSeason {
-  id            Int       @id @default(autoincrement())
-  watchlistId   Int
-  watchlist     Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
-  seasonNumber  Int
-  monitored     Boolean   @default(true)
-
-  episodes      WatchlistEpisode[]
-
-  @@unique([watchlistId, seasonNumber])
-}
-
-model WatchlistEpisode {
-  id             Int             @id @default(autoincrement())
-  seasonId       Int
-  season         WatchlistSeason @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  episodeNumber  Int
-  // nem megjelenítési adat: ez alapján dönti el a scanner, hogy érdemes-e már keresni
-  airDate        DateTime?
-  status         WatchStatus     @default(PENDING)
-  torrentHash    String?
-  searchAttempts Int             @default(0)
-  lastCheckedAt  DateTime?
-
   @@unique([seasonId, episodeNumber])
+  @@index([watchlistId])
+  @@index([status])
 }
 ```
+
+Amit az egységesítés hozott:
+- A `syncDownloads()` két majdnem azonos hurka **egy** hurokká olvadt, ami hash szerint csoportosít — egy season pack ezzel magától egyszerre zárja le az összes érintett epizódot, film és epizód megkülönböztetése nélkül.
+- A `deriveStatus()` már nem ágazik el típus szerint: minden elem annyira van kész, amennyire a unitjai. Filmnél egy unit van, tehát ugyanazt adja, mint eddig.
+- Új oszlopot (pl. a táblázatos nézethez a kiválasztott release neve/mérete, vagy a stall-detektáláshoz idő+progress) **egy** helyre kell felvenni, nem kettőbe.
+- Ára: a film unitja `seasonId = null, episodeNumber = null`, és mivel a NULL az egyedi indexben soha nem ütközik, az „egy film = egy unit" szabályt kód tartja (`ensureMovieUnit`), nem a DB.
 
 ---
 
@@ -199,7 +215,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
 Ami elkészült / döntések:
 - **`GET /api/watchlist?slim=1`** — TMDB-dúsítás nélküli lista (`id, tmdbId, type, status, episodeCount, downloadedCount`). Erre épül a kliens „rajta van-e már?" kérdése, hogy a rács ne indítson metaadat-lekérést.
 - **`WatchlistProvider`** ([src/context/watchlist.tsx](src/context/watchlist.tsx)) — egyszer lekéri a slim listát, `getEntry(type, tmdbId)` / `add` / `remove` optimista frissítéssel és toasttal. A layoutban van bekötve, tehát a rács és a részletnézet ugyanazt az állapotot látja.
-- **Származtatott státusz** ([src/lib/watchlist.ts](src/lib/watchlist.ts) `deriveStatus`): sorozatnál nincs egyetlen „sorozat állapota" mező, a listákon megjelenő státusz az epizódokból jön (bármelyik letöltés alatt → `DOWNLOADING`, mind kész → `DOWNLOADED`, mind hibás → `FAILED`). A `trackedEpisodes` a monitorozott epizódokat **és** minden nem-`PENDING` epizódot számolja, hogy egy azonnali (monitorozás nélküli) letöltés is `DOWNLOADING`-nak látszódjon.
+- **Származtatott státusz** ([src/lib/watchlist.ts](src/lib/watchlist.ts) `deriveStatus`): nincs „elem állapota" oszlop, a listákon megjelenő státusz a unitokból jön (bármelyik letöltés alatt → `DOWNLOADING`, mind kész → `DOWNLOADED`, mind hibás → `FAILED`). A `trackedUnits` a monitorozott évadok unitjait **és** minden nem-`PENDING` unitot számolja, hogy egy azonnali (monitorozás nélküli) letöltés is `DOWNLOADING`-nak látszódjon. A film egyetlen unitja mindig benne van, így ugyanez a szabály filmre is a saját állapotát adja vissza.
 - `/api/details` tv-nél visszaadja az évadlistát is (cache-elt `getTvSeasons`), így a részletnézeten watchlistre tétel **előtt** is látszanak az évadok — a togglék csak felvétel után aktívak.
 - `Switch` komponens hozzáadva (`@radix-ui/react-switch` + [src/components/ui/switch.tsx](src/components/ui/switch.tsx)).
 - A részletnézet tartalma `absolute`-ból normál folyamba került, különben a hosszú évadlistával nem lehetett scrollozni (a backdrop maradt absolute alatta).
@@ -326,6 +342,16 @@ A második futás már nem csinál semmit (idempotens), és a kör alatt egyetle
 
 **Ami ebből nyitva maradt:** a sync csak akkor fut, ha fut a Next dev szerver, azt pedig kézzel kell indítani (lásd az `entrypoint.sh` tételt a Fázis 7-ben). Ez most a legfontosabb következménye ennek a hibának.
 
+#### Közös `WatchlistUnit` tábla (2026-08-07-i kérés) ✅
+
+A táblázatos nézet első fele: előbb a séma egységesítése, hogy a nézet már egységes adatra épüljön. A modell és az indoklás a **3. pontban**; migráció: `prisma/migrations/20260807180000_unified_watchlist_units`.
+
+A migráció kézzel írt, nem a `prisma migrate dev` generálta: a generált változat csak eldobta volna a `Watchlist` állapot-oszlopait, azzal együtt a Mortal Kombat II `DOWNLOADED` állapotát is. Így az új tábla létrehozása után, a régi oszlopok eldobása **előtt** átmásolja az adatot (film → egy unit, epizód → egy unit).
+
+Érintett fájlok: [prisma/schema.prisma](prisma/schema.prisma), [src/lib/watchlist.ts](src/lib/watchlist.ts), [src/lib/scheduler.ts](src/lib/scheduler.ts), [src/lib/grab.ts](src/lib/grab.ts). A `markMovieDownloading` + `markEpisodesDownloading` egyetlen `markUnitsDownloading(unitIds, hash)`-re, a `getSeasonEpisodes` `getSeasonUnits`-ra cserélődött. **A DTO (`WatchlistEntry` / `WatchlistItem`) szándékosan változatlan**, így a UI-hoz egyáltalán nem kellett hozzányúlni — azt majd a táblázatos nézet alakítja át, egy külön lépésben.
+
+**Élő ellenőrzés (2026-08-07):** a 3 meglévő film unitja hiánytalanul átjött (a #15 `DOWNLOADED` + hash is). A sorozat-ágra nem volt adat, ezért ideiglenesen felvettem egy 5 részes sorozatot és utána töröltem: 1 évad + 5 epizód-unit jött létre, a `scanEpisodes` lekérdezése mind az 5-öt megtalálta, egy 3 unitot lefedő pack-hash egyetlen log-sorban, együtt állt vissza `PENDING`-be, a `deriveStatus` 3/5 késznél `PENDING`-et, 5/5-nél `DOWNLOADED`-et adott, a törlés pedig kaszkádolva vitte az évadot és a unitokat. Az újraindítás utáni éles scan-kör a régivel azonosan futott le, és a `GET /api/watchlist` bájtra ugyanazt a szerkezetet adja vissza.
+
 #### Táblázatos watchlist és downloads nézet (2026-08-06-i kérés)
 
 A `/watchlist` és a `/watchlist/downloaded` ma ugyanaz a poszter-rács ([src/components/watchlist-grid.tsx](src/components/watchlist-grid.tsx)), egyetlen státusz-badge-dzsel. Kérés: **mindkettő legyen táblázat**, több információval — mikor lett felvéve, mikor ellenőrizte utoljára az elérhetőséget, letöltés közben hány százalékon áll, stb. (A discover/keresés marad rácsos, ott a poszter a lényeg — a könyvtár-nézetek viszont adatnézetek, mint a Sonarr sorozatlistája.)
@@ -334,17 +360,17 @@ A `/watchlist` és a `/watchlist/downloaded` ma ugyanaz a poszter-rács ([src/co
 | Mező | Hol van | Megjegyzés |
 |---|---|---|
 | `addedAt` | már kiadva | csak nincs megjelenítve |
-| `lastCheckedAt` | `Watchlist` és `WatchlistEpisode` oszlop | sorozatnál a max()-ot kell venni az epizódokon |
+| `lastCheckedAt` | `WatchlistUnit` oszlop | sorozatnál a max()-ot kell venni a unitokon |
 | `searchAttempts` | ugyanott | „hányadik próbálkozás / `MAX_SEARCH_ATTEMPTS`" |
 | `updatedAt` | `Watchlist` oszlop | |
-| `torrentHash` | `Watchlist` és `WatchlistEpisode` oszlop | a qBittorrenthez való összekötéshez kell |
-| `airDate` | `WatchlistEpisode` oszlop | „következő epizód dátuma" számolható belőle |
+| `torrentHash` | `WatchlistUnit` oszlop | a qBittorrenthez való összekötéshez kell |
+| `airDate` | `WatchlistUnit` oszlop | „következő epizód dátuma" számolható belőle |
 
 **Amit a qBittorrentből kell élőben olvasni** — a `TorrentStatus` ma csak `hash`, `name`, `progress`, `state`, `tags`, `isComplete`, `isFailed`. A `/torrents/info` válasz ezen felül ad `dlspeed`, `eta`, `size`, `downloaded`, `num_seeds` mezőket is, ezeket a mappelésbe fel kell venni.
 - **A százalékot nem szabad DB-be írni** — másodpercenként változik. A tábla végpontja olvassa be a DB sorokat, és `listManagedTorrents()` hívással, `torrentHash` alapján kösse hozzá az élő állapotot. Egy qBittorrent-hívás az egész táblára.
 - Ha a qBittorrent nem elérhető, a tábla a DB-állapottal jelenjen meg, százalék nélkül (ne dőljön el az oldal).
 
-**Amit sehol nem tárolunk, és el kell dönteni, kell-e** (ez az egyetlen pont, ami sémamódosítást igényelne): a kiválasztott release **neve, mérete, seeder-száma, felbontása, indexere**. Amíg a torrent él a kliensben, a `name` proxyként használható, de egy befejezett/eltávolított letöltésnél elveszik. Ha a `downloaded` oldalon látni akarod, hogy *melyik* release jött le, akkor kell pár oszlop a `Watchlist`/`WatchlistEpisode` mellé (vagy egy külön `Download` tábla).
+**Amit sehol nem tárolunk, és el kell dönteni, kell-e** (ez az egyetlen pont, ami sémamódosítást igényelne): a kiválasztott release **neve, mérete, seeder-száma, felbontása, indexere**. Amíg a torrent él a kliensben, a `name` proxyként használható, de egy befejezett/eltávolított letöltésnél elveszik. Ha a `downloaded` oldalon látni akarod, hogy *melyik* release jött le, akkor kell pár oszlop — a `WatchlistUnit` egységesítése óta **egy** helyre, nem kettőbe.
 
 **Tervezett oszlopok** (`/watchlist`): poszter-bélyeg + cím · típus · státusz · haladás (film: %; sorozat: `X/Y epizód` + %) · felvéve · utoljára ellenőrizve · próbálkozások · műveletek (Details / Stop watching).
 **`/downloaded`**: poszter-bélyeg + cím · típus · epizódszám · elkészült (`updatedAt`) · felvéve · release neve (ha eltároljuk) · műveletek.
@@ -411,7 +437,7 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | [src/lib/release.ts](src/lib/release.ts) | minőségi profil, pontozás, hamis-release szűrés, évad/epizód számozás-parser |
 | [src/lib/torrent.ts](src/lib/torrent.ts) | qBittorrent kliens: hozzáadás kategóriával/taggel, hash visszaolvasás, állapot, törlés |
 | [src/lib/grab.ts](src/lib/grab.ts) | keresés → pontozás → qBittorrent → DB lánc (`planMovieGrab`, `planSeasonGrab`, `planGrabs`, `execute*`) |
-| [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, epizód-állapotok |
+| [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove) |

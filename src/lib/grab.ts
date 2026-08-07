@@ -5,9 +5,9 @@ import { getQualityProfile, selectEpisodeRelease, selectRelease, selectSeasonRel
 import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
 import {
     addToWatchlist,
-    getSeasonEpisodes,
-    markEpisodesDownloading,
-    markMovieDownloading
+    ensureMovieUnit,
+    getSeasonUnits,
+    markUnitsDownloading
 } from "@/lib/watchlist";
 
 export type EpisodePlan = {
@@ -158,9 +158,10 @@ export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): 
         return null;
     }
 
+    const unit = await ensureMovieUnit(item.id);
     const hash = await addRelease(release, movieTag(item.id));
 
-    await markMovieDownloading(item.id, hash);
+    await markUnitsDownloading([ unit.id ], hash);
 
     return { label: "movie", title: release.title, hash, episodeNumbers: [] };
 };
@@ -224,18 +225,21 @@ export const executeSeasonGrab = async (
         return [];
     }
 
-    const rows = await getSeasonEpisodes(item.id, plan.seasonNumber);
+    const rows = await getSeasonUnits(item.id, plan.seasonNumber);
 
     const eligible = rows
         .filter(row => GRABBABLE_STATUS.includes(row.status))
-        .filter(row => ! options.episodeNumbers || options.episodeNumbers.includes(row.episodeNumber))
-        .map(row => row.episodeNumber);
+        .map(row => row.episodeNumber)
+        .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
+        .filter(episodeNumber => ! options.episodeNumbers || options.episodeNumbers.includes(episodeNumber));
 
     const usePack = options.usePack ?? !! plan.pack;
     const started: StartedDownload[] = [];
 
     for (const grab of planGrabs(plan, eligible, usePack)) {
-        const ids = rows.filter(row => grab.episodeNumbers.includes(row.episodeNumber)).map(row => row.id);
+        const ids = rows
+            .filter(row => row.episodeNumber !== null && grab.episodeNumbers.includes(row.episodeNumber))
+            .map(row => row.id);
 
         const tag = grab.isPack
             ? seasonTag(item.id, plan.seasonNumber)
@@ -243,7 +247,7 @@ export const executeSeasonGrab = async (
 
         const hash = await addRelease(grab.release, tag);
 
-        await markEpisodesDownloading(ids, hash);
+        await markUnitsDownloading(ids, hash);
 
         started.push({
             label: label(plan.seasonNumber, grab),

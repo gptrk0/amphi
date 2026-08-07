@@ -1,18 +1,19 @@
-import { ContentType, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
+import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { WatchlistEntry, WatchlistItem, WatchStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
     seasons: {
-        orderBy: { seasonNumber: "asc" },
-        include: {
-            episodes: {
-                orderBy: { episodeNumber: "asc" }
-            }
-        }
+        orderBy: { seasonNumber: "asc" }
+    },
+    units: {
+        orderBy: [
+            { season: { seasonNumber: "asc" } },
+            { episodeNumber: "asc" }
+        ]
     }
-} as const;
+} satisfies Prisma.WatchlistInclude;
 
 export const toContentType = (type: string | null): ContentType | null => {
     if (type === "movie") {
@@ -52,42 +53,42 @@ export const getWatchlistItemByTmdbId = async (tmdbId: number, type: ContentType
 type WatchlistRow = Awaited<ReturnType<typeof getWatchlist>>[number];
 
 /**
- * Monitored episodes plus anything already picked up: an instant download leaves
- * its season unmonitored, and those episodes still have to show their state.
+ * Monitored units plus anything already picked up: an instant download leaves its
+ * season unmonitored, and those episodes still have to show their state. A movie
+ * has no season, so its single unit is always tracked.
  */
-const trackedEpisodes = (item: WatchlistRow) => {
-    return item.seasons.flatMap(season => {
-        return season.episodes.filter(episode => season.monitored || episode.status !== PrismaWatchStatus.PENDING);
+const trackedUnits = (item: WatchlistRow) => {
+    const monitored = new Map(item.seasons.map(season => [ season.id, season.monitored ]));
+
+    return item.units.filter(unit => {
+        return unit.seasonId === null || monitored.get(unit.seasonId) || unit.status !== PrismaWatchStatus.PENDING;
     });
 };
 
 /**
- * A show has no single status column — it is derived from its episodes.
+ * No item has a status column of its own — it is as far along as its units. A movie
+ * has exactly one, so this returns that unit's status unchanged.
  */
 export const deriveStatus = (item: WatchlistRow): WatchStatus => {
-    if (item.type === ContentType.MOVIE) {
-        return item.status;
-    }
+    const units = trackedUnits(item);
 
-    const episodes = trackedEpisodes(item);
-
-    if (episodes.length === 0) {
+    if (units.length === 0) {
         return PrismaWatchStatus.PENDING;
     }
 
-    if (episodes.every(e => e.status === PrismaWatchStatus.DOWNLOADED)) {
+    if (units.every(u => u.status === PrismaWatchStatus.DOWNLOADED)) {
         return PrismaWatchStatus.DOWNLOADED;
     }
 
-    if (episodes.some(e => e.status === PrismaWatchStatus.DOWNLOADING)) {
+    if (units.some(u => u.status === PrismaWatchStatus.DOWNLOADING)) {
         return PrismaWatchStatus.DOWNLOADING;
     }
 
-    if (episodes.some(e => e.status === PrismaWatchStatus.SEARCHING)) {
+    if (units.some(u => u.status === PrismaWatchStatus.SEARCHING)) {
         return PrismaWatchStatus.SEARCHING;
     }
 
-    if (episodes.every(e => e.status === PrismaWatchStatus.FAILED)) {
+    if (units.every(u => u.status === PrismaWatchStatus.FAILED)) {
         return PrismaWatchStatus.FAILED;
     }
 
@@ -95,17 +96,15 @@ export const deriveStatus = (item: WatchlistRow): WatchStatus => {
 };
 
 export const toWatchlistEntry = (item: WatchlistRow): WatchlistEntry => {
-    const episodes = trackedEpisodes(item);
+    const units = trackedUnits(item);
 
     return {
         id: item.id,
         tmdbId: item.tmdbId,
         type: toMediaType(item.type),
         status: deriveStatus(item),
-        episodeCount: item.type === ContentType.MOVIE ? 0 : episodes.length,
-        downloadedCount: item.type === ContentType.MOVIE
-            ? (item.status === PrismaWatchStatus.DOWNLOADED ? 1 : 0)
-            : episodes.filter(e => e.status === PrismaWatchStatus.DOWNLOADED).length
+        episodeCount: units.filter(unit => unit.episodeNumber !== null).length,
+        downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length
     };
 };
 
@@ -127,11 +126,13 @@ export const withMedia = async (item: WatchlistRow): Promise<WatchlistItem> => {
         media: metadata ? metadata.media : null,
         addedAt: item.addedAt.toISOString(),
         seasons: item.seasons.map(season => {
+            const units = item.units.filter(unit => unit.seasonId === season.id);
+
             return {
                 seasonNumber: season.seasonNumber,
                 monitored: season.monitored,
-                episodeCount: season.episodes.length,
-                downloadedCount: season.episodes.filter(e => e.status === PrismaWatchStatus.DOWNLOADED).length
+                episodeCount: units.length,
+                downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length
             };
         })
     };
@@ -150,8 +151,18 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistIt
 };
 
 /**
- * Syncs seasons and episodes from TMDB. Existing status and monitored flags are
- * left untouched, so this is safe to run periodically.
+ * A movie is a single unit. A null season and a null episode never collide in a
+ * unique index, so that "single" is kept here rather than by the database.
+ */
+export const ensureMovieUnit = async (watchlistId: number) => {
+    const existing = await prisma.watchlistUnit.findFirst({ where: { watchlistId } });
+
+    return existing || await prisma.watchlistUnit.create({ data: { watchlistId } });
+};
+
+/**
+ * Syncs seasons and episode units from TMDB. Existing status and monitored flags
+ * are left untouched, so this is safe to run periodically.
  */
 export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
     const seasons = await getTvSeasons(tmdbId);
@@ -174,7 +185,7 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
         for (const episode of season.episodes) {
             const airDate = episode.air_date ? new Date(episode.air_date) : null;
 
-            await prisma.watchlistEpisode.upsert({
+            await prisma.watchlistUnit.upsert({
                 where: {
                     seasonId_episodeNumber: {
                         seasonId: dbSeason.id,
@@ -183,6 +194,7 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
                 },
                 update: { airDate },
                 create: {
+                    watchlistId,
                     seasonId: dbSeason.id,
                     episodeNumber: episode.episode_number,
                     airDate
@@ -215,7 +227,10 @@ export const addToWatchlist = async (tmdbId: number, type: ContentType, monitorS
         create: { tmdbId, type }
     });
 
-    if (type === ContentType.TV) {
+    if (type === ContentType.MOVIE) {
+        await ensureMovieUnit(item.id);
+
+    } else {
         await syncTvSeasons(item.id, tmdbId);
 
         if (monitorSeasons) {
@@ -236,28 +251,24 @@ export const removeFromWatchlist = async (id: number) => {
     return await prisma.watchlist.delete({ where: { id } });
 };
 
-export const getSeasonEpisodes = async (watchlistId: number, seasonNumber: number) => {
-    return await prisma.watchlistEpisode.findMany({
-        where: { season: { watchlistId, seasonNumber } },
+export const getMovieUnit = async (watchlistId: number) => {
+    return await prisma.watchlistUnit.findFirst({ where: { watchlistId, seasonId: null } });
+};
+
+export const getSeasonUnits = async (watchlistId: number, seasonNumber: number) => {
+    return await prisma.watchlistUnit.findMany({
+        where: { watchlistId, season: { seasonNumber } },
         orderBy: { episodeNumber: "asc" }
     });
 };
 
-export const markMovieDownloading = async (watchlistId: number, torrentHash: string | null) => {
-    return await prisma.watchlist.update({
-        where: { id: watchlistId },
-        data: {
-            status: PrismaWatchStatus.DOWNLOADING,
-            torrentHash,
-            searchAttempts: 0,
-            lastCheckedAt: new Date()
-        }
-    });
-};
-
-export const markEpisodesDownloading = async (episodeIds: number[], torrentHash: string | null) => {
-    return await prisma.watchlistEpisode.updateMany({
-        where: { id: { in: episodeIds } },
+/**
+ * One call for both kinds: a movie hands in its single unit, a season pack hands in
+ * every unit the one torrent covers.
+ */
+export const markUnitsDownloading = async (unitIds: number[], torrentHash: string | null) => {
+    return await prisma.watchlistUnit.updateMany({
+        where: { id: { in: unitIds } },
         data: {
             status: PrismaWatchStatus.DOWNLOADING,
             torrentHash,
