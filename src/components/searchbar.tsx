@@ -1,7 +1,7 @@
 'use client';
 
 import { Search } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
 import { Input } from "./ui/input"
@@ -41,7 +41,7 @@ export function SearchBar(props: React.ComponentProps<"div">) {
         return () => window.removeEventListener("keydown", onKeyDown);
     }, []);
 
-    const navigate = (term: string) => {
+    const navigate = useCallback((term: string) => {
         if (! term && pathname !== SEARCH_PATH) {
             return;
         }
@@ -54,7 +54,7 @@ export function SearchBar(props: React.ComponentProps<"div">) {
         } else {
             router.push(target);
         }
-    };
+    }, [ pathname, router ]);
 
     useEffect(() => {
         const term = value.trim();
@@ -66,7 +66,7 @@ export function SearchBar(props: React.ComponentProps<"div">) {
         }, DEBOUNCE_MS);
 
         return () => clearTimeout(timer);
-    }, [ value, pathname ]);
+    }, [ value, navigate ]);
 
     return (
         <div className="relative w-[300px]" {...props}>

@@ -62,7 +62,7 @@ const menus: {
 ];
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-    let pathname = usePathname();
+    const pathname = usePathname();
 
     return (
         <Sidebar {...props}>

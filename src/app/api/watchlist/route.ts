@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
             await syncDownloadsOnce(torrents);
         }
 
-        let result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(torrents);
+        const result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(torrents);
 
         return Response.json({ success: true, result });
 
@@ -32,19 +32,19 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
     try {
-        let body = await req.json();
+        const body = await req.json();
 
-        let tmdbId = Number(body?.tmdbId);
-        let type = toContentType(body?.type);
+        const tmdbId = Number(body?.tmdbId);
+        const type = toContentType(body?.type);
 
         // when given, only these seasons are monitored
-        let seasons = Array.isArray(body?.seasons) ? body.seasons.map(Number).filter(Boolean) : undefined;
+        const seasons = Array.isArray(body?.seasons) ? body.seasons.map(Number).filter(Boolean) : undefined;
 
         if (! tmdbId || ! type) {
             return Response.json({ success: false, message: 'Invalid tmdbId or type!' }, { status: 400 });
         }
 
-        let result = await addToWatchlist(tmdbId, type, seasons);
+        const result = await addToWatchlist(tmdbId, type, seasons);
 
         if (! result) {
             return Response.json({ success: false, message: 'Media not found on tmdb!' }, { status: 404 });
@@ -71,14 +71,14 @@ export async function POST(req: NextRequest) {
  */
 export async function PATCH(req: NextRequest) {
     try {
-        let body = await req.json();
+        const body = await req.json();
 
-        let tmdbId = Number(body?.tmdbId);
-        let type = toContentType(body?.type);
-        let monitored = body?.monitored;
+        const tmdbId = Number(body?.tmdbId);
+        const type = toContentType(body?.type);
+        const monitored = body?.monitored;
 
-        let seasonNumber = body?.seasonNumber === undefined ? undefined : Number(body.seasonNumber);
-        let episodeNumbers = Array.isArray(body?.episodes) ? body.episodes.map(Number) : undefined;
+        const seasonNumber = body?.seasonNumber === undefined ? undefined : Number(body.seasonNumber);
+        const episodeNumbers = Array.isArray(body?.episodes) ? body.episodes.map(Number) : undefined;
 
         if (! tmdbId || ! type || typeof monitored !== "boolean") {
             return Response.json({ success: false, message: 'Invalid tmdbId, type or monitored flag!' }, { status: 400 });
@@ -92,7 +92,7 @@ export async function PATCH(req: NextRequest) {
             return Response.json({ success: false, message: 'Invalid episode number!' }, { status: 400 });
         }
 
-        let result = await setMonitored(tmdbId, type, monitored, { seasonNumber, episodeNumbers });
+        const result = await setMonitored(tmdbId, type, monitored, { seasonNumber, episodeNumbers });
 
         return Response.json({ success: true, result });
 

@@ -5,15 +5,15 @@ import { deleteItem, getWatchlistItem, getWatchlistItemWithMedia, stopWatching, 
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, { params }: Params) {
-    let { id } = await params;
-    let watchlistId = Number(id);
+    const { id } = await params;
+    const watchlistId = Number(id);
 
     if (! watchlistId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
     }
 
     try {
-        let result = await getWatchlistItemWithMedia(watchlistId);
+        const result = await getWatchlistItemWithMedia(watchlistId);
 
         if (! result) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
@@ -35,24 +35,24 @@ export async function GET(req: Request, { params }: Params) {
  * the files with them — and the item is gone for good.
  */
 export async function DELETE(req: NextRequest, { params }: Params) {
-    let { id } = await params;
-    let watchlistId = Number(id);
+    const { id } = await params;
+    const watchlistId = Number(id);
 
     if (! watchlistId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
     }
 
-    let withTorrent = req.nextUrl.searchParams.get('torrent') === "1";
-    let withFiles = req.nextUrl.searchParams.get('files') === "1";
+    const withTorrent = req.nextUrl.searchParams.get('torrent') === "1";
+    const withFiles = req.nextUrl.searchParams.get('files') === "1";
 
     try {
-        let item = await getWatchlistItem(watchlistId);
+        const item = await getWatchlistItem(watchlistId);
 
         if (! item) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
         }
 
-        let result = withTorrent
+        const result = withTorrent
             ? await deleteItem(watchlistId, withFiles)
             : await stopWatching(watchlistId);
 

@@ -456,12 +456,12 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
             }
         });
 
-        let seasonNumbers: number[] = (res.data.seasons || [])
+        const seasonNumbers: number[] = (res.data.seasons || [])
             .map((v: any) => v.season_number)
             .filter((v: number) => v > 0);
 
         // /tv/{id} only carries season headers, the episodes need one request per season
-        let seasons = await Promise.all(seasonNumbers.map(async (seasonNumber) => {
+        const seasons = await Promise.all(seasonNumbers.map(async (seasonNumber) => {
             const seasonRes = await axios.get(`${ TMDB_BASE_URL }/tv/${ id }/season/${ seasonNumber }`, {
                 params: {
                     api_key: process.env.TMDB_API_KEY,
@@ -469,9 +469,9 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
                 }
             });
 
-            let data = seasonRes.data;
+            const data = seasonRes.data;
 
-            let season: MediaSeason = {
+            const season: MediaSeason = {
                 season_number: data.season_number,
                 name: data.name,
                 air_date: data.air_date || null,

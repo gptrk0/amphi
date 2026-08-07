@@ -88,14 +88,14 @@ const Link = ({ href, children }: { href: string, children: React.ReactNode }) =
 );
 
 export default function Page() {
-    let { type, id } = useParams();
-    let [details, setDetails] = useState<MediaDetails>();
-    let [seasons, setSeasons] = useState<SeasonInfo[]>([]);
-    let [item, setItem] = useState<WatchlistItem>();
+    const { type, id } = useParams();
+    const [details, setDetails] = useState<MediaDetails>();
+    const [seasons, setSeasons] = useState<SeasonInfo[]>([]);
+    const [item, setItem] = useState<WatchlistItem>();
     // "<season>:<episode>" keys — the watchlist state, mirrored so a tick is instant
-    let [monitored, setMonitored] = useState<Set<string>>(new Set());
-    let [isSaving, setSaving] = useState(false);
-    let [isTrailerOpen, setTrailerOpen] = useState(false);
+    const [monitored, setMonitored] = useState<Set<string>>(new Set());
+    const [isSaving, setSaving] = useState(false);
+    const [isTrailerOpen, setTrailerOpen] = useState(false);
 
     const tmdbId = Number(id);
     const { getEntry, remove, refresh } = useWatchlist();
