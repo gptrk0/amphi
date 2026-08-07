@@ -28,7 +28,7 @@ export const episodeKey = (seasonNumber: number, episodeNumber: number) => `${ s
 
 const STATUS_TEXT: Record<WatchStatus, string> = {
     PENDING: "",
-    SEARCHING: "searching",
+    SEARCHING: "waiting for release",
     DOWNLOADING: "downloading",
     DOWNLOADED: "downloaded",
     FAILED: "not found"

@@ -45,7 +45,7 @@ const POLL_MS = 5000;
 const STATUS_FILTERS: { label: string, value: WatchStatus | "ALL" }[] = [
     { label: "All", value: "ALL" },
     { label: "Watchlisted", value: "PENDING" },
-    { label: "Searching", value: "SEARCHING" },
+    { label: "Waiting for release", value: "SEARCHING" },
     { label: "Downloading", value: "DOWNLOADING" },
     { label: "Downloaded", value: "DOWNLOADED" }
 ];

@@ -6,12 +6,15 @@ type Props = {
     className?: string;
 };
 
+// SEARCHING means the search already ran and came back empty, which is the normal
+// state of anything that is not out in a usable quality yet — "Searching..." read
+// like something was in progress right now
 const labels: Record<string, { text: string, variant: "default" | "secondary" | "destructive" | "outline" }> = {
-    PENDING:     { text: "Watchlisted",  variant: "secondary" },
-    SEARCHING:   { text: "Searching...", variant: "secondary" },
-    DOWNLOADING: { text: "Downloading",  variant: "default" },
-    DOWNLOADED:  { text: "Available",    variant: "default" },
-    FAILED:      { text: "Not found",    variant: "destructive" }
+    PENDING:     { text: "Watchlisted",         variant: "secondary" },
+    SEARCHING:   { text: "Waiting for release", variant: "secondary" },
+    DOWNLOADING: { text: "Downloading",         variant: "default" },
+    DOWNLOADED:  { text: "Available",           variant: "default" },
+    FAILED:      { text: "Not found",           variant: "destructive" }
 };
 
 export function WatchlistBadge({ entry, className }: Props) {
