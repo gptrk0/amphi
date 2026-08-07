@@ -1,4 +1,4 @@
-import { ContentType } from "../../prisma/generated/client";
+import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { getQualityProfile, selectEpisodeRelease, selectRelease, selectSeasonRelease } from "@/lib/release";
@@ -19,6 +19,8 @@ export type EpisodePlan = {
 export type SeasonPlan = {
     seasonNumber: number;
     episodeCount: number;
+    // every episode of the season is out, so a pack cannot be missing anything
+    allAired: boolean;
     pack: IndexerResult | null;
     episodes: EpisodePlan[];
     missing: number[];
@@ -134,17 +136,19 @@ export const planSeasonGrab = async (
         return { episodeNumber, aired, release: picked ? picked.release : null };
     });
 
-    const airedMissing = episodes.filter(episode => episode.aired && ! episode.release);
+    // always looked up, not only when an episode is missing: a season that is fully
+    // out is worth taking as one torrent even if every episode is there on its own
+    const pack = selectSeasonRelease(releases, seasonNumber, season.episodes.length, profile, titles, metadata.original_language).picked?.release || null;
 
-    const pack = airedMissing.length > 0
-        ? selectSeasonRelease(releases, seasonNumber, season.episodes.length, profile, titles, metadata.original_language).picked?.release || null
-        : null;
-
+    // with a pack in hand everything already aired is obtainable, whether or not the
+    // pack ends up being the one that is grabbed
     const missing = pack
         ? episodes.filter(episode => ! episode.aired).map(episode => episode.episodeNumber)
         : episodes.filter(episode => ! episode.release).map(episode => episode.episodeNumber);
 
-    return { seasonNumber, episodeCount: season.episodes.length, pack, episodes, missing };
+    const allAired = episodes.length > 0 && episodes.every(episode => episode.aired);
+
+    return { seasonNumber, episodeCount: season.episodes.length, allAired, pack, episodes, missing };
 };
 
 // A download only needs a row to track the torrent by hash, so nothing is
@@ -199,7 +203,61 @@ export const planGrabs = (plan: SeasonPlan, eligible: number[], usePack: boolean
     return [ ...grabs.values() ];
 };
 
-const GRABBABLE_STATUS = [ "PENDING", "SEARCHING", "FAILED" ];
+const GRABBABLE_STATUS: WatchStatus[] = [ WatchStatus.PENDING, WatchStatus.SEARCHING, WatchStatus.FAILED ];
+
+/**
+ * A pack replaces the single episodes in two cases: an episode cannot be found on
+ * its own, or a season that is fully out has not been started yet — then one
+ * torrent is better than ten searches that each have to succeed.
+ *
+ * A season that already has something downloading or downloaded is left alone, a
+ * pack would fetch those files a second time.
+ */
+export const shouldUsePack = (plan: SeasonPlan, requested: number[], started: boolean) => {
+    if (! plan.pack) {
+        return false;
+    }
+
+    const missingAlone = requested.some(episodeNumber => {
+        const episode = plan.episodes.find(v => v.episodeNumber === episodeNumber);
+
+        return episode?.aired && ! episode.release;
+    });
+
+    return missingAlone || (plan.allAired && ! started);
+};
+
+/**
+ * What one round should grab for a season, and whether a pack stands in for the
+ * single episodes. Shared by the scanner and the download endpoint so the two can
+ * never decide differently.
+ */
+export const planSeasonGrabs = async (
+    watchlistId: number,
+    plan: SeasonPlan,
+    options: { episodeNumbers?: number[], usePack?: boolean } = {}
+) => {
+    const rows = await getSeasonUnits(watchlistId, plan.seasonNumber);
+    const wanted = options.episodeNumbers;
+
+    const numbers = (list: typeof rows) => {
+        return list.map(row => row.episodeNumber).filter((v): v is number => v !== null);
+    };
+
+    const grabbable = rows.filter(row => GRABBABLE_STATUS.includes(row.status));
+    const requested = wanted
+        ? grabbable.filter(row => row.episodeNumber !== null && wanted.includes(row.episodeNumber))
+        : grabbable;
+
+    const started = rows.some(row => row.status === WatchStatus.DOWNLOADING || row.status === WatchStatus.DOWNLOADED);
+    const usePack = options.usePack ?? shouldUsePack(plan, numbers(requested), started);
+
+    // one pack torrent brings the whole season, so it claims every episode still to
+    // get — not only the ones this round happened to ask for
+    const eligible = numbers(usePack ? grabbable : requested);
+
+    return { rows, usePack, grabs: planGrabs(plan, eligible, usePack) };
+};
 
 const label = (seasonNumber: number, grab: PlannedGrab) => {
     const season = `S${ String(seasonNumber).padStart(2, "0") }`;
@@ -225,18 +283,10 @@ export const executeSeasonGrab = async (
         return [];
     }
 
-    const rows = await getSeasonUnits(item.id, plan.seasonNumber);
-
-    const eligible = rows
-        .filter(row => GRABBABLE_STATUS.includes(row.status))
-        .map(row => row.episodeNumber)
-        .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
-        .filter(episodeNumber => ! options.episodeNumbers || options.episodeNumbers.includes(episodeNumber));
-
-    const usePack = options.usePack ?? !! plan.pack;
+    const { rows, grabs } = await planSeasonGrabs(item.id, plan, options);
     const started: StartedDownload[] = [];
 
-    for (const grab of planGrabs(plan, eligible, usePack)) {
+    for (const grab of grabs) {
         const ids = rows
             .filter(row => row.episodeNumber !== null && grab.episodeNumbers.includes(row.episodeNumber))
             .map(row => row.id);

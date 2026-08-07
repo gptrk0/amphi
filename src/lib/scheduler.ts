@@ -1,14 +1,13 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
-import { executeMovieGrab, executeSeasonGrab, planGrabs, planMovieGrab, planSeasonGrab } from "@/lib/grab";
+import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
 import { ensureMovieUnit, markUnitsDownloading, syncTvSeasons, toAirDate } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
 const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
-const MAX_ATTEMPTS = Number(process.env.MAX_SEARCH_ATTEMPTS || 10);
-const PACK_AFTER_ATTEMPTS = Number(process.env.PACK_AFTER_ATTEMPTS || 2);
+const MAX_BACKOFF_MS = Number(process.env.SEARCH_MAX_BACKOFF_HOURS || 24) * 60 * 60 * 1000;
 const START_DELAY_MS = 15 * 1000;
 
 // with SCAN_DRY_RUN=1 no torrent is added and no search state is written. syncDownloads
@@ -22,14 +21,31 @@ const syncLog = (message: string) => console.log(`[scheduler] ${ message }`);
 
 const globalForScheduler = global as unknown as { schedulerStarted: boolean, schedulerRunning: boolean };
 
+/**
+ * The wait doubles with every fruitless search up to a cap, and nothing is ever
+ * given up on: a release that is not out yet may show up in a month, so a hard
+ * attempt limit would quietly stop watching exactly the titles that need watching.
+ */
+const backoffMs = (attempts: number) => Math.min(BACKOFF_MS * 2 ** attempts, MAX_BACKOFF_MS);
+
+const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
+
+/**
+ * Coarse pre-filter for the query — the shortest wait any row can have. `isDue`
+ * then applies the row's own backoff, so changing the env takes effect at once
+ * instead of being frozen into a stored column.
+ */
 const dueFilter = () => {
     return {
-        searchAttempts: { lt: MAX_ATTEMPTS },
         OR: [
             { lastCheckedAt: null },
             { lastCheckedAt: { lt: new Date(Date.now() - BACKOFF_MS) } }
         ]
     };
+};
+
+const isDue = (unit: { searchAttempts: number, lastCheckedAt: Date | null }) => {
+    return ! unit.lastCheckedAt || unit.lastCheckedAt.getTime() + backoffMs(unit.searchAttempts) <= Date.now();
 };
 
 /**
@@ -128,7 +144,7 @@ export const scanMovies = async () => {
         include: { watchlist: true }
     });
 
-    for (const unit of units) {
+    for (const unit of units.filter(isDue)) {
         const tmdbId = unit.watchlist.tmdbId;
         const plan = await planMovieGrab(tmdbId);
 
@@ -148,13 +164,13 @@ export const scanMovies = async () => {
 
         const attempts = unit.searchAttempts + 1;
 
-        log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
+        log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
         if (! isDryRun()) {
             await prisma.watchlistUnit.update({
                 where: { id: unit.id },
                 data: {
-                    status: attempts >= MAX_ATTEMPTS ? WatchStatus.FAILED : WatchStatus.SEARCHING,
+                    status: WatchStatus.SEARCHING,
                     searchAttempts: attempts,
                     lastCheckedAt: new Date()
                 }
@@ -164,11 +180,11 @@ export const scanMovies = async () => {
 };
 
 /**
- * Episodes are searched one by one first; a season pack is only grabbed once an
- * episode has failed PACK_AFTER_ATTEMPTS times on its own.
+ * Episodes are searched one by one, and `shouldUsePack` decides when one season
+ * torrent is the better answer.
  */
 export const scanEpisodes = async () => {
-    const due = await prisma.watchlistUnit.findMany({
+    const found = await prisma.watchlistUnit.findMany({
         where: {
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             airDate: { not: null, lte: new Date() },
@@ -179,7 +195,9 @@ export const scanEpisodes = async () => {
         include: { watchlist: true }
     });
 
-    const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
+    const due = found.filter(isDue);
+
+    const groups = new Map<string, { watchlistId: number, tmdbId: number, seasonNumber: number, units: typeof due }>();
 
     for (const unit of due) {
         if (unit.seasonNumber === null) {
@@ -188,6 +206,7 @@ export const scanEpisodes = async () => {
 
         const key = `${ unit.watchlistId }:${ unit.seasonNumber }`;
         const group = groups.get(key) || {
+            watchlistId: unit.watchlistId,
             tmdbId: unit.watchlist.tmdbId,
             seasonNumber: unit.seasonNumber,
             units: []
@@ -197,7 +216,7 @@ export const scanEpisodes = async () => {
         groups.set(key, group);
     }
 
-    for (const { tmdbId, seasonNumber, units } of groups.values()) {
+    for (const { watchlistId, tmdbId, seasonNumber, units } of groups.values()) {
         const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
 
         const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
@@ -206,14 +225,7 @@ export const scanEpisodes = async () => {
             continue;
         }
 
-        // a pack is only worth it once an episode could not be found on its own
-        const usePack = !! plan.pack && units.some(unit => {
-            const available = plan.episodes.find(v => v.episodeNumber === unit.episodeNumber)?.release;
-
-            return ! available && unit.searchAttempts + 1 >= PACK_AFTER_ATTEMPTS;
-        });
-
-        const grabs = planGrabs(plan, episodeNumbers, usePack);
+        const { usePack, grabs } = await planSeasonGrabs(watchlistId, plan, { episodeNumbers });
 
         for (const grab of grabs) {
             log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
@@ -232,13 +244,13 @@ export const scanEpisodes = async () => {
 
             const attempts = unit.searchAttempts + 1;
 
-            log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }/${ MAX_ATTEMPTS })`);
+            log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
             if (! isDryRun()) {
                 await prisma.watchlistUnit.update({
                     where: { id: unit.id },
                     data: {
-                        status: attempts >= MAX_ATTEMPTS ? WatchStatus.FAILED : WatchStatus.SEARCHING,
+                        status: WatchStatus.SEARCHING,
                         searchAttempts: attempts,
                         lastCheckedAt: new Date()
                     }
