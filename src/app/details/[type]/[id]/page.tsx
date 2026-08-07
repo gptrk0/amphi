@@ -256,7 +256,7 @@ export default function Page() {
                         { isTv && pickedCount > 0 ? ` ${ pickedCount } episode${ pickedCount > 1 ? "s" : "" }` : "" }
                     </Button>
 
-                    {entry && <Button
+                    {entry?.monitored && <Button
                         variant="outline"
                         className="cursor-pointer"
                         onClick={() => remove(type as string, tmdbId, media.name)}

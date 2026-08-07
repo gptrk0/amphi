@@ -5,10 +5,18 @@ import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -87,11 +95,12 @@ const progressText = (item: WatchlistItem) => {
 };
 
 export function WatchlistTable({ title, description, onlyStatus, emptyText }: Props) {
-    const { entries, remove } = useWatchlist();
+    const { entries, remove, destroy } = useWatchlist();
     const [ items, setItems ] = useState<WatchlistItem[]>();
     const [ status, setStatus ] = useState<WatchStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
+    const [ deleting, setDeleting ] = useState<WatchlistItem | null>(null);
 
     const load = () => {
         return axios.get("/api/watchlist", { params: { live: 1 } })
@@ -210,17 +219,25 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             key: "actions",
             label: "",
             className: "text-right",
-            render: item => (
-                <Button
+            render: item => (onlyStatus
+                ? <Button
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title="Stop watching"
+                    title="Delete — removes the torrent as well"
+                    onClick={() => setDeleting(item)}
+                >
+                    <Trash2 />
+                </Button>
+                : <Button
+                    variant="ghost"
+                    size="sm"
+                    className="cursor-pointer"
+                    title="Stop watching — keeps whatever is already downloaded"
                     onClick={() => remove(item.type, item.tmdbId, item.media?.name || `TMDB #${ item.tmdbId }`)}
                 >
                     <BookmarkX />
-                </Button>
-            )
+                </Button>)
         }
     ];
 
@@ -232,6 +249,9 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
 
     const visible = (items || [])
         .filter(item => ! onlyStatus || item.status === onlyStatus)
+        // something downloaded that is no longer watched belongs under Downloaded
+        // only — it is not waiting for anything any more
+        .filter(item => onlyStatus || item.monitored || item.status !== "DOWNLOADED")
         .filter(item => status === "ALL" || item.status === status);
 
     const column = columns.find(v => v.key === sort.key);
@@ -323,6 +343,46 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     ))}
                 </TableBody>
             </Table>}
+
+            <Dialog open={deleting !== null} onOpenChange={(open) => { if (! open) { setDeleting(null); } }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Delete { deleting?.media?.name || "this item" }?</DialogTitle>
+                        <DialogDescription>
+                            The torrent is removed from qBittorrent either way, and it will not be
+                            downloaded again. Do you want to keep the files on disk?
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="cursor-pointer" onClick={() => setDeleting(null)}>
+                            Cancel
+                        </Button>
+
+                        <Button
+                            variant="outline"
+                            className="cursor-pointer"
+                            onClick={() => {
+                                destroy(deleting!.id, false, deleting!.media?.name);
+                                setDeleting(null);
+                            }}
+                        >
+                            Keep the files
+                        </Button>
+
+                        <Button
+                            variant="destructive"
+                            className="cursor-pointer"
+                            onClick={() => {
+                                destroy(deleting!.id, true, deleting!.media?.name);
+                                setDeleting(null);
+                            }}
+                        >
+                            <Trash2 /> Delete the files too
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

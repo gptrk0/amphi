@@ -1,7 +1,7 @@
 import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { listManagedTorrents, TorrentStatus } from "@/lib/torrent";
+import { listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
@@ -98,7 +98,8 @@ export const toWatchlistEntry = (item: WatchlistRow): WatchlistEntry => {
         type: toMediaType(item.type),
         status: deriveStatus(item),
         episodeCount: units.filter(unit => unit.episodeNumber !== null).length,
-        downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length
+        downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length,
+        monitored: item.units.some(unit => unit.monitored)
     };
 };
 
@@ -334,6 +335,51 @@ export const removeFromWatchlist = async (id: number) => {
     return await prisma.watchlist.delete({ where: { id } });
 };
 
+/**
+ * Not watched and not on disk. A forgotten unit is deliberately left as if it had
+ * never been grabbed, so the scanner does not fetch it all over again.
+ */
+const FORGOTTEN = {
+    monitored: false,
+    status: PrismaWatchStatus.PENDING,
+    torrentHash: null
+};
+
+/**
+ * Stop watching. Nothing is removed from the torrent client, so an item that has
+ * something downloaded survives this and stays listed under Downloaded — only one
+ * with nothing to show for itself is pruned away.
+ */
+export const stopWatching = async (id: number) => {
+    await prisma.watchlistUnit.updateMany({ where: { watchlistId: id }, data: { monitored: false } });
+
+    return await pruneWatchlistItem(id);
+};
+
+/**
+ * Delete. The torrents go from the client too, with or without their files, and
+ * every unit is forgotten so that nothing is downloaded a second time.
+ */
+export const deleteItem = async (id: number, deleteFiles: boolean) => {
+    const units = await prisma.watchlistUnit.findMany({ where: { watchlistId: id, torrentHash: { not: null } } });
+
+    for (const hash of new Set(units.map(unit => String(unit.torrentHash)))) {
+        await removeTorrent(hash, deleteFiles);
+    }
+
+    await prisma.watchlistUnit.updateMany({ where: { watchlistId: id }, data: FORGOTTEN });
+
+    return await pruneWatchlistItem(id);
+};
+
+/**
+ * The torrent of something already downloaded is no longer in the client, which
+ * means it was watched and cleaned up — not a failure worth retrying.
+ */
+export const forgetUnits = async (ids: number[]) => {
+    return await prisma.watchlistUnit.updateMany({ where: { id: { in: ids } }, data: FORGOTTEN });
+};
+
 export const getMovieUnit = async (watchlistId: number) => {
     return await prisma.watchlistUnit.findFirst({ where: { watchlistId, seasonNumber: null } });
 };
@@ -378,7 +424,7 @@ export const setSeasonsMonitored = async (watchlistId: number, monitored: boolea
  * A show nobody watches and nothing was downloaded from has no reason to sit on the
  * watchlist — unchecking the last episode has to take the row with it.
  */
-const pruneWatchlistItem = async (id: number): Promise<WatchlistItem | null> => {
+export const pruneWatchlistItem = async (id: number): Promise<WatchlistItem | null> => {
     const keep = await prisma.watchlistUnit.count({
         where: {
             watchlistId: id,

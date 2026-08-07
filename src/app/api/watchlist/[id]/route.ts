@@ -1,4 +1,6 @@
-import { getWatchlistItem, getWatchlistItemWithMedia, removeFromWatchlist, toMediaType } from "@/lib/watchlist";
+import { NextRequest } from "next/server";
+
+import { deleteItem, getWatchlistItem, getWatchlistItemWithMedia, stopWatching, toMediaType } from "@/lib/watchlist";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -26,13 +28,22 @@ export async function GET(req: Request, { params }: Params) {
     }
 }
 
-export async function DELETE(req: Request, { params }: Params) {
+/**
+ * Two different things behind one verb. Without `torrent` this only stops watching:
+ * the client is untouched, and anything already downloaded stays listed under
+ * Downloaded. With `torrent=1` the torrents are removed as well — `files=1` takes
+ * the files with them — and the item is gone for good.
+ */
+export async function DELETE(req: NextRequest, { params }: Params) {
     let { id } = await params;
     let watchlistId = Number(id);
 
     if (! watchlistId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
     }
+
+    let withTorrent = req.nextUrl.searchParams.get('torrent') === "1";
+    let withFiles = req.nextUrl.searchParams.get('files') === "1";
 
     try {
         let item = await getWatchlistItem(watchlistId);
@@ -41,11 +52,14 @@ export async function DELETE(req: Request, { params }: Params) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
         }
 
-        await removeFromWatchlist(watchlistId);
+        let result = withTorrent
+            ? await deleteItem(watchlistId, withFiles)
+            : await stopWatching(watchlistId);
 
         // no title is stored, the caller renders the message from what it already knows
         return Response.json({
             success: true,
+            kept: !! result,
             result: { id: item.id, tmdbId: item.tmdbId, type: toMediaType(item.type) }
         });
 

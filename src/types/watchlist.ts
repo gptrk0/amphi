@@ -11,6 +11,9 @@ export type WatchlistEntry = {
     status: WatchStatus;
     episodeCount: number;
     downloadedCount: number;
+    // being watched and being on disk are separate: something downloaded stays
+    // listed under Downloaded after you stop watching it
+    monitored: boolean;
 };
 
 export type WatchlistEpisodeItem = {

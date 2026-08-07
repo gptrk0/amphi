@@ -314,7 +314,24 @@ Amit ebből átvettem:
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
 - [x] **Epizód-szintű nézet és választás** — lásd a lenti alfejezetet (2026-08-07).
 - [x] **Évad-monitorozás kézi váltása a felületen** — ugyanott; a régi, sosem hívott `PATCH /api/watchlist/:id/seasons/:n` végpont helyére a `PATCH /api/watchlist` lépett.
-- [ ] **`Stop watching` gomb** a részletnézeten: továbbra is a teljes watchlist-sort törli. Most már van finomabb út is (pipák kiszedése), tehát a gomb maradhat „mindent töröl" jelentéssel — de az epizódok letöltés-nyilvántartását is viszi, ezt még el kell dönteni.
+- [x] **`Stop watching` vs. `Delete` szétválasztva** (2026-08-07-i kérés) — lásd a lenti alfejezetet.
+
+#### „Figyelem" és „megvan a lemezen" szétválasztása (2026-08-07-i kérés) ✅
+
+Eddig egyetlen művelet volt: a watchlistről levétel **törölte a sort**, amivel a letöltött film egyszerre eltűnt a `Downloaded` listáról is, a torrent pedig ott maradt a kliensben. Mostantól két különböző dolog:
+
+| művelet | mit csinál |
+|---|---|
+| **Stop watching** (`/watchlist`, kártya-menü, részletnézet) | csak leveszi a figyelést (`monitored = false`). A torrenthez **nem nyúl**. Ami már letöltött, az megmarad és továbbra is látszik a `Downloaded` alatt. Ha nincs mit megőrizni (semmi nem letöltött és nem fut), a sor kikerül. |
+| **Delete** (`/downloaded`) | a torrentet **kiveszi a qBittorrentből is**, és rákérdez, hogy a fájlok mehetnek-e vele. Utána a sor eltűnik, és nem tölti le újra. |
+
+- A `/watchlist` mostantól nem mutatja azt, ami letöltött és már nem figyelt — az a `Downloaded` alá tartozik. Ehhez a DTO-ba bekerült a `monitored` flag.
+- **Ha a torrentet a qBittorrentben törlöd**, a `syncDownloads` észreveszi, és egy *már befejezett* letöltésnél ezt „megnézve és törölve"-ként értelmezi: a unit elfelejtődik (`monitored=false`, `PENDING`, hash nélkül) és a sor kiürülve törlődik — **nem** indul újra a letöltés. Egy *félbemaradt* letöltésnél a régi viselkedés marad (visszaáll `PENDING`-re és újra keres), mert ott az eltűnés jellemzően megszakadt/hibás torrentet jelent. Ha ezt is „nem kérem"-ként kell értelmezni, az egy sor.
+- A „felejtés" szándékosan nem sortörlés: egy sorozatnál a `syncTvSeasons` visszahozná az epizód-unitot, és az évad beállítását örökölve **újra letöltené**. Így viszont a unit megmarad nem figyeltként, tehát a scanner nem nyúl hozzá.
+
+**Élő ellenőrzés** (eldobható sorokon, a te adataidhoz nyúlás nélkül): letöltött elem `Stop watching` után megmaradt `DOWNLOADED`/`monitored=false` állapotban; letöltés nélküli elem sora eltűnt; a kliensből eltűnt kész torrent a `movie 13: removed from the client after finishing, treated as watched and deleted` sorral takarításra került; a `Delete` a torrent-eltávolítással együtt lefutott.
+
+- **Nyitva:** egy részben letöltött sorozat (pl. 1/30 epizód) nem jelenik meg a `Downloaded` alatt, mert a származtatott státusza nem `DOWNLOADED`. Ha a `Downloaded` inkább „mi van a lemezen" nézet, akkor ott epizód-szinten kellene listázni.
 
 #### Epizódonkénti választás és élő watchlist-pipák (2026-08-07-i kérés) ✅
 

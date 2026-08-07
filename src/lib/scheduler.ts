@@ -3,7 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
-import { ensureMovieUnit, markUnitsDownloading, syncTvSeasons, toAirDate } from "@/lib/watchlist";
+import {
+    ensureMovieUnit,
+    forgetUnits,
+    markUnitsDownloading,
+    pruneWatchlistItem,
+    syncTvSeasons,
+    toAirDate
+} from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
 const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
@@ -92,7 +99,10 @@ export const syncDownloads = async () => {
     const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
     const units = await prisma.watchlistUnit.findMany({
-        where: { status: WatchStatus.DOWNLOADING, torrentHash: { not: null } },
+        where: {
+            status: { in: [ WatchStatus.DOWNLOADING, WatchStatus.DOWNLOADED ] },
+            torrentHash: { not: null }
+        },
         include: { watchlist: true }
     });
 
@@ -100,27 +110,46 @@ export const syncDownloads = async () => {
 
     for (const hash of hashes) {
         const covered = units.filter(unit => String(unit.torrentHash).toLowerCase() === hash);
-        const where = { id: { in: covered.map(unit => unit.id) } };
+        const running = covered.filter(unit => unit.status === WatchStatus.DOWNLOADING);
+        const done = covered.filter(unit => unit.status === WatchStatus.DOWNLOADED);
+        const where = { id: { in: running.map(unit => unit.id) } };
+
         const torrent = await resolveTorrent(byHash, hash);
 
         if (! torrent) {
-            syncLog(`${ unitLabel(covered) }: torrent is gone from the client, queued for a new search`);
+            // the same disappearance means two different things: a download that
+            // never finished was cancelled or failed and is worth another search,
+            // while a finished one was watched and cleaned up
+            if (done.length > 0) {
+                syncLog(`${ unitLabel(done) }: removed from the client after finishing, treated as watched and deleted`);
 
-            await prisma.watchlistUnit.updateMany({
-                where,
-                data: { status: WatchStatus.PENDING, torrentHash: null }
-            });
+                await forgetUnits(done.map(unit => unit.id));
+                await pruneWatchlistItem(done[0].watchlistId);
+            }
+
+            if (running.length > 0) {
+                syncLog(`${ unitLabel(running) }: torrent is gone from the client, queued for a new search`);
+
+                await prisma.watchlistUnit.updateMany({
+                    where,
+                    data: { status: WatchStatus.PENDING, torrentHash: null }
+                });
+            }
 
             continue;
         }
 
+        if (running.length === 0) {
+            continue;
+        }
+
         if (torrent.isComplete) {
-            syncLog(`${ unitLabel(covered) }: downloaded (${ torrent.name })`);
+            syncLog(`${ unitLabel(running) }: downloaded (${ torrent.name })`);
 
             await prisma.watchlistUnit.updateMany({ where, data: { status: WatchStatus.DOWNLOADED } });
 
         } else if (torrent.isFailed) {
-            syncLog(`${ unitLabel(covered) }: torrent failed (${ torrent.state }), queued for a new search`);
+            syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`);
 
             await prisma.watchlistUnit.updateMany({
                 where,

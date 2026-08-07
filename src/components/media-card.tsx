@@ -64,15 +64,15 @@ export function MediaCard({
 
                             <Badge className="absolute left-2 top-2">{ media.type }</Badge>
 
-                            {entry && <BookmarkCheck className="absolute right-2 top-2 size-5 drop-shadow-md" />}
+                            {entry?.monitored && <BookmarkCheck className="absolute right-2 top-2 size-5 drop-shadow-md" />}
                         </div>
                     </Link>
                 </ContextMenuTrigger>
 
                 <ContextMenuContent className="w-56">
-                    {entry
+                    {entry?.monitored
                         ? <ContextMenuItem className="cursor-pointer" onClick={() => remove(media.type, media.id, media.name)}>
-                            <BookmarkX /> Remove from watchlist
+                            <BookmarkX /> Stop watching
                         </ContextMenuItem>
                         : <ContextMenuItem className="cursor-pointer" onClick={() => add(media.type, media.id, media.name)}>
                             <Bookmark /> Add to watchlist
