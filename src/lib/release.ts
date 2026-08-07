@@ -138,16 +138,29 @@ export const normalizeTitle = (title: string) => {
 };
 
 /**
+ * PTT leaves the season marker in the title when nothing follows it that it
+ * recognises as metadata — "Ted Lasso S01 1080p" parses as "Ted Lasso S01". That
+ * looked like a different show and threw away most season packs, so a trailing
+ * marker is cut off here. Anything after it is release noise, never part of a name.
+ */
+const SEASON_MARKER = /s\d{1,2}(?:[\s._-]*-[\s._-]*s?\d{1,2})?(?:[\s._-]*e\d{1,3})?|season[\s._-]*\d{1,2}/.source;
+const SEASON_SUFFIX = new RegExp(`[\\s._-]+(?:(?:${ SEASON_MARKER })(?:[\\s._-]+complete)?|complete)\\s*$`, "i");
+
+const releaseTitleOf = (title: string, parsed: { title?: string }) => {
+    return (parsed.title || title).replace(SEASON_SUFFIX, "");
+};
+
+/**
  * The release name has to be about the requested title, not merely contain it —
  * "The Odyssey The Making Of An Epic" is a different film.
  */
 const matchesTarget = (title: string, target: ReleaseTarget): string | null => {
     const parsed = PTT.parse(title) as { title?: string, year?: number };
-    const releaseTitle = normalizeTitle(parsed.title || title);
+    const releaseTitle = normalizeTitle(releaseTitleOf(title, parsed));
     const accepted = target.titles.map(normalizeTitle).filter(Boolean);
 
     if (accepted.length > 0 && ! accepted.includes(releaseTitle)) {
-        return `title mismatch: "${ parsed.title || title }"`;
+        return `title mismatch: "${ releaseTitleOf(title, parsed) }"`;
     }
 
     if (target.kind === "movie" && target.year && parsed.year && Math.abs(parsed.year - Number(target.year)) > 1) {

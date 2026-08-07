@@ -257,6 +257,10 @@ Amit ebből átvettem:
 ### Fázis 6 — Torrent-kiválasztás finomítása
 - [x] Konfigurálható felbontás-prioritás, kodek-preferencia, indexer-prioritás, méret-küszöbök, kizáró kulcsszavak (env-ben; DB-s Settings a Fázis 8-ban).
 - [x] Pontozó függvény + hamis-release védelem (cím/év egyezés, minimum méret a bemondott felbontáshoz).
+- [x] **Cím-egyezés javítása: a season packek nagy része hibásan kiesett** (2026-08-07, a pack-szabály mérése közben derült ki). A `PTT.parse()` bent hagyja az évad-jelölőt a címben, ha nem követi olyasmi, amit metaadatnak ismer fel: a `Ted Lasso S01 1080p` címe `"Ted Lasso S01"` lett, ami nem egyezett a `"Ted Lasso"`-val, tehát „más sorozatnak" számított. Most a záró évad-jelölő (`S01`, `S01-S02`, `Season 1`, opcionális `COMPLETE`) levágásra kerül a összehasonlítás előtt.
+  - Mérés a saját indexereiden, pontozásig eljutó jelöltek száma **előtte → utána**: Ted Lasso S1 **2 → 12** (54 találatból), Severance S1 **4 → 16** (62-ből), Game of Thrones S1 **1 → 15** (153-ból).
+  - A védelem megmaradt: a `The Odyssey The Making Of An Epic` és az `A Game of Leopard Thrones` továbbra is elutasításra kerül. A maradó cím-eltérések is jogosak (idegen nyelvű dupla címek, filmzene-album, félrecímkézett epizódok).
+  - Az epizód-keresést nem érintette (ott a `S01E01` alakot a PTT eddig is helyesen bontotta), tehát ez kifejezetten a pack-ág vakfoltja volt — pont azé, amelyikre az új szabály most sokkal többször támaszkodik.
 - [x] **Epizód-torrent vs. season pack** (átdolgozva 2026-08-07). A régi `PACK_AFTER_ATTEMPTS` (előbb N sikertelen egyedi próbálkozás, csak utána pack) megszűnt. Az új szabály (`shouldUsePack`) két esetben választ packot:
   1. az adott rész **egyedileg nem elérhető** — akár a kézi letöltés, akár a scanner kéri;
   2. az évad **teljes egészében megjelent, és még egyetlen részét sem töltöttük le** — ilyenkor egy torrent jobb, mint tíz külön keresés, ami mind sikerülhet vagy nem.
