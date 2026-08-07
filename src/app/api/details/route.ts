@@ -1,39 +1,38 @@
 import { NextRequest } from "next/server";
-import { fetchMediaDetails, getTvSeasons } from "@/lib/media";
+import { getMediaDetails, getTvSeasons } from "@/lib/media";
 
 export async function GET(req: NextRequest) {
     const type = req.nextUrl.searchParams.get('type');
-    const id = req.nextUrl.searchParams.get('id');
+    const id = Number(req.nextUrl.searchParams.get('id'));
 
     if (! type || ! id) {
         return Response.json({ success: false });
     }
 
-    let media = await fetchMediaDetails(type as string, parseInt(id));
+    const details = await getMediaDetails(type, id);
 
-    if (! media) {
+    if (! details) {
         return Response.json({ success: false, message: "Failed to fetch details." });
     }
 
-    let seasons = type === "tv" ? await getTvSeasons(parseInt(id)) : [];
+    const seasons = type === "tv" ? await getTvSeasons(id) : [];
 
     return Response.json({
         success: true,
-        result: media,
-        seasons: seasons.map(s => {
-            return {
-                season_number: s.season_number,
-                name: s.name,
-                air_date: s.air_date,
-                episode_count: s.episode_count,
-                episodes: s.episodes.map(e => {
-                    return {
-                        episode_number: e.episode_number,
-                        name: e.name,
-                        air_date: e.air_date
-                    };
-                })
-            };
-        })
+        // the plain media object stays where it was, the page reads the rest from
+        // `details`
+        result: details.media,
+        details,
+        seasons: seasons.map(season => ({
+            season_number: season.season_number,
+            name: season.name,
+            air_date: season.air_date,
+            episode_count: season.episode_count,
+            episodes: season.episodes.map(episode => ({
+                episode_number: episode.episode_number,
+                name: episode.name,
+                air_date: episode.air_date
+            }))
+        }))
     });
 }

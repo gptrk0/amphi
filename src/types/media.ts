@@ -29,6 +29,80 @@ export type MediaGenre = {
     name: string;
 };
 
+export type MediaPerson = {
+    id: number;
+    name: string;
+    // the character for the cast, the job for the crew
+    role: string;
+    profile_img: string;
+};
+
+export type MediaCompany = {
+    id: number;
+    name: string;
+    logo_img: string;
+};
+
+export type MediaVideo = {
+    key: string;
+    name: string;
+};
+
+export type MediaProviders = {
+    link: string | null;
+    flatrate: MediaCompany[];
+    rent: MediaCompany[];
+    buy: MediaCompany[];
+};
+
+export type MediaEpisodeStub = {
+    name: string;
+    air_date: string | null;
+    season_number: number;
+    episode_number: number;
+};
+
+/**
+ * Everything the detail page shows. One TMDB request with the extras appended, so
+ * a page is a single round trip.
+ */
+export type MediaDetails = {
+    media: Media;
+    original_name: string;
+    original_language: string | null;
+    tagline: string;
+    status: string;
+    // minutes: the running time of a film, the length of an episode for a show
+    runtime: number | null;
+    genres: MediaGenre[];
+    rating: number;
+    votes: number;
+    certification: string | null;
+    // the country the certification and the providers below are valid in
+    region: string;
+    homepage: string;
+    imdb_id: string | null;
+    budget: number;
+    revenue: number;
+    companies: MediaCompany[];
+    countries: string[];
+    languages: string[];
+    cast: MediaPerson[];
+    crew: MediaPerson[];
+    trailer: MediaVideo | null;
+    providers: MediaProviders;
+    recommendations: Media[];
+    similar: Media[];
+    // shows only
+    season_count: number | null;
+    episode_count: number | null;
+    networks: MediaCompany[];
+    first_air_date: string | null;
+    last_air_date: string | null;
+    in_production: boolean | null;
+    next_episode: MediaEpisodeStub | null;
+};
+
 export type MediaEpisode = {
     episode_number: number;
     name: string;
