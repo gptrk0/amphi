@@ -10,6 +10,11 @@ export type TorrentStatus = {
     tags: string[];
     isComplete: boolean;
     isFailed: boolean;
+    size: number;
+    downloadSpeed: number;
+    // seconds, null when qBittorrent cannot tell yet
+    eta: number | null;
+    seeds: number;
 };
 
 const CATEGORY = process.env.TORRENT_CATEGORY || "aioseerr";
@@ -97,9 +102,13 @@ const form = (fields: Record<string, string | number | boolean>) => {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// qBittorrent reports a hundred days when it has no estimate
+const UNKNOWN_ETA = 8640000;
+
 const toStatus = (torrent: any): TorrentStatus => {
     const state = String(torrent.state || "");
     const progress = Number(torrent.progress || 0);
+    const eta = Number(torrent.eta || 0);
 
     return {
         hash: String(torrent.hash || ""),
@@ -108,7 +117,11 @@ const toStatus = (torrent: any): TorrentStatus => {
         state,
         tags: String(torrent.tags || "").split(",").map((v: string) => v.trim()).filter(Boolean),
         isComplete: progress >= 1 || COMPLETE_STATES.includes(state),
-        isFailed: FAILED_STATES.includes(state)
+        isFailed: FAILED_STATES.includes(state),
+        size: Number(torrent.size || 0),
+        downloadSpeed: Number(torrent.dlspeed || 0),
+        eta: eta > 0 && eta < UNKNOWN_ETA ? eta : null,
+        seeds: Number(torrent.num_seeds || 0)
     };
 };
 

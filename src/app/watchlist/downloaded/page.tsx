@@ -1,10 +1,10 @@
 'use client';
 
-import { WatchlistGrid } from "@/components/watchlist-grid";
+import { WatchlistTable } from "@/components/watchlist-table";
 
 export default function Page() {
     return (
-        <WatchlistGrid
+        <WatchlistTable
             title="Downloaded"
             description="Already available on disk."
             onlyStatus="DOWNLOADED"

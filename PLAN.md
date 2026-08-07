@@ -275,7 +275,8 @@ Amit ebből átvettem:
   - Ez a *mozis* bemutató dátuma, tehát egy már bemutatott, de trackeren még nem elérhető film (mint a The Odyssey) továbbra is keresésre kerül. Ez viszont a **növekvő várakozással** (Fázis 7) már nem probléma: napi egy ellenőrzésre ritkul, és soha nem adja fel — így nem kell a TMDB `release_dates` digitális dátumát behúzni.
 - [ ] **Több évadot fedő pack** (`S01-S03`): most csak annak az évadnak az epizódjaira íródik rá a hash, amelyikre a keresés indult — a többi évad epizódja `PENDING` marad, és külön letöltésre kerülhet (duplikált adat). Terv: a pack `parseNumbering().seasons` alapján az összes érintett évad epizódját megjelölni.
 - [ ] **Több-epizódos release átfedése**: ha egy `S01E01-E06` release csak néhány epizódra lett kiválasztva, a többi epizód a saját torrentjével jön → ugyanaz az anyag kétszer töltődhet le. Terv: a lefedettséget figyelembe venni a kiválasztásnál.
-- [ ] **Pack méret-plafon**: `QUALITY_MAX_SIZE_GB=0` esetén nincs felső korlát; a felbontás-prioritás 1080p-re állítása ezt jelentősen enyhítette (189GB → 12GB a Ted Lasso S1-nél), de érdemes lehet külön pack-plafon.
+- [x] **Pack méret-plafon** (2026-08-07) — `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB=5`, alapból bekapcsolva, a `QUALITY_MAX_SIZE_GB`-tól függetlenül (az 0, tehát eddig egyáltalán nem volt felső korlát). A kettő közül a szigorúbb érvényesül. Azért kellett, mert az új pack-szabállyal egy teljesen megjelent, még el nem kezdett évadnál alapból a pack nyer.
+  - Mérés a Ted Lasso S1-en (54 találat, 10 rész, 50GB-os plafon): a plafon **2 release-t utasít el** (a legnagyobb 54,8GB), de a **választást nem változtatja meg** — az 1080p-s 12,5GB-os pack egyébként is nyer. Vagyis ez biztosíték, nem napi hatás.
 - [ ] **Stall-kezelés**: a scanner csak az `error`/`missingFiles` állapotot és az eltűnt torrentet kezeli hibaként; egy órákig 0 B/s-en álló torrentet nem cserél le. Terv: idő + progress alapú stall-detektálás, majd újrapróbálkozás más release-szel.
 
 ### Fázis 7 — Robusztusság / üzemeltetés
@@ -413,13 +414,19 @@ A `/watchlist` és a `/watchlist/downloaded` ma ugyanaz a poszter-rács ([src/co
 **Tervezett oszlopok** (`/watchlist`): poszter-bélyeg + cím · típus · státusz · haladás (film: %; sorozat: `X/Y epizód` + %) · felvéve · utoljára ellenőrizve · próbálkozások · műveletek (Details / Stop watching).
 **`/downloaded`**: poszter-bélyeg + cím · típus · epizódszám · elkészült (`updatedAt`) · felvéve · release neve (ha eltároljuk) · műveletek.
 
-**Amit még el kell dönteni:**
-- Rendezhető oszlopok és szűrés státuszra — kliens oldalon elég (a watchlist néhány száz sor), vagy szerveroldali rendezés kell?
-- Poszter-bélyeg legyen-e a sor elején (Sonarr így csinálja), vagy csak szöveg?
-- Mobilon a táblázat összecsukható kártyákká, vagy vízszintes görgetés?
-- Automatikus frissítés letöltés közben (pl. 5 mp-es polling, amíg van `DOWNLOADING` sor), vagy csak kézi frissítés?
+**Eldöntött kérdések (2026-08-07) és a megvalósítás ✅**
+- **Rendezés/szűrés kliens oldalon** — egyetlen lekérés, az oszlopfejlécre kattintás és a státusz-szűrő azonnal hat.
+- **Poszter-bélyeg a sor elején** (Sonarr-módra), poszter nélküli elemnél kis „no img" keret.
+- **Mobilon vízszintes görgetés** — a shadcn `Table` konténere `overflow-x-auto`, tehát egy implementáció. Kártyás nézet később, ha zavaró lesz.
+- **Automatikus frissítés**, amíg van `DOWNLOADING` sor: 5 mp-es polling, ami magától leáll, ha nincs aktív letöltés.
 
-**Technikai előfeltételek:** a shadcn `table` komponens még nincs telepítve (`src/components/ui/` alatt nincs `table.tsx`). A `WatchlistGrid` helyére két nézet kell, vagy egy közös `WatchlistTable` `columns` propszal. A százalékhoz a `GET /api/watchlist` válaszát ki kell bővíteni (vagy egy külön `?live=1` kapcsolóval, hogy a discover főoldal személyes sorai ne fizessék meg a qBittorrent-hívást).
+Megvalósítás: [src/components/watchlist-table.tsx](src/components/watchlist-table.tsx) egy közös komponens `columns` tömbbel; a `/watchlist` és a `/watchlist/downloaded` ugyanazt használja, utóbbi `onlyStatus="DOWNLOADED"`-del (ott a státusz, az utolsó ellenőrzés és a próbálkozás-oszlop kimarad). A `WatchlistGrid` törölve. A shadcn `table` primitív kézzel került be ([src/components/ui/table.tsx](src/components/ui/table.tsx)).
+
+- A `GET /api/watchlist?live=1` **egyetlen** `listManagedTorrents()` hívással köti hozzá az élő állapotot a `torrentHash` alapján; a `?live` nélküli hívás (pl. a főoldal személyes sorai) nem fizeti meg. Ha a qBittorrent nem elérhető, a lista attól még megjön, csak százalék nélkül.
+- A `TorrentStatus` kiegészült: `size`, `downloadSpeed`, `eta`, `seeds`. A qBittorrent 100 napot (`8640000`) ad, ha nincs becslése — az `eta` ilyenkor `null`.
+- Több torrent (több epizód egyszerre) esetén a sor összesít: százalék átlag, sebesség összeg, `eta` a leglassabbé.
+- A DTO-ba bekerült a `lastCheckedAt` (a unitok közül a legfrissebb) és a `searchAttempts` (a legnagyobb).
+- **Nincs „mikor készült el" oszlop**: azt sehol nem tároljuk, és az `updatedAt` a `Watchlist` soron nem mozdul, amikor egy unit állapota változik. Ha kell, egy `completedAt` oszlop lenne rá a válasz.
 
 ---
 

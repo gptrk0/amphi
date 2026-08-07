@@ -7,6 +7,8 @@ export type QualityProfile = {
     excludeKeywords: string[];
     minSeeders: number;
     maxSizeGb: number;
+    // ceiling for a season pack, per episode it contains
+    maxPackSizeGb: number;
     minSizeMovie: Record<string, number>;
     minSizeEpisode: Record<string, number>;
     preferredCodecs: string[];
@@ -100,6 +102,7 @@ export const getQualityProfile = (): QualityProfile => {
         excludeKeywords: list(process.env.QUALITY_EXCLUDE || DEFAULT_EXCLUDES),
         minSeeders: Number(process.env.QUALITY_MIN_SEEDERS || 1),
         maxSizeGb: Number(process.env.QUALITY_MAX_SIZE_GB || 0),
+        maxPackSizeGb: Number(process.env.QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB || 5),
         minSizeMovie: parseSizeTable(process.env.QUALITY_MIN_SIZE_MOVIE || DEFAULT_MIN_SIZE_MOVIE),
         minSizeEpisode: parseSizeTable(process.env.QUALITY_MIN_SIZE_EPISODE || DEFAULT_MIN_SIZE_EPISODE),
         preferredCodecs: list(process.env.QUALITY_PREFERRED_CODECS || DEFAULT_PREFERRED_CODECS),
@@ -520,10 +523,15 @@ export const selectSeasonRelease = (
     titles: string[] = [],
     originalLanguage?: string | null
 ): ReleaseSelection => {
-    // the size limit is per episode, a pack is allowed to be that much bigger
+    // both limits are per episode, so a pack is allowed to be that much bigger. the
+    // pack ceiling is on by default: without one a single "grab the whole season"
+    // decision can pull in a 200GB remux
+    const episodes = Math.max(episodeCount, 1);
+    const caps = [ profile.maxSizeGb, profile.maxPackSizeGb ].filter(v => v > 0).map(v => v * episodes);
+
     const packProfile: QualityProfile = {
         ...profile,
-        maxSizeGb: profile.maxSizeGb > 0 ? profile.maxSizeGb * Math.max(episodeCount, 1) : 0
+        maxSizeGb: caps.length > 0 ? Math.min(...caps) : 0
     };
 
     return selectRelease(filterSeasonReleases(releases, season), packProfile, {

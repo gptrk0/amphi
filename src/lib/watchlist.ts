@@ -1,7 +1,8 @@
 import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchStatus } from "@/types/watchlist";
+import { listManagedTorrents, TorrentStatus } from "@/lib/torrent";
+import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
     units: {
@@ -147,19 +148,59 @@ const toSeasons = (units: UnitRow[], withEpisodes: boolean): WatchlistSeasonItem
  */
 export const withMedia = async (item: WatchlistRow, withEpisodes = false): Promise<WatchlistItem> => {
     const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
+    const units = trackedUnits(item);
+    const checked = units.map(unit => unit.lastCheckedAt).filter((v): v is Date => !! v);
 
     return {
         ...toWatchlistEntry(item),
         media: metadata ? metadata.media : null,
         addedAt: item.addedAt.toISOString(),
+        lastCheckedAt: checked.length > 0 ? new Date(Math.max(...checked.map(v => v.getTime()))).toISOString() : null,
+        searchAttempts: units.reduce((max, unit) => Math.max(max, unit.searchAttempts), 0),
         seasons: toSeasons(item.units, withEpisodes)
     };
 };
 
-export const getWatchlistWithMedia = async (): Promise<WatchlistItem[]> => {
-    const items = await getWatchlist();
+/**
+ * The live state of whatever the item is downloading. A season pack is one torrent
+ * for many units, several single episodes are several torrents — hence the sums.
+ */
+const toDownload = (units: UnitRow[], byHash: Map<string, TorrentStatus>): WatchlistDownload | null => {
+    const hashes = [ ...new Set(units
+        .filter(unit => unit.status === PrismaWatchStatus.DOWNLOADING && unit.torrentHash)
+        .map(unit => String(unit.torrentHash).toLowerCase())) ];
 
-    return await Promise.all(items.map(item => withMedia(item)));
+    const torrents = hashes.map(hash => byHash.get(hash)).filter((v): v is TorrentStatus => !! v);
+
+    if (torrents.length === 0) {
+        return null;
+    }
+
+    return {
+        name: torrents.length === 1 ? torrents[0].name : `${ torrents.length } torrents`,
+        state: torrents.length === 1 ? torrents[0].state : "downloading",
+        progress: torrents.reduce((sum, t) => sum + t.progress, 0) / torrents.length,
+        downloadSpeed: torrents.reduce((sum, t) => sum + t.downloadSpeed, 0),
+        // the slowest one decides when the item is done
+        eta: torrents.some(t => t.eta === null) ? null : Math.max(...torrents.map(t => t.eta as number)),
+        size: torrents.reduce((sum, t) => sum + t.size, 0)
+    };
+};
+
+/**
+ * `live` joins the qBittorrent state onto the rows with one call for the whole
+ * table. If the client is unreachable the list still comes back, without progress.
+ */
+export const getWatchlistWithMedia = async (live = false): Promise<WatchlistItem[]> => {
+    const items = await getWatchlist();
+    const torrents = live ? await listManagedTorrents() : [];
+    const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
+
+    return await Promise.all(items.map(async item => {
+        const dto = await withMedia(item);
+
+        return live ? { ...dto, download: toDownload(item.units, byHash) } : dto;
+    }));
 };
 
 export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistItem | null> => {

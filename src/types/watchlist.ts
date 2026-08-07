@@ -30,9 +30,24 @@ export type WatchlistSeasonItem = {
     episodes?: WatchlistEpisodeItem[];
 };
 
+// Read live from qBittorrent, never stored — a percentage is stale the moment it
+// would be written. Only present with `?live=1`.
+export type WatchlistDownload = {
+    name: string;
+    state: string;
+    progress: number;
+    downloadSpeed: number;
+    eta: number | null;
+    size: number;
+};
+
 // One row of `GET /api/watchlist` — database state plus TMDB metadata.
 export type WatchlistItem = WatchlistEntry & {
     media: Media | null;
     addedAt: string;
+    // the latest of the units, so a show shows when it was last looked for
+    lastCheckedAt: string | null;
+    searchAttempts: number;
     seasons: WatchlistSeasonItem[];
+    download?: WatchlistDownload | null;
 };

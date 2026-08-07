@@ -4,9 +4,11 @@ import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, setMonitored, 
 
 export async function GET(req: NextRequest) {
     const slim = req.nextUrl.searchParams.get('slim');
+    // only the table asks for this, it costs a qBittorrent call
+    const live = req.nextUrl.searchParams.get('live') === "1";
 
     try {
-        let result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia();
+        let result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(live);
 
         return Response.json({ success: true, result });
 
