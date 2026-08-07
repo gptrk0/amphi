@@ -277,8 +277,9 @@ Amit ebből átvettem:
   - A dátumot a `refreshMetadata()` (a régi `refreshShows`) tartja frissen, mert a TMDB tologatja a megjelenéseket; ez a kör a `runScan`-ben előre került, hogy a scanner már friss dátumból döntsön. A `syncDownloads`-hoz hasonlóan **dry-runban is ír**: nem indít semmit, csak követi a TMDB-t — és pont ezekre a dátumokra támaszkodik a visszatartás.
   - Élőben ellenőrizve: a három meglévő film dátuma magától kitöltődött, egy jövőbeli dátumú filmet (`The Last Sunrise`, 2026-08-26) felvéve a `scanMovies` átugrotta, a két megjelentet feldolgozta.
   - Ez a *mozis* bemutató dátuma, tehát egy már bemutatott, de trackeren még nem elérhető film (mint a The Odyssey) továbbra is keresésre kerül. Ez viszont a **növekvő várakozással** (Fázis 7) már nem probléma: napi egy ellenőrzésre ritkul, és soha nem adja fel — így nem kell a TMDB `release_dates` digitális dátumát behúzni.
-- [ ] **Több évadot fedő pack** (`S01-S03`): most csak annak az évadnak az epizódjaira íródik rá a hash, amelyikre a keresés indult — a többi évad epizódja `PENDING` marad, és külön letöltésre kerülhet (duplikált adat). Terv: a pack `parseNumbering().seasons` alapján az összes érintett évad epizódját megjelölni.
-- [ ] **Több-epizódos release átfedése**: ha egy `S01E01-E06` release csak néhány epizódra lett kiválasztva, a többi epizód a saját torrentjével jön → ugyanaz az anyag kétszer töltődhet le. Terv: a lefedettséget figyelembe venni a kiválasztásnál.
+- [x] **Több évadot fedő pack** (`S01-S03`) (2026-08-08). A hash eddig csak a keresés évadára íródott rá, a többi évad epizódja `PENDING` maradt és külön letöltésre kerülhetett — ugyanaz az anyag kétszer. Most a `packUnitIds()` a release nevéből (`parseNumbering().seasons`) kiolvassa az összes lefedett évadot, és a `GRABBABLE_STATUS`-ú unitjaikat is a pack hashére jelöli. A már letöltött/letöltés alatti epizódokhoz nem nyúl.
+- [x] **Több-epizódos release átfedése** (2026-08-08). Egy `S01E01-E06` release akkor is mind a hatot lehozza, ha csak egy epizódra lett kiválasztva. A `planGrabs` mostantól minden release-re ráírja azt is, amit a neve alapján egyébként is hoz (a `claimable` halmazból, azaz amire az évadnak még szüksége van), és **átfedésnél a szélesebb release nyer** — a szűkebb grab kiesik.
+  - Ellenőrizve eldobható adatokon: `E01`-hez saját release, `E02–E06`-hoz az `S01E01-E06` → korábban 2 torrent (a range + még egyszer az E01), most **1 torrent, E01–E06**. Csak `E02–E03`-at kérve is az egész range-et foglalja le, tehát a maradék négy epizódra nem indul második letöltés. Az `S01-S03` pack a 2. és 3. évad unitjait is megjelölte, a már letöltött `S02E01`-et kihagyva.
 - [x] **Pack méret-plafon** (2026-08-07) — `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB=5`, alapból bekapcsolva, a `QUALITY_MAX_SIZE_GB`-tól függetlenül (az 0, tehát eddig egyáltalán nem volt felső korlát). A kettő közül a szigorúbb érvényesül. Azért kellett, mert az új pack-szabállyal egy teljesen megjelent, még el nem kezdett évadnál alapból a pack nyer.
   - Mérés a Ted Lasso S1-en (54 találat, 10 rész, 50GB-os plafon): a plafon **2 release-t utasít el** (a legnagyobb 54,8GB), de a **választást nem változtatja meg** — az 1080p-s 12,5GB-os pack egyébként is nyer. Vagyis ez biztosíték, nem napi hatás.
 - [ ] **Stall-kezelés**: a scanner csak az `error`/`missingFiles` állapotot és az eltűnt torrentet kezeli hibaként; egy órákig 0 B/s-en álló torrentet nem cserél le. Terv: idő + progress alapú stall-detektálás, majd újrapróbálkozás más release-szel.
@@ -301,10 +302,10 @@ Amit ebből átvettem:
   - Commit előtt ellenőrizve: a `.env`, `node_modules`, `.next`, `prisma/generated` egyike sincs staged-elve, és a `.env` egyetlen valós értéke (TMDB / Jackett / qBittorrent / DB) sem fordul elő a commitolt 76 fájl egyikében sem.
   - **Remote nincs** és push sem történt — az a te döntésed. Előtte érdemes újra lefuttatni ugyanezt az ellenőrzést.
 - [x] **`.env.example`** — mind a ~40 env-változó értékek nélkül, kommentelve. A `.env` gitignore-olt, enélkül egy friss klón nem lenne indítható.
-- [ ] **Duplikált `prisma.config.ts`**: van egy a repo gyökerében és egy a `prisma/` alatt is. Tisztázni kell, melyik az élő (a `package.json` / Prisma CLI melyiket olvassa), a másikat törölni.
-- [ ] **CRLF sorvégek**: a `.env` (és valószínűleg több fájl) Windows-os sorvéggel van mentve. Az appot nem zavarja, de shell-scriptnél (`entrypoint.sh`) hibát okozhat — érdemes egy `.gitattributes` (`* text=auto eol=lf`).
-- [ ] **Lint**: `bun run lint` az egész projekten hibára fut (~60 hiba, döntően `prefer-const` és `no-explicit-any`) — vagy lazítani kell a szabályokat az `eslint.config.mjs`-ben, vagy egyszer végigmenni a kódon. A `tsc --noEmit` tiszta.
-- [ ] **Letöltési mappák**: minden a `TORRENT_CATEGORY` (`aioseerr`) kategóriába kerül, film/sorozat szétválasztás és külön save path nélkül. Terv: külön kategória vagy `savepath` filmre és sorozatra (a qBittorrent `add` hívás már fogadja).
+- [x] **Duplikált `prisma.config.ts`** (2026-08-08) — a `prisma validate` kiírja, melyiket tölti be (`Loaded Prisma config from prisma.config.ts`, a repo gyökeréből, mert a CLI a munkakönyvtárból indul). A `prisma/prisma.config.ts` halott volt, törölve; a `validate` és a `migrate status` utána is hibátlan.
+- [x] **CRLF sorvégek** — `.gitattributes` (`* text=auto eol=lf`), 2026-08-07.
+- [x] **Lint** (2026-08-08) — 78 találatról nullára. A többsége gépies volt (`prefer-const`), egy valódi elgépelés is kijött: a `tooltip.tsx`-ben egy magányos `1` állt utasításként a provider után. A keresősáv debounce-effektje mostantól a `navigate`-re hivatkozik (`useCallback`), nem megy el mellette. A maradék 35 `any` mind a három külső formátumot olvasó fájlban volt (TMDB, torznab, qBittorrent) — ott a szabály fájl-szinten kikapcsolva, indoklással az `eslint.config.mjs`-ben; máshol továbbra is hiba.
+- [x] **Letöltési mappák** (2026-08-08) — `TORRENT_MOVIE_PATH` és `TORRENT_SERIES_PATH`; ha üresek, minden marad a kategória saját könyvtárában (a régi viselkedés). A qBittorrent `add` hívás `savepath` mezőjét használja, a kategória nem változik, tehát a sync és a `listManagedTorrents` szűrése érintetlen.
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
 
 ### Fázis 8 — Későbbi, opcionális
@@ -462,18 +463,55 @@ Megvalósítás: [src/components/watchlist-table.tsx](src/components/watchlist-t
 [scheduler] [dry-run] movie 1516698: nothing suitable found (attempt 1, next in 1h)
 ```
 
+#### Kiadásválasztó ablak minden letöltésnél (2026-08-08-i kérés) ✅
+
+Kérés: a letöltés ne dönthessen egyedül — mutassa a legjobb 5 találatot, alapból kijelölve azt, amit a szűrő választana; ha nincs találat, kérdezze meg, mehet-e watchlistre.
+
+Eldöntött kérdések: **egy ablak, soronként egy letöltendő torrent** (nem sorozat-ablakok egymás után), és a lista **csak a szűrőn átment találatokat** tartalmazza, a kiszűrtek darabszámával.
+
+- Új végpont: `POST /api/download/preview` — keres, de nem tölt. A válasz soronként (`GrabChoice`) a film / a season pack / az egyes epizódok, mindegyikhez max. 5 kiadás (`DOWNLOAD_OPTION_COUNT`), és hogy hány találatot dobott el a minőségi profil.
+- **A terv szerveroldalon marad** (`DOWNLOAD_PLAN_TTL_MINUTES=15`), a `POST /api/download` pedig `planId` + a választott kiadások `guid`-jai alapján tölt. Így egy keresés nem fut le kétszer (10–60 mp), és a torrent-linkek nem járják meg a böngészőt. Lejárt terv → `410`, az ablak magától újrakeres.
+- A választás **átírja a tervet**, nem kerüli meg: onnantól ugyanaz a `planGrabs` → `executeSeasonGrab` lánc fut, tehát a pack- és az átfedés-szabály érvényes marad a kézi választásra is.
+- A `planSeasonGrabs` `watchlistId`-ja `null` is lehet: egy még watchlisten nem lévő sorozat előnézete így nem hoz létre sorokat mellékhatásként.
+- Az adatlap régi, utólagos „Not available yet" dialógusa megszűnt — ez a kérdés most ugyanennek az ablaknak az alja (`Nothing found for … — tedd watchlistre`), és részleges találatnál a letölthető sorok mellett jelenik meg.
+- Új: [src/lib/download-plan.ts](src/lib/download-plan.ts), [src/components/release-picker.tsx](src/components/release-picker.tsx), [src/context/download.tsx](src/context/download.tsx) (a `useDownload` hook helyére lépő provider, a kártya és a hero is ezt hívja).
+
+#### Adatlap-átépítés (2026-08-08-i kérés) ✅
+
+Kérés: az adatlap mutasson meg mindent, ami TMDB-ről megkapható és érdemes, Overseerr/Jellyseerr-mintára.
+
+- **Egy TMDB-kérés** hozza az egészet (`append_to_response`: credits / aggregate_credits, videos, external_ids, recommendations, similar, release_dates vagy content_ratings), a meglévő cache-be.
+- Blokkok: hero (backdrop, poszter, cím+év, tagline, korhatár, ★ értékelés szavazatszámmal, játékidő, műfajok, leírás) → Download / Trailer / Stop watching → évadválasztó (sorozat) → szereplők → `Details` rács (státusz, következő epizód, rendező/alkotó/író, dátumok, évad- és epizódszám, eredeti cím és nyelv, hangsávok, csatorna, stúdió, ország, büdzsé, bevétel, TMDB/IMDb/honlap link) → ajánlások és hasonlók.
+- Sorozatnál a stáb **csak az alkotókat** listázza: az `aggregate_credits` minden epizódrendezőt felsorol, ami semmit nem mond arról, ki csinálta a sorozatot.
+- Stúdió- és csatornanevek szövegként, nem logóként: a TMDB logói átlátszó hátterű sötét PNG-k, sötét témában eltűnnének.
+- A korhatár országfüggő: `TMDB_REGION`, alapból a `TMDB_LANGUAGE` régiója (`en-US` → `US`). `HU`-ra állítva magyar besorolás jön (`R` helyett `18`).
+- A „Where to watch" (JustWatch-szolgáltatók) rövid ideig szintén szerepelt rajta, de **kérésre kikerült**, a lekérdezéssel és a típusokkal együtt.
+
+#### Bejelentett hibák és javításuk (2026-08-07 → 08)
+
+| Bejelentés | Ok | Javítás |
+|---|---|---|
+| „A The Odyssey `Searching…`-en ragad" | Nem hiba: 33 találat, mind kamerás felvétel vagy más tartalom. | A státusz felirata **`Waiting for release`** lett — a `SEARCHING` nem folyamatban lévő keresés, hanem a „megnéztem, még nincs" állapot. |
+| „Nem tudom törölni a watchlistről" | A `pruneWatchlistItem` minden `PENDING`-nél előrébb tartó unitot megőrzendőnek vett, és a `SEARCHING` ilyen — vagyis amint a scanner egyszer rákeresett, a sor kitörölhetetlenné vált. | Sort csak **valódi letöltés** tart életben (`DOWNLOADING`/`DOWNLOADED`); a már nem figyelt unitok keresési állapota nullázódik. |
+| „Törlés után csak oldalfrissítésre tűnik el" | A tábla újratöltése az `entries.length`-hez volt kötve, a letöltött elem sora viszont megmarad, csak a `monitored` billen — a darabszám nem változott. | A hatás a lista **teljes állapotára** figyel; a betöltések sorszámot kapnak (a régebbi válasz nem írja felül az újat), és a művelet a szerver visszaigazolása után tölt újra. |
+| „Vízszintes görgetés az oldalon" | A kártya posztere `w-auto` volt `width={250}`-nel, tehát fix 250 px — egy hatoszlopos rács ebből szélesebb, mint az ablak. | `w-full`; a `SidebarInset` kapott `min-w-0`-t és `overflow-x-clip`-et, a `ScrollArea` gyökere `overflow-hidden`-t. |
+| „A progress `not yet`, miközben megy a letöltés" | A film ága csak `DOWNLOADED`-et és „még nem"-et ismert. | Futó letöltésnél a százalék, alatta sáv és sebesség. |
+| „100%-on áll, de sokáig `Downloading`" | A `syncDownloads` csak a 15 perces scan-körben futott. | Saját, rövid intervallum (`DOWNLOAD_SYNC_INTERVAL_MINUTES=1`), **és minden `?live=1` watchlist-lekérés** lefuttatja ugyanabból a torrent-listából, amiből a sorok készülnek — így a néző 5 mp-en belül látja az átbillenést. |
+
+Kérésre a `Downloaded` oldalból **`Library`** lett (`/library`), és ott a haladás-oszlop helyére a státusz került: minden sor kész, a haladása semmit nem mond. Mobilon a kártyák ~30%-kal kisebbek (sorokban 250 → 175 px, rácsban 2 → 3 oszlop).
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot:** Fázis 1–5 kész, a Fázis 6 nagy része is (a nyelvi preferenciával együtt), a git repo megvan. Ami maradt: a Fázis 6 négy nyitott finomítása (több évadot fedő pack, több-epizódos átfedés, pack méret-plafon, stall-kezelés), a Fázis 7 üzemeltetési tételei (`entrypoint.sh`, lint, letöltési mappák, seedelés, duplikált `prisma.config.ts`, `.gitattributes`), és a teljes Fázis 8.
+**Állapot (2026-08-08):** Fázis 1–6 kész a stall-kezelés kivételével, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`). Ami maradt: **stall-kezelés**, **seedelés/utómunka**, és a teljes Fázis 8 (settings UI, értesítések, auth, médiaszerver).
 
 ### Amit legközelebb kézzel meg kell tenni
-1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`), a konténer magától csak a Prisma Studio-t hozza fel. Ez a sor jelzi, hogy jó: `[scheduler] [dry-run] started, scanning every 15 minutes`. Amíg ez nem fut, semmilyen háttérkör nincs.
-2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor tényleg indíthat letöltéseket (addig a keresés/grab csak logol — a letöltés-visszaolvasás 2026-08-07 óta dry-runban is ír). Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
-3. **A watchliston most három sor van**: The Odyssey (`PENDING`), The Devil Wears Prada 2 (`PENDING`, a félbemaradt torrent után visszaállítva), Mortal Kombat II (`DOWNLOADED`). Az első két sorra a scanner keresni fog, amint a dry-run kikapcsol.
+1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
+2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor a **scanner** is indíthat letöltéseket. A kézi letöltés (a kiadásválasztó ablakon keresztül) ettől függetlenül mindig valódi — 2026-08-08-án az *Obsession* így jött le, végig helyesen. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
+3. **A watchliston egyetlen sor van**: Obsession (`DOWNLOADED`) — vagyis a dry-run kikapcsolása önmagában semmit nem indítana el, csak azt, amit ezután felveszel.
 
 ---
 
@@ -501,7 +539,9 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `SEARCH_BACKOFF_MINUTES`, `MAX_SEARCH_ATTEMPTS`, `PACK_AFTER_ATTEMPTS`, `SCAN_DRY_RUN`, `SCAN_DISABLED`.
+Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`.
+
+A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta), ha a `.env`-ben bent maradtak, figyelmen kívül maradnak.
 
 **Nyelv:** a kód, a kommentek és a felület angol. A TMDB metaadat is angolul jön (`TMDB_LANGUAGE`, default `en-US`) — `hu-HU`-ra állítva visszakapható a magyar cím/leírás anélkül, hogy a felület nyelve változna. Ez a terv-dokumentum marad magyar.
 
@@ -519,7 +559,9 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
-| [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove) |
+| [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
+| [src/context/download.tsx](src/context/download.tsx) | a kiadásválasztó ablak állapota, minden letöltés ezen megy keresztül |
+| [src/lib/download-plan.ts](src/lib/download-plan.ts) | a keresés eredménye szerveroldalon tárolva, a választott kiadások alkalmazása |
 | [src/components/searchbar.tsx](src/components/searchbar.tsx) | debounce-olt keresősáv, `/search?q=…` navigációval |
 | [src/app/search/page.tsx](src/app/search/page.tsx) | keresési találatok `MediaCard` griddel + lapozás |
 | [src/lib/sections.ts](src/lib/sections.ts) | a discover nézetek sorainak összeállítása + sorok közötti dedup + hero választás |
@@ -535,12 +577,13 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | `GET /api/discover?type&category&genre&page` | TMDB discover: trending / popular / top_rated / upcoming / now_playing / airing_today / on_the_air, vagy genre-szűrt lista |
 | `GET /api/discover/sections?view` | a főoldal / `/movies` / `/series` kész sorai, sorok között dedupálva, hero-val |
 | `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
-| `GET /api/details?type&id` | metaadat + tv-nél évad- és epizódlista (cím, `air_date`) |
+| `GET /api/details?type&id` | a teljes adatlap egy hívásban (`details`: stáb, szereplők, trailer, korhatár, ajánlások, hasonlók, pénzügyek) + tv-nél évad- és epizódlista |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
 | `GET /api/watchlist` | dúsított lista (TMDB metaadattal) |
 | `GET /api/watchlist?slim=1` | csak azonosítók + állapot, TMDB-hívás nélkül |
 | `POST /api/watchlist` | `{ tmdbId, type, seasons? }` — `seasons` esetén csak azokat monitorozza |
 | `GET`/`DELETE /api/watchlist/:id` | egy elem lekérése (epizódonkénti állapottal) / eltávolítása (cascade) |
 | `PATCH /api/watchlist` | `{ tmdbId, type, monitored, seasonNumber?, episodes? }` — évad vagy egyes epizódok be/ki; felveszi a sort, ha kell, és törli, ha kiürül (`result: null`) |
-| `POST /api/download` | `{ type, id, seasons? }` — `seasons` lehet `[1,2]` vagy `[{ seasonNumber, episodeNumbers }]` → `{ started, missing / missingMovie }` |
+| `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
+| `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot és a megjelenési dátumokat is figyelmen kívül hagyja |
