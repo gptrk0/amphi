@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
@@ -101,11 +101,35 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
     const [ deleting, setDeleting ] = useState<WatchlistItem | null>(null);
+    const request = useRef(0);
 
+    /**
+     * An action reloads the table, and so does the optimistic update in front of
+     * it, so two requests are in the air with the older one still carrying the row
+     * that was just removed. Only the answer to the newest request is taken.
+     */
     const load = () => {
+        const ticket = ++request.current;
+
         return axios.get("/api/watchlist", { params: { live: 1 } })
-            .then(res => setItems(res.data.result || []))
+            .then(res => {
+                if (ticket === request.current) {
+                    setItems(res.data.result || []);
+                }
+            })
             .catch(err => console.error(err));
+    };
+
+    const stopWatching = async (item: WatchlistItem) => {
+        await remove(item.type, item.tmdbId, item.media?.name || `TMDB #${ item.tmdbId }`);
+        await load();
+    };
+
+    const deleteItem = async (item: WatchlistItem, deleteFiles: boolean) => {
+        setDeleting(null);
+
+        await destroy(item.id, deleteFiles, item.media?.name);
+        await load();
     };
 
     /**
@@ -132,10 +156,14 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             .finally(() => setScanning(false));
     };
 
-    // a change in the slim list (add/remove from anywhere) reloads the table
+    // a change in the shared list reloads the table. the whole state is the key, not
+    // the number of rows: stopping watching something that is downloaded keeps its
+    // row and only flips a flag, and that has to show up too
+    const signature = entries.map(entry => `${ entry.id }:${ entry.status }:${ entry.monitored }`).join(",");
+
     useEffect(() => {
         load();
-    }, [ entries.length ])
+    }, [ signature ])
 
     // percentages only move while something is downloading, so the poll stops with it
     useEffect(() => {
@@ -234,7 +262,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     size="sm"
                     className="cursor-pointer"
                     title="Stop watching — keeps whatever is already downloaded"
-                    onClick={() => remove(item.type, item.tmdbId, item.media?.name || `TMDB #${ item.tmdbId }`)}
+                    onClick={() => stopWatching(item)}
                 >
                     <BookmarkX />
                 </Button>)
@@ -362,10 +390,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                         <Button
                             variant="outline"
                             className="cursor-pointer"
-                            onClick={() => {
-                                destroy(deleting!.id, false, deleting!.media?.name);
-                                setDeleting(null);
-                            }}
+                            onClick={() => deleteItem(deleting!, false)}
                         >
                             Keep the files
                         </Button>
@@ -373,10 +398,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                         <Button
                             variant="destructive"
                             className="cursor-pointer"
-                            onClick={() => {
-                                destroy(deleting!.id, true, deleting!.media?.name);
-                                setDeleting(null);
-                            }}
+                            onClick={() => deleteItem(deleting!, true)}
                         >
                             <Trash2 /> Delete the files too
                         </Button>
