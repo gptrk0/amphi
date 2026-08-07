@@ -393,6 +393,21 @@ export const getSeasonUnits = async (watchlistId: number, seasonNumber: number) 
 };
 
 /**
+ * For a pack that spans several seasons: one torrent brings all of them, so all of
+ * their units have to be claimed by it.
+ */
+export const getUnitsInSeasons = async (watchlistId: number, seasonNumbers: number[]) => {
+    if (seasonNumbers.length === 0) {
+        return [];
+    }
+
+    return await prisma.watchlistUnit.findMany({
+        where: { watchlistId, seasonNumber: { in: seasonNumbers } },
+        orderBy: [ { seasonNumber: "asc" }, { episodeNumber: "asc" } ]
+    });
+};
+
+/**
  * One call for both kinds: a movie hands in its single unit, a season pack hands in
  * every unit the one torrent covers.
  */

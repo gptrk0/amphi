@@ -1,12 +1,20 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { getQualityProfile, ReleaseSelection, selectEpisodeRelease, selectRelease, selectSeasonRelease } from "@/lib/release";
+import {
+    getQualityProfile,
+    parseNumbering,
+    ReleaseSelection,
+    selectEpisodeRelease,
+    selectRelease,
+    selectSeasonRelease
+} from "@/lib/release";
 import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
 import {
     addToWatchlist,
     ensureMovieUnit,
     getSeasonUnits,
+    getUnitsInSeasons,
     markUnitsDownloading
 } from "@/lib/watchlist";
 
@@ -45,6 +53,11 @@ export type MoviePlan = ReleaseOptions & {
 
 // how many releases a download dialog offers to choose from
 const OPTION_COUNT = Number(process.env.DOWNLOAD_OPTION_COUNT || 5);
+
+// Films and shows want different folders — every media server expects them apart.
+// Empty leaves the destination to the qBittorrent category, as before.
+const MOVIE_PATH = process.env.TORRENT_MOVIE_PATH || "";
+const TV_PATH = process.env.TORRENT_SERIES_PATH || "";
 
 const toOptions = (selection: ReleaseSelection): ReleaseOptions => {
     return {
@@ -205,7 +218,7 @@ export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): 
     }
 
     const unit = await ensureMovieUnit(item.id);
-    const hash = await addRelease(release, movieTag(item.id));
+    const hash = await addRelease(release, movieTag(item.id), MOVIE_PATH);
 
     await markUnitsDownloading([ unit.id ], hash);
 
@@ -216,7 +229,14 @@ export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): 
  * Groups the episodes by the release that was picked for them: one multi episode
  * release (`S03E01-E06`) must be added once, not once per episode.
  */
-export const planGrabs = (plan: SeasonPlan, eligible: number[], usePack: boolean): PlannedGrab[] => {
+export const planGrabs = (
+    plan: SeasonPlan,
+    eligible: number[],
+    usePack: boolean,
+    // what a wider release may claim beyond what was asked for: everything the
+    // season still needs. defaults to the request itself
+    claimable: number[] = eligible
+): PlannedGrab[] => {
     if (usePack && plan.pack) {
         const covered = plan.episodes
             .filter(episode => episode.aired && eligible.includes(episode.episodeNumber))
@@ -242,7 +262,32 @@ export const planGrabs = (plan: SeasonPlan, eligible: number[], usePack: boolean
         }
     }
 
-    return [ ...grabs.values() ];
+    // an `S01E01-E06` release downloads all six whether it was picked for one of
+    // them or for all: it claims every episode it carries, and the widest release
+    // wins the overlap — otherwise the same six files arrive twice
+    const claiming = [ ...grabs.values() ].map(grab => ({
+        ...grab,
+        episodeNumbers: [ ...new Set([
+            ...grab.episodeNumbers,
+            ...parseNumbering(grab.release.title).episodes.filter(episodeNumber => claimable.includes(episodeNumber))
+        ]) ].sort((a, b) => a - b)
+    }));
+
+    const claimed = new Set<number>();
+    const result: PlannedGrab[] = [];
+
+    for (const grab of claiming.sort((a, b) => b.episodeNumbers.length - a.episodeNumbers.length)) {
+        const own = grab.episodeNumbers.filter(episodeNumber => ! claimed.has(episodeNumber));
+
+        if (own.length === 0) {
+            continue;
+        }
+
+        own.forEach(episodeNumber => claimed.add(episodeNumber));
+        result.push({ ...grab, episodeNumbers: own });
+    }
+
+    return result;
 };
 
 const GRABBABLE_STATUS: WatchStatus[] = [ WatchStatus.PENDING, WatchStatus.SEARCHING, WatchStatus.FAILED ];
@@ -302,17 +347,36 @@ export const planSeasonGrabs = async (
     // get — not only the ones this round happened to ask for
     const eligible = usePack ? grabbable : requested;
 
-    return { rows, usePack, eligible, grabs: planGrabs(plan, eligible, usePack) };
+    return { rows, usePack, eligible, grabs: planGrabs(plan, eligible, usePack, grabbable) };
 };
 
-const label = (seasonNumber: number, grab: PlannedGrab) => {
-    const season = `S${ String(seasonNumber).padStart(2, "0") }`;
+const seasonLabel = (seasonNumber: number) => `S${ String(seasonNumber).padStart(2, "0") }`;
 
+const label = (seasonNumber: number, grab: PlannedGrab, packSeasons: number[]) => {
     if (grab.isPack) {
-        return `${ season } pack`;
+        const covered = packSeasons.length > 1
+            ? `${ seasonLabel(Math.min(...packSeasons)) }-${ seasonLabel(Math.max(...packSeasons)) }`
+            : seasonLabel(seasonNumber);
+
+        return `${ covered } pack`;
     }
 
-    return `${ season }${ grab.episodeNumbers.map(v => `E${ String(v).padStart(2, "0") }`).join("") }`;
+    return `${ seasonLabel(seasonNumber) }${ grab.episodeNumbers.map(v => `E${ String(v).padStart(2, "0") }`).join("") }`;
+};
+
+/**
+ * A pack can carry more than the season it was searched for. Everything it brings
+ * is claimed by its hash, whether or not those seasons are watched — the files are
+ * on disk either way, and a second torrent for them would be the same data again.
+ */
+export const packUnitIds = async (watchlistId: number, plan: SeasonPlan, release: IndexerResult) => {
+    const seasons = parseNumbering(release.title).seasons.filter(v => v !== plan.seasonNumber);
+    const units = await getUnitsInSeasons(watchlistId, seasons);
+
+    return {
+        seasons: [ plan.seasonNumber, ...seasons ],
+        ids: units.filter(unit => GRABBABLE_STATUS.includes(unit.status)).map(unit => unit.id)
+    };
 };
 
 /**
@@ -337,16 +401,20 @@ export const executeSeasonGrab = async (
             .filter(row => row.episodeNumber !== null && grab.episodeNumbers.includes(row.episodeNumber))
             .map(row => row.id);
 
+        const pack = grab.isPack
+            ? await packUnitIds(item.id, plan, grab.release)
+            : { seasons: [ plan.seasonNumber ], ids: [] };
+
         const tag = grab.isPack
             ? seasonTag(item.id, plan.seasonNumber)
             : episodeTag(ids[0]);
 
-        const hash = await addRelease(grab.release, tag);
+        const hash = await addRelease(grab.release, tag, TV_PATH);
 
-        await markUnitsDownloading(ids, hash);
+        await markUnitsDownloading([ ...new Set([ ...ids, ...pack.ids ]) ], hash);
 
         started.push({
-            label: label(plan.seasonNumber, grab),
+            label: label(plan.seasonNumber, grab, pack.seasons),
             title: grab.release.title,
             hash,
             episodeNumbers: grab.episodeNumbers

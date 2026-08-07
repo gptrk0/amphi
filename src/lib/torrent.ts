@@ -184,14 +184,17 @@ export const findTorrentByTag = async (tag: string): Promise<TorrentStatus | nul
 
 /**
  * The add endpoint only answers "Ok.", so the hash is read back by the tag we set.
+ * An empty `savePath` leaves the destination to qBittorrent, which is what the
+ * category is already configured for.
  */
-export const addRelease = async (release: IndexerResult, tag: string): Promise<string | null> => {
+export const addRelease = async (release: IndexerResult, tag: string, savePath = ""): Promise<string | null> => {
     await ensureCategory();
 
     await request("/api/v2/torrents/add", form({
         urls: release.link,
         category: CATEGORY,
-        tags: tag
+        tags: tag,
+        ...(savePath ? { savepath: savePath } : {})
     }));
 
     for (let attempt = 0; attempt < 10; attempt++) {
