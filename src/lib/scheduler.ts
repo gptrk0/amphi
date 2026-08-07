@@ -2,7 +2,7 @@ import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planGrabs, planMovieGrab, planSeasonGrab } from "@/lib/grab";
 import { getTvSeasons } from "@/lib/media";
-import { listManagedTorrents } from "@/lib/torrent";
+import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
 import { markMovieDownloading, syncTvSeasons } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
@@ -11,10 +11,14 @@ const MAX_ATTEMPTS = Number(process.env.MAX_SEARCH_ATTEMPTS || 10);
 const PACK_AFTER_ATTEMPTS = Number(process.env.PACK_AFTER_ATTEMPTS || 2);
 const START_DELAY_MS = 15 * 1000;
 
-// with SCAN_DRY_RUN=1 nothing is added to the torrent client and no state is written
+// with SCAN_DRY_RUN=1 no torrent is added and no search state is written. syncDownloads
+// is not affected: it only mirrors back what the client already reports.
 const isDryRun = () => process.env.SCAN_DRY_RUN === "1";
 
 const log = (message: string) => console.log(`[scheduler]${ isDryRun() ? " [dry-run]" : "" } ${ message }`);
+
+// syncDownloads writes in dry-run as well, so its lines must not claim otherwise
+const syncLog = (message: string) => console.log(`[scheduler] ${ message }`);
 
 const globalForScheduler = global as unknown as { schedulerStarted: boolean, schedulerRunning: boolean };
 
@@ -29,8 +33,32 @@ const dueFilter = () => {
 };
 
 /**
+ * A torrent that lost the managed category is missing from the filtered list while
+ * it is still there, so a miss is confirmed by a hash lookup — resetting the row on
+ * a category change alone would start a duplicate download.
+ */
+const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) => {
+    const known = byHash.get(hash);
+
+    if (known) {
+        return known;
+    }
+
+    const torrent = await getTorrentStatus(hash);
+
+    if (torrent) {
+        syncLog(`torrent ${ hash.slice(0, 8) } is outside the managed category`);
+    }
+
+    return torrent;
+};
+
+/**
  * Reads download state back from qBittorrent. Episodes of a season pack share one
  * hash, so a single finished torrent completes all of them at once.
+ *
+ * This runs in dry-run too: it starts nothing, it only records what the client
+ * already did, and hiding that would leave a finished download stuck DOWNLOADING.
  */
 export const syncDownloads = async () => {
     const torrents = await listManagedTorrents();
@@ -45,78 +73,66 @@ export const syncDownloads = async () => {
     });
 
     for (const movie of movies) {
-        const torrent = byHash.get(String(movie.torrentHash).toLowerCase());
+        const torrent = await resolveTorrent(byHash, String(movie.torrentHash).toLowerCase());
 
         if (! torrent) {
-            log(`movie ${ movie.tmdbId }: torrent is gone from the client, queued for a new search`);
+            syncLog(`movie ${ movie.tmdbId }: torrent is gone from the client, queued for a new search`);
 
-            if (! isDryRun()) {
-                await prisma.watchlist.update({
-                    where: { id: movie.id },
-                    data: { status: WatchStatus.PENDING, torrentHash: null }
-                });
-            }
+            await prisma.watchlist.update({
+                where: { id: movie.id },
+                data: { status: WatchStatus.PENDING, torrentHash: null }
+            });
 
             continue;
         }
 
         if (torrent.isComplete) {
-            log(`movie ${ movie.tmdbId }: downloaded (${ torrent.name })`);
+            syncLog(`movie ${ movie.tmdbId }: downloaded (${ torrent.name })`);
 
-            if (! isDryRun()) {
-                await prisma.watchlist.update({ where: { id: movie.id }, data: { status: WatchStatus.DOWNLOADED } });
-            }
+            await prisma.watchlist.update({ where: { id: movie.id }, data: { status: WatchStatus.DOWNLOADED } });
 
         } else if (torrent.isFailed) {
-            log(`movie ${ movie.tmdbId }: torrent failed (${ torrent.state }), queued for a new search`);
+            syncLog(`movie ${ movie.tmdbId }: torrent failed (${ torrent.state }), queued for a new search`);
 
-            if (! isDryRun()) {
-                await prisma.watchlist.update({
-                    where: { id: movie.id },
-                    data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
-                });
-            }
+            await prisma.watchlist.update({
+                where: { id: movie.id },
+                data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
+            });
         }
     }
 
     const hashes = [ ...new Set(episodes.map(episode => String(episode.torrentHash).toLowerCase())) ];
 
     for (const hash of hashes) {
-        const torrent = byHash.get(hash);
+        const torrent = await resolveTorrent(byHash, hash);
         const count = episodes.filter(episode => String(episode.torrentHash).toLowerCase() === hash).length;
 
         if (! torrent) {
-            log(`${ count } episode(s): torrent is gone from the client, queued for a new search`);
+            syncLog(`${ count } episode(s): torrent is gone from the client, queued for a new search`);
 
-            if (! isDryRun()) {
-                await prisma.watchlistEpisode.updateMany({
-                    where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
-                    data: { status: WatchStatus.PENDING, torrentHash: null }
-                });
-            }
+            await prisma.watchlistEpisode.updateMany({
+                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
+                data: { status: WatchStatus.PENDING, torrentHash: null }
+            });
 
             continue;
         }
 
         if (torrent.isComplete) {
-            log(`${ count } episode(s) downloaded (${ torrent.name })`);
+            syncLog(`${ count } episode(s) downloaded (${ torrent.name })`);
 
-            if (! isDryRun()) {
-                await prisma.watchlistEpisode.updateMany({
-                    where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
-                    data: { status: WatchStatus.DOWNLOADED }
-                });
-            }
+            await prisma.watchlistEpisode.updateMany({
+                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
+                data: { status: WatchStatus.DOWNLOADED }
+            });
 
         } else if (torrent.isFailed) {
-            log(`${ count } episode(s): torrent failed (${ torrent.state }), queued for a new search`);
+            syncLog(`${ count } episode(s): torrent failed (${ torrent.state }), queued for a new search`);
 
-            if (! isDryRun()) {
-                await prisma.watchlistEpisode.updateMany({
-                    where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
-                    data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
-                });
-            }
+            await prisma.watchlistEpisode.updateMany({
+                where: { torrentHash: { in: [ hash ] }, status: WatchStatus.DOWNLOADING },
+                data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
+            });
         }
     }
 };

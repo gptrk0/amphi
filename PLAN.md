@@ -261,7 +261,7 @@ Amit ebből átvettem:
 - [x] A scanner retry/backoff-ja megvan (`searchAttempts`, `lastCheckedAt`), az indexer-hívások hibái nem dobnak, csak logolnak és üres listát adnak, a torznab `error` válasz (pl. `203`) fallbackot indít.
 - [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás).
 - [x] `discover` route hibakezelése: a catch-ág nem `return`-ölt, csak konstruált egy eldobott `Response`-t — most logol, és a hibás oldal egyszerűen kimarad az eredményből.
-- [ ] `entrypoint.sh` dev módjának tisztázása — jelenleg nem indítja a Next dev szervert, csak a Prisma Studio-t (a dev szervert kézzel indítod a konténerben).
+- [ ] `entrypoint.sh` dev módjának tisztázása — jelenleg nem indítja a Next dev szervert, csak a Prisma Studio-t (a dev szervert kézzel indítod a konténerben). **Ez a scheduler egyetlen belépési pontja**: a `startScheduler()` az `instrumentation.ts`-ből, a Next szerverrel együtt indul, tehát amíg a dev szervert nem indítod el, semmilyen háttérkör nem fut. A 2026-08-06-i „kész letöltés nem került át" hiba részben ebből jött.
 - [x] **Git repo** — `git init -b main`, első commit 76 fájllal (8094 sor). A `.gitignore` javítva: a generált Prisma kliens `prisma/generated` alatt van, de a `.gitignore` a `/src/generated/prisma` halott útvonalat zárta ki, így 4,9 MB generált kód került volna be. Bekerült még a `/.claude/settings.local.json` és a `/.verify-*.ts` is.
   - Commit előtt ellenőrizve: a `.env`, `node_modules`, `.next`, `prisma/generated` egyike sincs staged-elve, és a `.env` egyetlen valós értéke (TMDB / Jackett / qBittorrent / DB) sem fordul elő a commitolt 76 fájl egyikében sem.
   - **Remote nincs** és push sem történt — az a te döntésed. Előtte érdemes újra lefuttatni ugyanezt az ellenőrzést.
@@ -281,7 +281,7 @@ Amit ebből átvettem:
 - [ ] **Évad-monitorozás kézi váltása a felületen** (a `PATCH` API megvan, csak nincs hozzá kontroll a checkboxos átalakítás után).
 - [ ] **`Stop watching` gomb** a részletnézeten: most a teljes watchlist-sort törli (a letöltés-nyilvántartással együtt). Eldöntendő, hogy maradjon-e így, vagy csak a monitorozást kapcsolja ki.
 
-#### Bejelentés: a kész letöltés nem került át a „letöltöttek" közé (2026-08-06)
+#### Bejelentés: a kész letöltés nem került át a „letöltöttek" közé (2026-08-06) ✅ javítva 2026-08-07
 
 **Tünet:** a Mortal Kombat II letöltése lement a qBittorrentbe, be is fejeződött, de az aioseerr továbbra is `DOWNLOADING`-ot mutat.
 
@@ -297,12 +297,30 @@ Tehát **a torrent, a tag és a hash is stimmel, és a `syncDownloads()` helyese
 1. **A scheduler nem indult el.** A `src/instrumentation.ts` a jelenleg futó dev szerver indulása *után* jött létre, tehát a `startScheduler()` abban a processzben soha nem hívódott meg. Ezt közvetve az is alátámasztja, hogy a #14-es sor (The Devil Wears Prada 2) hash-e **már nincs benne** a qBittorrent listájában — egy futó scheduler ezt régen `PENDING`-re állította volna.
 2. **`SCAN_DRY_RUN=1`.** Ez nem csak a letöltés-indítást tiltja: a `syncDownloads()` **összes** DB-írása is `if (! isDryRun())` mögött van. Vagyis még ha a scheduler futna is, dry-run módban a kész letöltés akkor sem kerülne át.
 
-**Teendő legközelebb:**
-- [ ] Dev szerver újraindítása + `SCAN_DRY_RUN=0`, majd ellenőrizni, hogy a Mortal Kombat II átkerül-e. Egyszeri kézi kör: `POST /api/scan`.
-- [ ] **Átgondolni, hogy a `SCAN_DRY_RUN` blokkolja-e a `syncDownloads()`-t.** A dry-run szándéka az volt, hogy *ne induljon letöltés* — a kész torrent állapotának visszaolvasása viszont nem indít semmit, csak a valóságot tükrözi a DB-be. Javaslat: a `syncDownloads()` írjon dry-run módban is (a torrent klienshez nem nyúl), és csak a `scanMovies` / `scanEpisodes` maradjon némán. Így a dry-run tesztelés közben is látszana a valós állapot.
-- [ ] Mellékesen: a **#14 (The Devil Wears Prada 2)** hash-e nincs a kliensben — a torrentet eltávolították. Az első éles sync ezt `PENDING`-re állítja és újra keresni fog rá. Ha ez nem kívánt, előtte le kell venni a watchlistről.
+*(Megjegyzés a kiválasztáshoz: a választott release `1080p … x264 … HUN` — pontosan az, amit a mostani minőségi profil preferál. A kiválasztás tehát jól működött, csak a visszaolvasás nem.)*
 
-*(Megjegyzés a kiválasztáshoz: a választott release `1080p … x264 … HUN` — pontosan az, amit a mostani minőségi profil preferál.)*
+**Javítás (2026-08-07)** — [src/lib/scheduler.ts](src/lib/scheduler.ts):
+
+- [x] **A `syncDownloads()` kikerült a dry-run tiltás alól.** A dry-run szándéka az, hogy *ne induljon letöltés* — a sync viszont semmit nem indít, csak visszaírja azt, amit a kliens már megtett. Ezt elrejteni azt jelentette, hogy egy kész letöltés örökre `DOWNLOADING`-ban ragad. A `scanMovies` / `scanEpisodes` / `refreshShows` továbbra is néma dry-runban.
+- [x] **A log-marker szétvált.** A sync sorai `[scheduler]` előtaggal mennek, a ténylegesen szimulált scan soroké maradt `[scheduler] [dry-run]`. Enélkül a marker azt sugallta volna, hogy a sync sem írt semmit — pont az a félreértés, ami ehhez a hibához vezetett.
+- [x] **`resolveTorrent()`: hash szerinti ellenőrzés a „torrent eltűnt" döntés előtt.** A `listManagedTorrents()` a `TORRENT_CATEGORY`-ra szűr, tehát egy kategóriát vesztett (de élő) torrent „eltűntnek" látszott, a sor visszaesett volna `PENDING`-be, és **duplikált letöltés indult volna**. Most a kategóriás listából való hiányt egy `getTorrentStatus(hash)` hívás erősíti meg, ami nem szűr kategóriára.
+
+**Élő ellenőrzés (2026-08-07, végig `SCAN_DRY_RUN=1` mellett):**
+```
+--- before ---
+#14 tmdb=1314481 MOVIE DOWNLOADING hash=1718aa59
+#15 tmdb=931285  MOVIE DOWNLOADING hash=b8029ac0
+[scheduler] movie 1314481: torrent is gone from the client, queued for a new search
+[scheduler] movie 931285: downloaded (Mortal.Kombat.II.2026.1080p…x264.HUN-FULCRUM)
+--- after ---
+#14 tmdb=1314481 MOVIE PENDING    hash=-
+#15 tmdb=931285  MOVIE DOWNLOADED hash=b8029ac0
+```
+A második futás már nem csinál semmit (idempotens), és a kör alatt egyetlen letöltés sem indult. A `resolveTorrent()` negatív ága (#14: a hash-lekérdezés is `false`) élesben lefutott; a pozitív ága (létezik, csak kategórián kívül) nincs élesben tesztelve, mert ahhoz a kliensben kellene kategóriát váltani.
+
+**#14 (The Devil Wears Prada 2):** a kategóriára nem szűrő ellenőrzés is `existsInClient=false`-t adott, a fájl pedig nincs meg a lemezen — a torrent tényleg félbemaradt. A sor helyesen esett vissza `PENDING`-be; a scanner újra fog keresni rá, amint a dry-run kikapcsol.
+
+**Ami ebből nyitva maradt:** a sync csak akkor fut, ha fut a Next dev szerver, azt pedig kézzel kell indítani (lásd az `entrypoint.sh` tételt a Fázis 7-ben). Ez most a legfontosabb következménye ennek a hibának.
 
 #### Táblázatos watchlist és downloads nézet (2026-08-06-i kérés)
 
@@ -344,9 +362,9 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 **Állapot:** Fázis 1–5 kész, a Fázis 6 nagy része is (a nyelvi preferenciával együtt), a git repo megvan. Ami maradt: a Fázis 6 négy nyitott finomítása (több évadot fedő pack, több-epizódos átfedés, pack méret-plafon, stall-kezelés), a Fázis 7 üzemeltetési tételei (`entrypoint.sh`, lint, letöltési mappák, seedelés, duplikált `prisma.config.ts`, `.gitattributes`), és a teljes Fázis 8.
 
 ### Amit legközelebb kézzel meg kell tenni
-1. **Dev szerver újraindítása** — az `src/instrumentation.ts` a jelenlegi futó szerver indulása után jött létre, tehát a scheduler még nem fut benne. Indulás után ez a sor jelzi, hogy jó: `[scheduler] [dry-run] started, scanning every 15 minutes`.
-2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor tényleg indíthat letöltéseket (addig minden kör csak logol). Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
-3. **A watchliston most a The Odyssey van** `PENDING`-ben (a hibás, hamis release-t indító sor visszaállítva) — amint egy valódi release megjelenik, a scanner elkapja.
+1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`), a konténer magától csak a Prisma Studio-t hozza fel. Ez a sor jelzi, hogy jó: `[scheduler] [dry-run] started, scanning every 15 minutes`. Amíg ez nem fut, semmilyen háttérkör nincs.
+2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor tényleg indíthat letöltéseket (addig a keresés/grab csak logol — a letöltés-visszaolvasás 2026-08-07 óta dry-runban is ír). Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
+3. **A watchliston most három sor van**: The Odyssey (`PENDING`), The Devil Wears Prada 2 (`PENDING`, a félbemaradt torrent után visszaállítva), Mortal Kombat II (`DOWNLOADED`). Az első két sorra a scanner keresni fog, amint a dry-run kikapcsol.
 
 ---
 
