@@ -50,8 +50,11 @@ export function MediaCard({
                                     alt={media.name}
                                     width={width}
                                     height={height}
+                                    // w-full, not w-auto: with `auto` the image keeps the
+                                    // intrinsic width it was asked for and refuses to shrink,
+                                    // which makes a grid of cards wider than the page
                                     className={cn(
-                                        "h-auto w-auto object-cover transition-all hover:scale-105",
+                                        "h-auto w-full object-cover transition-all hover:scale-105",
                                         aspectRatio === "portrait" ? "aspect-[3/4]" : "aspect-square"
                                     )}
                                 />
