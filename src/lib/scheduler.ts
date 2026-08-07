@@ -1,9 +1,9 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planGrabs, planMovieGrab, planSeasonGrab } from "@/lib/grab";
-import { getTvSeasons } from "@/lib/media";
+import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
-import { markUnitsDownloading, syncTvSeasons } from "@/lib/watchlist";
+import { ensureMovieUnit, markUnitsDownloading, syncTvSeasons, toAirDate } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
 const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
@@ -120,6 +120,9 @@ export const scanMovies = async () => {
             watchlist: { type: ContentType.MOVIE },
             monitored: true,
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
+            // a film that is not out yet cannot be on a tracker; episodes are held
+            // back by the same airDate, just in scanEpisodes
+            AND: [ { OR: [ { airDate: null }, { airDate: { lte: new Date() } } ] } ],
             ...dueFilter()
         },
         include: { watchlist: true }
@@ -246,22 +249,36 @@ export const scanEpisodes = async () => {
 };
 
 /**
- * Picks up new seasons and air date changes. The TMDB cache keeps this cheap.
+ * Picks up new seasons, air date changes and release dates that TMDB moved. The
+ * TMDB cache keeps this cheap.
+ *
+ * Like syncDownloads this writes in dry-run: it starts nothing, it only follows
+ * TMDB — and the scanner holds unreleased units back by exactly these dates, so a
+ * stale one would search for something that cannot exist yet.
  */
-export const refreshShows = async () => {
-    const shows = await prisma.watchlist.findMany({
-        where: { type: ContentType.TV, units: { some: { monitored: true } } }
+export const refreshMetadata = async () => {
+    const items = await prisma.watchlist.findMany({
+        where: {
+            OR: [
+                { type: ContentType.MOVIE },
+                { type: ContentType.TV, units: { some: { monitored: true } } }
+            ]
+        }
     });
 
-    for (const show of shows) {
-        const seasons = await getTvSeasons(show.tmdbId);
+    for (const item of items) {
+        if (item.type === ContentType.MOVIE) {
+            const metadata = await getMediaMetadata("movie", item.tmdbId);
 
-        if (seasons.length === 0) {
+            if (metadata) {
+                await ensureMovieUnit(item.id, toAirDate(metadata.media.date));
+            }
+
             continue;
         }
 
-        if (! isDryRun()) {
-            await syncTvSeasons(show.id, show.tmdbId);
+        if ((await getTvSeasons(item.tmdbId)).length > 0) {
+            await syncTvSeasons(item.id, item.tmdbId);
         }
     }
 };
@@ -277,9 +294,9 @@ export const runScan = async () => {
 
     try {
         await syncDownloads();
+        await refreshMetadata();
         await scanMovies();
         await scanEpisodes();
-        await refreshShows();
 
     } catch(err) {
         console.error("[scheduler] run failed", err);

@@ -158,14 +158,28 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistIt
     return item ? await withMedia(item) : null;
 };
 
+export const toAirDate = (date: string | null | undefined) => date ? new Date(date) : null;
+
 /**
  * A movie is a single unit. A null season and a null episode never collide in a
  * unique index, so that "single" is kept here rather than by the database.
+ *
+ * `airDate` is the release date and means the same as it does on an episode: the
+ * scanner does not search before it. TMDB moves release dates around, so a known
+ * one always overwrites what is stored.
  */
-export const ensureMovieUnit = async (watchlistId: number) => {
+export const ensureMovieUnit = async (watchlistId: number, airDate: Date | null = null) => {
     const existing = await prisma.watchlistUnit.findFirst({ where: { watchlistId } });
 
-    return existing || await prisma.watchlistUnit.create({ data: { watchlistId } });
+    if (! existing) {
+        return await prisma.watchlistUnit.create({ data: { watchlistId, airDate } });
+    }
+
+    if (airDate && existing.airDate?.getTime() !== airDate.getTime()) {
+        return await prisma.watchlistUnit.update({ where: { id: existing.id }, data: { airDate } });
+    }
+
+    return existing;
 };
 
 /**
@@ -246,7 +260,7 @@ export const addToWatchlist = async (tmdbId: number, type: ContentType, monitorS
     });
 
     if (type === ContentType.MOVIE) {
-        await ensureMovieUnit(item.id);
+        await ensureMovieUnit(item.id, toAirDate(metadata.media.date));
 
     } else {
         await syncTvSeasons(item.id, tmdbId);
