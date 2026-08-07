@@ -93,7 +93,8 @@ export function MediaGrid({ type, category, genre }: Props) {
 
     return (
         <>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 pt-5">
+            {/* three across on a phone instead of two: a third narrower per card */}
+            <div className="grid grid-cols-3 gap-3 pt-5 md:grid-cols-4 md:gap-6 lg:grid-cols-6">
                 {items?.map(item => (
                     <MediaCard
                         key={key(item)}

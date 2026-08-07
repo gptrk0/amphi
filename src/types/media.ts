@@ -48,13 +48,6 @@ export type MediaVideo = {
     name: string;
 };
 
-export type MediaProviders = {
-    link: string | null;
-    flatrate: MediaCompany[];
-    rent: MediaCompany[];
-    buy: MediaCompany[];
-};
-
 export type MediaEpisodeStub = {
     name: string;
     air_date: string | null;
@@ -78,8 +71,6 @@ export type MediaDetails = {
     rating: number;
     votes: number;
     certification: string | null;
-    // the country the certification and the providers below are valid in
-    region: string;
     homepage: string;
     imdb_id: string | null;
     budget: number;
@@ -90,7 +81,6 @@ export type MediaDetails = {
     cast: MediaPerson[];
     crew: MediaPerson[];
     trailer: MediaVideo | null;
-    providers: MediaProviders;
     recommendations: Media[];
     similar: Media[];
     // shows only

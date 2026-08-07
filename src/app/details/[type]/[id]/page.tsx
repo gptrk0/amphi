@@ -14,7 +14,6 @@ import { useWatchlist } from "@/context/watchlist";
 import { CastRow } from "@/components/cast-row";
 import { Fact, FactGrid } from "@/components/fact-grid";
 import { MediaRow } from "@/components/media-row";
-import { ProviderList } from "@/components/provider-list";
 import { TrailerDialog } from "@/components/trailer-dialog";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { Badge } from "@/components/ui/badge";
@@ -378,8 +377,6 @@ export default function Page() {
                 </div>}
 
                 <CastRow title="Cast" people={details.cast} />
-
-                <ProviderList providers={details.providers} region={details.region} />
 
                 <FactGrid facts={facts} />
 

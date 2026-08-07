@@ -355,25 +355,6 @@ const toCertification = (data: any, type: Media["type"]): string | null => {
     return rated?.certification || null;
 };
 
-const toProviders = (data: any) => {
-    const region = data["watch/providers"]?.results?.[TMDB_REGION];
-
-    const list = (value: any[] | undefined): MediaCompany[] => {
-        return (value || []).map((provider: any) => ({
-            id: provider.provider_id,
-            name: provider.provider_name || "",
-            logo_img: image(provider.logo_path, "w185")
-        }));
-    };
-
-    return {
-        link: region?.link || null,
-        flatrate: list(region?.flatrate),
-        rent: list(region?.rent),
-        buy: list(region?.buy)
-    };
-};
-
 const toRow = (value: any, type: Media["type"]): Media[] => {
     return (value?.results || [])
         .filter((item: any) => item.poster_path)
@@ -397,7 +378,6 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
                     isTv ? "aggregate_credits" : "credits",
                     "videos",
                     "external_ids",
-                    "watch/providers",
                     "recommendations",
                     "similar",
                     isTv ? "content_ratings" : "release_dates"
@@ -423,7 +403,6 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
             rating: Number(data.vote_average || 0),
             votes: Number(data.vote_count || 0),
             certification: toCertification(data, type),
-            region: TMDB_REGION,
             homepage: data.homepage || "",
             imdb_id: data.external_ids?.imdb_id || null,
             budget: Number(data.budget || 0),
@@ -434,7 +413,6 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
             cast: toCast(credits),
             crew: toCrew(credits, data.created_by, isTv),
             trailer: toTrailer(data.videos),
-            providers: toProviders(data),
             recommendations: toRow(data.recommendations, type),
             similar: toRow(data.similar, type),
             season_count: isTv ? Number(data.number_of_seasons || 0) : null,

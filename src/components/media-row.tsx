@@ -39,14 +39,15 @@ export function MediaRow({ title, description, href, items }: Props) {
             <ScrollArea>
                 <div className="flex space-x-4 pb-4">
                     {! items && Array.from({ length: 6 }).map((_, i) => (
-                        <Skeleton key={i} className="aspect-[3/4] w-[250px] shrink-0 rounded-md" />
+                        <Skeleton key={i} className="aspect-[3/4] w-[175px] shrink-0 rounded-md md:w-[250px]" />
                     ))}
 
                     {items?.map(item => (
                         <MediaCard
                             key={`${ item.type }-${ item.id }`}
                             media={item}
-                            className="w-[250px] shrink-0"
+                            // a 250px card takes most of a phone screen
+                            className="w-[175px] shrink-0 md:w-[250px]"
                             aspectRatio="portrait"
                             width={250}
                             height={330}
