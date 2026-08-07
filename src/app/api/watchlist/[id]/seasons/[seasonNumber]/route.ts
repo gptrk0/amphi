@@ -21,14 +21,14 @@ export async function PATCH(req: Request, { params }: Params) {
 
         let result = await setSeasonMonitored(watchlistId, season, body.monitored);
 
-        return Response.json({ success: true, result });
-
-    } catch(err: any) {
-        // Prisma: no such season for this watchlist item
-        if (err?.code === "P2025") {
+        // seasons are not stored, so an unknown one simply has no units to update
+        if (result.count === 0) {
             return Response.json({ success: false, message: 'Season not found!' }, { status: 404 });
         }
 
+        return Response.json({ success: true, result });
+
+    } catch(err: any) {
         console.error(err);
 
         return Response.json({ success: false, message: 'Failed to update season!' }, { status: 500 });

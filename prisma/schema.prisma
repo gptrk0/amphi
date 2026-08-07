@@ -20,7 +20,7 @@ enum WatchStatus {
   FAILED
 }
 
-// Identity only — titles and images always come from TMDB, download state lives on
+// Identity only — titles and images always come from TMDB, everything else lives on
 // the units.
 model Watchlist {
   id        Int         @id @default(autoincrement())
@@ -29,50 +29,35 @@ model Watchlist {
   addedAt   DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  seasons WatchlistSeason[]
-  units   WatchlistUnit[]
-
-  @@unique([tmdbId, type])
-}
-
-// Carries the monitored flag and nothing else. It cannot move onto the units,
-// because an episode TMDB adds later has to inherit the flag of its season.
-model WatchlistSeason {
-  id           Int       @id @default(autoincrement())
-  watchlistId  Int
-  watchlist    Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
-  seasonNumber Int
-  monitored    Boolean   @default(true)
-
   units WatchlistUnit[]
 
-  @@unique([watchlistId, seasonNumber])
+  @@unique([tmdbId, type])
 }
 
 /// One thing that can be searched for and downloaded: a movie is a single unit, a
 /// show has one per episode. Keeping both in one table is what lets the scanner,
 /// the download sync and the status aggregation share a single code path.
 model WatchlistUnit {
-  id Int @id @default(autoincrement())
-
-  // denormalized from the season so that every unit of an item is one query away
+  id          Int       @id @default(autoincrement())
   watchlistId Int
   watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
 
   // both null on a movie, which is the single unit of its item — that one is kept
   // unique by ensureMovieUnit, a null never collides in a unique index
-  seasonId      Int?
-  season        WatchlistSeason? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  seasonNumber  Int?
   episodeNumber Int?
   // the scanner decides from this whether it is worth searching yet
   airDate       DateTime?
+
+  // a season is monitored when its units are; a new episode inherits the flag from
+  // the season it belongs to (see inheritedMonitored)
+  monitored Boolean @default(true)
 
   status         WatchStatus @default(PENDING)
   torrentHash    String?
   searchAttempts Int         @default(0)
   lastCheckedAt  DateTime?
 
-  @@unique([seasonId, episodeNumber])
-  @@index([watchlistId])
+  @@unique([watchlistId, seasonNumber, episodeNumber])
   @@index([status])
 }

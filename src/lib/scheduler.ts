@@ -118,6 +118,7 @@ export const scanMovies = async () => {
     const units = await prisma.watchlistUnit.findMany({
         where: {
             watchlist: { type: ContentType.MOVIE },
+            monitored: true,
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             ...dueFilter()
         },
@@ -168,23 +169,24 @@ export const scanEpisodes = async () => {
         where: {
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             airDate: { not: null, lte: new Date() },
-            season: { monitored: true },
+            seasonNumber: { not: null },
+            monitored: true,
             ...dueFilter()
         },
-        include: { watchlist: true, season: true }
+        include: { watchlist: true }
     });
 
     const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
 
     for (const unit of due) {
-        if (! unit.season) {
+        if (unit.seasonNumber === null) {
             continue;
         }
 
-        const key = `${ unit.watchlistId }:${ unit.season.seasonNumber }`;
+        const key = `${ unit.watchlistId }:${ unit.seasonNumber }`;
         const group = groups.get(key) || {
             tmdbId: unit.watchlist.tmdbId,
-            seasonNumber: unit.season.seasonNumber,
+            seasonNumber: unit.seasonNumber,
             units: []
         };
 
@@ -248,7 +250,7 @@ export const scanEpisodes = async () => {
  */
 export const refreshShows = async () => {
     const shows = await prisma.watchlist.findMany({
-        where: { type: ContentType.TV, seasons: { some: { monitored: true } } }
+        where: { type: ContentType.TV, units: { some: { monitored: true } } }
     });
 
     for (const show of shows) {

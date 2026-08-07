@@ -48,7 +48,9 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-07: közös `WatchlistUnit` tábla.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig már csak a `monitored` kapcsolót tartja.
+**2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
+
+Az évad így már nem tárolt entitás, hanem a unitok `seasonNumber` mezőjéből olvasható ki. Egy évad akkor „figyelt", ha a unitjai azok; az évad-szintű kapcsoló egy `updateMany`. Amit ez elvesz: **egy olyan évadhoz, aminek a TMDB-n még egy epizódja sincs, nem tárolható monitorozási beállítás** (a Severance S3 pont ilyen) — nincs mihez kötni. Amint megjelenik az első epizódja, az `inheritedMonitored` szabálya dönt.
 
 ```prisma
 enum ContentType {
@@ -64,7 +66,7 @@ enum WatchStatus {
   FAILED        // sok próbálkozás után sem található / hiba
 }
 
-// csak azonosság; az állapot a unitokon él
+// csak azonosság; minden más a unitokon él
 model Watchlist {
   id        Int         @id @default(autoincrement())
   tmdbId    Int
@@ -72,48 +74,32 @@ model Watchlist {
   addedAt   DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  seasons WatchlistSeason[]
-  units   WatchlistUnit[]
+  units WatchlistUnit[]
 
   @@unique([tmdbId, type])
 }
 
-// csak a monitored kapcsoló; nem költözhet a unitokra, mert egy később
-// megjelenő epizódnak örökölnie kell az évada beállítását
-model WatchlistSeason {
-  id           Int       @id @default(autoincrement())
-  watchlistId  Int
-  watchlist    Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
-  seasonNumber Int
-  monitored    Boolean   @default(true)
-
-  units WatchlistUnit[]
-
-  @@unique([watchlistId, seasonNumber])
-}
-
 // egy kereshető/letölthető dolog: a film egy unit, a sorozat epizódonként egy
 model WatchlistUnit {
-  id Int @id @default(autoincrement())
-
-  // denormalizált az évadról, hogy egy elem összes unitja egy lekérdezés legyen
+  id          Int       @id @default(autoincrement())
   watchlistId Int
   watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
 
   // filmnél mindkettő null
-  seasonId      Int?
-  season        WatchlistSeason? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  seasonNumber  Int?
   episodeNumber Int?
   // nem megjelenítési adat: ez alapján dönti el a scanner, hogy érdemes-e már keresni
   airDate       DateTime?
+
+  // egy évad akkor figyelt, ha a unitjai azok
+  monitored Boolean @default(true)
 
   status         WatchStatus @default(PENDING)
   torrentHash    String?
   searchAttempts Int         @default(0)
   lastCheckedAt  DateTime?
 
-  @@unique([seasonId, episodeNumber])
-  @@index([watchlistId])
+  @@unique([watchlistId, seasonNumber, episodeNumber])
   @@index([status])
 }
 ```
@@ -122,7 +108,16 @@ Amit az egységesítés hozott:
 - A `syncDownloads()` két majdnem azonos hurka **egy** hurokká olvadt, ami hash szerint csoportosít — egy season pack ezzel magától egyszerre zárja le az összes érintett epizódot, film és epizód megkülönböztetése nélkül.
 - A `deriveStatus()` már nem ágazik el típus szerint: minden elem annyira van kész, amennyire a unitjai. Filmnél egy unit van, tehát ugyanazt adja, mint eddig.
 - Új oszlopot (pl. a táblázatos nézethez a kiválasztott release neve/mérete, vagy a stall-detektáláshoz idő+progress) **egy** helyre kell felvenni, nem kettőbe.
-- Ára: a film unitja `seasonId = null, episodeNumber = null`, és mivel a NULL az egyedi indexben soha nem ütközik, az „egy film = egy unit" szabályt kód tartja (`ensureMovieUnit`), nem a DB.
+- Az évad-monitorozás egy `updateMany` a unitokon, a `scanEpisodes` szűrője pedig sima oszlop lett reláció-join helyett.
+- Ára: a film unitja `seasonNumber = null, episodeNumber = null`, és mivel a NULL az egyedi indexben soha nem ütközik, az „egy film = egy unit" szabályt kód tartja (`ensureMovieUnit`), nem a DB.
+- Szintén ára: az évad már nem tárolt entitás, tehát egy epizód nélküli (bejelentett, de üres) évadhoz nem tapad monitorozási beállítás.
+
+**Öröklési szabály (`inheritedMonitored`)** — ez pótolja a `WatchlistSeason.monitored @default(true)`-t. Egy új unit létrehozásakor:
+1. ha az évadnak már van unitja → azt követi;
+2. ha nincs, de a sorozatnak van → a legmagasabb sorszámú meglévő évadot követi;
+3. ha a sorozatnak egyáltalán nincs unitja → `true`.
+
+A 2. pont egy régi furcsaságot is javít: eddig egy később bejelentett évad `monitored = true`-val jött létre akkor is, ha a sorozat csak egyetlen kézi letöltés miatt került a listára (ilyenkor minden évada `monitored = false`). Mostantól az ilyen sorozat új évada sem indul el magától.
 
 ---
 
@@ -199,7 +194,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
   - `planGrabs`: a több-epizódos release-t (`S03E01-E06`) **egyszer** adja be és mindegyik érintett epizódot megjelöli — dry-runban ez konkrét hiba volt (S3E1 és S3E4 külön beadta volna ugyanazt a torrentet, a második tag-visszaolvasás pedig hash nélkül maradt volna).
   - Csak `PENDING`/`SEARCHING`/`FAILED` epizódot indít újra, tehát a már letöltött vagy épp töltődő epizódokat nem kezdi újra (ez is dry-runban derült ki).
   - Letöltés-indításnál a watchlist sor **monitorozás nélkül** jön létre: a torrentet a hash tartja nyilván, monitorozás csak akkor kapcsol be, ha a felhasználó a hiányzókra igent mond.
-  - Az azonnali letöltés így is felkerül a watchlistre, **rögtön `DOWNLOADING` állapottal**. A származtatott státusz ezért nem csak a monitorozott epizódokat veszi (`trackedEpisodes`): egy monitorozás nélküli évad töltődő epizódjai is látszanak, különben egy azonnali sorozat-letöltés „Watchlisted"-nek mutatkozott volna.
+  - Az azonnali letöltés így is felkerül a watchlistre, **rögtön `DOWNLOADING` állapottal**. A származtatott státusz ezért nem csak a monitorozott unitokat veszi (`trackedUnits`): egy monitorozás nélküli évad töltődő epizódjai is látszanak, különben egy azonnali sorozat-letöltés „Watchlisted"-nek mutatkozott volna.
 
 ### Fázis 3 — Watchlist frontend UX ✅
 
@@ -344,13 +339,26 @@ A második futás már nem csinál semmit (idempotens), és a kör alatt egyetle
 
 #### Közös `WatchlistUnit` tábla (2026-08-07-i kérés) ✅
 
-A táblázatos nézet első fele: előbb a séma egységesítése, hogy a nézet már egységes adatra épüljön. A modell és az indoklás a **3. pontban**; migráció: `prisma/migrations/20260807180000_unified_watchlist_units`.
+A táblázatos nézet első fele: előbb a séma egységesítése, hogy a nézet már egységes adatra épüljön. A modell és az indoklás a **3. pontban**. Két lépésben, két migrációval:
 
-A migráció kézzel írt, nem a `prisma migrate dev` generálta: a generált változat csak eldobta volna a `Watchlist` állapot-oszlopait, azzal együtt a Mortal Kombat II `DOWNLOADED` állapotát is. Így az új tábla létrehozása után, a régi oszlopok eldobása **előtt** átmásolja az adatot (film → egy unit, epizód → egy unit).
+1. `20260807180000_unified_watchlist_units` — a `WatchlistEpisode` és a `Watchlist` állapot-oszlopai egyetlen `WatchlistUnit` táblává olvadtak.
+2. `20260807190000_drop_watchlist_season` — a `WatchlistSeason` is megszűnt, a `monitored` és a `seasonNumber` átkerült a unitokra. Így **két tábla maradt: `Watchlist` és `WatchlistUnit`.**
+
+Mindkét migráció kézzel írt, nem a `prisma migrate dev` generálta: a generált változat előbb dobta volna el az oszlopokat, mint hogy az adat átkerül — az elsőnél a Mortal Kombat II `DOWNLOADED` állapotával együtt, a másodiknál az évadok `monitored` értékével együtt. Így mindkettő a régi oszlop eldobása **előtt** másol.
 
 Érintett fájlok: [prisma/schema.prisma](prisma/schema.prisma), [src/lib/watchlist.ts](src/lib/watchlist.ts), [src/lib/scheduler.ts](src/lib/scheduler.ts), [src/lib/grab.ts](src/lib/grab.ts). A `markMovieDownloading` + `markEpisodesDownloading` egyetlen `markUnitsDownloading(unitIds, hash)`-re, a `getSeasonEpisodes` `getSeasonUnits`-ra cserélődött. **A DTO (`WatchlistEntry` / `WatchlistItem`) szándékosan változatlan**, így a UI-hoz egyáltalán nem kellett hozzányúlni — azt majd a táblázatos nézet alakítja át, egy külön lépésben.
 
-**Élő ellenőrzés (2026-08-07):** a 3 meglévő film unitja hiánytalanul átjött (a #15 `DOWNLOADED` + hash is). A sorozat-ágra nem volt adat, ezért ideiglenesen felvettem egy 5 részes sorozatot és utána töröltem: 1 évad + 5 epizód-unit jött létre, a `scanEpisodes` lekérdezése mind az 5-öt megtalálta, egy 3 unitot lefedő pack-hash egyetlen log-sorban, együtt állt vissza `PENDING`-be, a `deriveStatus` 3/5 késznél `PENDING`-et, 5/5-nél `DOWNLOADED`-et adott, a törlés pedig kaszkádolva vitte az évadot és a unitokat. Az újraindítás utáni éles scan-kör a régivel azonosan futott le, és a `GET /api/watchlist` bájtra ugyanazt a szerkezetet adja vissza.
+**Élő ellenőrzés (2026-08-07).** Mindkét lépés után, ideiglenesen felvett és utána törölt teszt-sorozatokkal (a DB mindkétszer pontosan az eredeti állapotába állt vissza):
+
+- A 3 meglévő film unitja hiánytalanul átjött, a #15 `DOWNLOADED` állapotával és hash-ével együtt.
+- Egy 3 unitot lefedő pack-hash **egyetlen** log-sorban, együtt állt vissza `PENDING`-be — ez a `syncDownloads` új, hash szerint csoportosító hurka.
+- `deriveStatus`: 3/5 késznél `PENDING`, 5/5-nél `DOWNLOADED`.
+- Évad kikapcsolása után a `scanEpisodes` lekérdezése pontosan az érintett unitokat hagyta ki, a **film unitjaihoz nem nyúlt** (3 monitorozott film unit maradt).
+- Öröklés: kikapcsolt évadba visszakerülő epizód `monitored=false`-szal jött vissza; törölt és újra létrehozott évad a legmagasabb meglévő évadot követte, mindkét irányban.
+- Törléskor a kaszkád minden unitot elvitt.
+- Közben te felvettél a felületen egy 8 részes sorozatot (`#17`) — az a teszteket végig érintetlenül átvészelte, és egyben élő bizonyíték rá, hogy a felületi felvétel is jól működik az új sémán.
+
+A `tsc --noEmit` tiszta, az újraindítás utáni scan-kör a régivel azonosan futott le, és a `GET /api/watchlist` ugyanazt a szerkezetet adja vissza, mint a refaktor előtt.
 
 #### Táblázatos watchlist és downloads nézet (2026-08-06-i kérés)
 
