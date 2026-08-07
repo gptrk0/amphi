@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+import { syncDownloadsOnce } from "@/lib/scheduler";
+import { listManagedTorrents } from "@/lib/torrent";
 import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, setMonitored, toContentType } from "@/lib/watchlist";
 
 export async function GET(req: NextRequest) {
@@ -8,7 +10,16 @@ export async function GET(req: NextRequest) {
     const live = req.nextUrl.searchParams.get('live') === "1";
 
     try {
-        let result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(live);
+        const torrents = live ? await listManagedTorrents() : null;
+
+        // the same list the rows are drawn from also finishes them: whoever is
+        // watching the table sees a download flip to done in seconds instead of
+        // waiting for the next scheduled round
+        if (torrents) {
+            await syncDownloadsOnce(torrents);
+        }
+
+        let result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(torrents);
 
         return Response.json({ success: true, result });
 

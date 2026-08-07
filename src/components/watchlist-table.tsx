@@ -91,7 +91,17 @@ const progressText = (item: WatchlistItem) => {
         return `${ item.downloadedCount }/${ item.episodeCount || "?" } episodes`;
     }
 
-    return item.status === "DOWNLOADED" ? "complete" : "not yet";
+    if (item.status === "DOWNLOADED") {
+        return "complete";
+    }
+
+    // a film is one file: without this the line said "not yet" next to a running
+    // download that was reporting its own speed one row below
+    if (item.status === "DOWNLOADING") {
+        return item.download ? `${ Math.round(item.download.progress * 100) }%` : "downloading";
+    }
+
+    return "not yet";
 };
 
 export function WatchlistTable({ title, description, onlyStatus, emptyText }: Props) {
@@ -216,13 +226,26 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             label: "Progress",
             value: item => item.download?.progress ?? (item.episodeCount > 0 ? item.downloadedCount / item.episodeCount : 0),
             render: item => (
-                <div>
+                <div className="min-w-[7rem]">
                     <div>{ progressText(item) }</div>
 
-                    {item.download && <div className="text-xs text-muted-foreground">
-                        { Math.round(item.download.progress * 100) }% · { speed(item.download.downloadSpeed) }
-                        { item.download.eta !== null ? ` · ${ remaining(item.download.eta) }` : "" }
-                    </div>}
+                    {item.download && <>
+                        <div className="my-1 h-1 w-24 overflow-hidden rounded-full bg-muted">
+                            <div
+                                className="h-full bg-primary transition-[width]"
+                                style={{ width: `${ Math.round(item.download.progress * 100) }%` }}
+                            />
+                        </div>
+
+                        <div className="text-xs text-muted-foreground">
+                            { [
+                                // the percentage is already the line above on a film
+                                item.type === "tv" ? `${ Math.round(item.download.progress * 100) }%` : "",
+                                speed(item.download.downloadSpeed),
+                                item.download.eta !== null ? remaining(item.download.eta) : ""
+                            ].filter(Boolean).join(" · ") }
+                        </div>
+                    </>}
                 </div>
             )
         },

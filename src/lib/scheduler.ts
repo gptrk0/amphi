@@ -13,6 +13,11 @@ import {
 } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
+
+// Reading the client's state back is one local request, while a scan round is
+// dozens of indexer calls — so noticing that something finished does not have to
+// wait for the next round.
+const SYNC_INTERVAL_MS = Number(process.env.DOWNLOAD_SYNC_INTERVAL_MINUTES || 1) * 60 * 1000;
 const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
 const MAX_BACKOFF_MS = Number(process.env.SEARCH_MAX_BACKOFF_HOURS || 24) * 60 * 60 * 1000;
 const START_DELAY_MS = 15 * 1000;
@@ -26,7 +31,11 @@ const log = (message: string) => console.log(`[scheduler]${ isDryRun() ? " [dry-
 // syncDownloads writes in dry-run as well, so its lines must not claim otherwise
 const syncLog = (message: string) => console.log(`[scheduler] ${ message }`);
 
-const globalForScheduler = global as unknown as { schedulerStarted: boolean, schedulerRunning: boolean };
+const globalForScheduler = global as unknown as {
+    schedulerStarted: boolean,
+    schedulerRunning: boolean,
+    syncRunning: boolean
+};
 
 /**
  * The wait doubles with every fruitless search up to a cap, and nothing is ever
@@ -94,8 +103,8 @@ const unitLabel = (units: { episodeNumber: number | null, watchlist: { tmdbId: n
  * This runs in dry-run too: it starts nothing, it only records what the client
  * already did, and hiding that would leave a finished download stuck DOWNLOADING.
  */
-export const syncDownloads = async () => {
-    const torrents = await listManagedTorrents();
+export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
+    const torrents = preloaded || await listManagedTorrents();
     const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
     const units = await prisma.watchlistUnit.findMany({
@@ -334,6 +343,30 @@ export const refreshMetadata = async () => {
     }
 };
 
+/**
+ * The sync runs from three places — the scan round, its own short interval and
+ * every live watchlist request — so it guards itself instead of relying on them.
+ */
+export const syncDownloadsOnce = async (preloaded?: TorrentStatus[]) => {
+    if (globalForScheduler.syncRunning) {
+        return false;
+    }
+
+    globalForScheduler.syncRunning = true;
+
+    try {
+        await syncDownloads(preloaded);
+
+    } catch(err) {
+        console.error("[scheduler] sync failed", err);
+
+    } finally {
+        globalForScheduler.syncRunning = false;
+    }
+
+    return true;
+};
+
 export const runScan = async (options: ScanOptions = {}) => {
     if (globalForScheduler.schedulerRunning) {
         log("previous run is still going, skipping this tick");
@@ -348,7 +381,7 @@ export const runScan = async (options: ScanOptions = {}) => {
     }
 
     try {
-        await syncDownloads();
+        await syncDownloadsOnce();
         await refreshMetadata();
         await scanMovies(options);
         await scanEpisodes(options);
@@ -370,8 +403,9 @@ export const startScheduler = () => {
 
     globalForScheduler.schedulerStarted = true;
 
-    log(`started, scanning every ${ SCAN_INTERVAL_MS / 60000 } minutes`);
+    log(`started, scanning every ${ SCAN_INTERVAL_MS / 60000 } minutes, reading the client back every ${ SYNC_INTERVAL_MS / 60000 }`);
 
     setTimeout(() => void runScan(), START_DELAY_MS);
     setInterval(() => void runScan(), SCAN_INTERVAL_MS);
+    setInterval(() => void syncDownloadsOnce(), SYNC_INTERVAL_MS);
 };

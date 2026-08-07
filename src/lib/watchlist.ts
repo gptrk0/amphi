@@ -1,7 +1,7 @@
 import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
+import { removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
@@ -189,13 +189,14 @@ const toDownload = (units: UnitRow[], byHash: Map<string, TorrentStatus>): Watch
 };
 
 /**
- * `live` joins the qBittorrent state onto the rows with one call for the whole
- * table. If the client is unreachable the list still comes back, without progress.
+ * With `torrents` the live qBittorrent state is joined onto the rows; the caller
+ * fetches it once for the whole table and can hand the same list to the download
+ * sync. Null means the client is not asked at all.
  */
-export const getWatchlistWithMedia = async (live = false): Promise<WatchlistItem[]> => {
+export const getWatchlistWithMedia = async (torrents: TorrentStatus[] | null = null): Promise<WatchlistItem[]> => {
     const items = await getWatchlist();
-    const torrents = live ? await listManagedTorrents() : [];
-    const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
+    const live = torrents !== null;
+    const byHash = new Map((torrents || []).map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
     return await Promise.all(items.map(async item => {
         const dto = await withMedia(item);
