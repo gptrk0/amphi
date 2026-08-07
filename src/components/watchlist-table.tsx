@@ -215,17 +215,19 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             value: item => item.type,
             render: item => <span className="text-muted-foreground">{ item.type === "tv" ? "Series" : "Movie" }</span>
         },
-        ...(onlyStatus ? [] : [ {
+        {
             key: "status",
             label: "Status",
-            value: (item: WatchlistItem) => item.status,
-            render: (item: WatchlistItem) => <WatchlistBadge entry={item} />
-        } ]),
-        {
+            value: item => item.status,
+            render: item => <WatchlistBadge entry={item} />
+        },
+        // the library is what is on disk: every row there is downloaded, and how far
+        // along it once was says nothing
+        ...(onlyStatus ? [] : [ {
             key: "progress",
             label: "Progress",
-            value: item => item.download?.progress ?? (item.episodeCount > 0 ? item.downloadedCount / item.episodeCount : 0),
-            render: item => (
+            value: (item: WatchlistItem) => item.download?.progress ?? (item.episodeCount > 0 ? item.downloadedCount / item.episodeCount : 0),
+            render: (item: WatchlistItem) => (
                 <div className="min-w-[7rem]">
                     <div>{ progressText(item) }</div>
 
@@ -248,7 +250,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     </>}
                 </div>
             )
-        },
+        } ]),
         {
             key: "addedAt",
             label: "Added",

@@ -54,8 +54,8 @@ const menus: {
                 url: "/watchlist"
             },
             {
-                title: "Downloaded",
-                url: "/watchlist/downloaded"
+                title: "Library",
+                url: "/library"
             }
         ]
     }

@@ -84,7 +84,7 @@ const PERSONAL: { key: string, title: string, description: string, href: string,
         key: "downloaded",
         title: "Ready to watch",
         description: "Finished downloads.",
-        href: "/watchlist/downloaded",
+        href: "/library",
         statuses: [ "DOWNLOADED" ]
     },
     {
