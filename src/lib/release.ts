@@ -1,6 +1,7 @@
 import PTT from "parse-torrent-title";
 
 import { getIndexerIds, IndexerResult } from "@/lib/indexer";
+import { isTitleBlocked } from "@/lib/stall";
 
 export type QualityProfile = {
     resolutions: string[];
@@ -417,6 +418,11 @@ const score = (release: IndexerResult, resolution: string | null, profile: Quali
 export const rateRelease = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ScoredRelease | RejectedRelease => {
     if (! release.link) {
         return { release, reason: "no download link" };
+    }
+
+    // it was already downloaded once and stood still until it was given up on
+    if (isTitleBlocked(normalizeTitle(release.title))) {
+        return { release, reason: "stalled once already" };
     }
 
     if (release.seeders < profile.minSeeders) {

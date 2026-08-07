@@ -2,7 +2,9 @@ import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { getTorrentStatus, listManagedTorrents, TorrentStatus } from "@/lib/torrent";
+import { normalizeTitle } from "@/lib/release";
+import { blockTitle, forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
+import { getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import {
     ensureMovieUnit,
     forgetUnits,
@@ -163,6 +165,33 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             await prisma.watchlistUnit.updateMany({
                 where,
                 data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
+            });
+
+        } else if (trackStall(torrent)) {
+            // nothing has arrived for the whole threshold: the release is dead, not
+            // slow. it goes with its files, is remembered so the next search does
+            // not pick it again, and the units are due immediately
+            syncLog(`${ unitLabel(running) }: stalled at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes (${ torrent.state }), dropping it for another release`);
+
+            if (isDryRun()) {
+                log("stall handling is skipped in dry-run, the torrent stays");
+
+                continue;
+            }
+
+            blockTitle(normalizeTitle(torrent.name));
+
+            await removeTorrent(hash, STALL_DELETE_FILES);
+            forgetStall(hash);
+
+            await prisma.watchlistUnit.updateMany({
+                where,
+                data: {
+                    status: WatchStatus.PENDING,
+                    torrentHash: null,
+                    searchAttempts: { increment: 1 },
+                    lastCheckedAt: null
+                }
             });
         }
     }

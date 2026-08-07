@@ -282,7 +282,13 @@ Amit ebből átvettem:
   - Ellenőrizve eldobható adatokon: `E01`-hez saját release, `E02–E06`-hoz az `S01E01-E06` → korábban 2 torrent (a range + még egyszer az E01), most **1 torrent, E01–E06**. Csak `E02–E03`-at kérve is az egész range-et foglalja le, tehát a maradék négy epizódra nem indul második letöltés. Az `S01-S03` pack a 2. és 3. évad unitjait is megjelölte, a már letöltött `S02E01`-et kihagyva.
 - [x] **Pack méret-plafon** (2026-08-07) — `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB=5`, alapból bekapcsolva, a `QUALITY_MAX_SIZE_GB`-tól függetlenül (az 0, tehát eddig egyáltalán nem volt felső korlát). A kettő közül a szigorúbb érvényesül. Azért kellett, mert az új pack-szabállyal egy teljesen megjelent, még el nem kezdett évadnál alapból a pack nyer.
   - Mérés a Ted Lasso S1-en (54 találat, 10 rész, 50GB-os plafon): a plafon **2 release-t utasít el** (a legnagyobb 54,8GB), de a **választást nem változtatja meg** — az 1080p-s 12,5GB-os pack egyébként is nyer. Vagyis ez biztosíték, nem napi hatás.
-- [ ] **Stall-kezelés**: a scanner csak az `error`/`missingFiles` állapotot és az eltűnt torrentet kezeli hibaként; egy órákig 0 B/s-en álló torrentet nem cserél le. Terv: idő + progress alapú stall-detektálás, majd újrapróbálkozás más release-szel.
+- [x] **Stall-kezelés** (2026-08-08). Eddig csak az `error`/`missingFiles` állapot és az eltűnt torrent számított hibának — egy órákig 0 B/s-en álló letöltés a végtelenségig `DOWNLOADING` maradt, és mivel a unit már nem `PENDING`, a scanner sem kereste újra. Ez volt az utolsó mód, ahogy egy elem némán elveszhetett.
+  - **Mikor számít elakadtnak** ([src/lib/stall.ts](src/lib/stall.ts)): a torrent nem kész és nem hibás, **és** a qBittorrent szerint `stalledDL` vagy `metaDL` (magnet, aminek sosem jött meg a metaadata), vagy 0 a letöltési sebessége — **és** a `progress` a teljes `STALL_MINUTES` (default 60) alatt egyszer sem mozdult. Bármilyen haladás nullázza az órát, tehát egy lassú letöltés soha nem esik áldozatul.
+  - **Mi történik**: a torrent a fájljaival együtt törlődik (`STALL_DELETE_FILES=1`, egy félkész fájl nem érték), a release neve **feketelistára** kerül, a unitok `PENDING`-re állnak `lastCheckedAt: null`-lal (tehát azonnal esedékesek) és eggyel több próbálkozással.
+  - **A feketelista** a `rateRelease`-ben szűr (`stalled once already`), normalizált release-név alapján — a qBittorrent a release nevén nevezi el a torrentet, ezért ez összeér. Memóriában él, a folyamat élettartamára: egy újraindítás után egy dead release újra kipróbálható, ami elfogadható ár azért, hogy ne kelljen hozzá tábla.
+  - **Az óra is memóriában van** (hash → `{ progress, since }`), így nincs migráció; egy újraindítás annyit jelent, hogy a számláló újraindul, ami egyórás küszöbnél nem számít.
+  - **Dry-runban csak logol**: a torrent-törlés valódi, fájlokat érintő művelet, azt a dry-run szándéka szerint nem szabad megtennie.
+  - Ellenőrizve: 61 perc mozdulatlanság után elakadtnak jelöl, közben 0.30 → 0.31 haladásra újraindítja az órát; a **`stalledUP`** (kész torrent, akinek nincs kihez seedelnie — a te két torrented pontosan ilyen) két óra után sem elakadt; feketelistázás után ugyanaz a release `picked=false`, `reason="stalled once already"`.
 
 ### Fázis 7 — Robusztusság / üzemeltetés
 - [x] A scanner retry/backoff-ja megvan (`searchAttempts`, `lastCheckedAt`), az indexer-hívások hibái nem dobnak, csak logolnak és üres listát adnak, a torznab `error` válasz (pl. `203`) fallbackot indít.
@@ -506,7 +512,7 @@ Kérésre a `Downloaded` oldalból **`Library`** lett (`/library`), és ott a ha
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-08):** Fázis 1–6 kész a stall-kezelés kivételével, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`). Ami maradt: **stall-kezelés**, **seedelés/utómunka**, és a teljes Fázis 8 (settings UI, értesítések, auth, médiaszerver).
+**Állapot (2026-08-08):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés). Ami maradt: **seedelés/utómunka**, és a teljes Fázis 8 (settings UI, értesítések, auth, médiaszerver).
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
@@ -558,6 +564,7 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/grab.ts](src/lib/grab.ts) | keresés → pontozás → qBittorrent → DB lánc (`planMovieGrab`, `planSeasonGrab`, `planGrabs`, `execute*`) |
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
+| [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája és az elakadt release-ek feketelistája |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
 | [src/context/download.tsx](src/context/download.tsx) | a kiadásválasztó ablak állapota, minden letöltés ezen megy keresztül |
