@@ -39,7 +39,16 @@ const aired = (airDate: string | null) => !! airDate && new Date(airDate).getTim
 const shortDate = (airDate: string | null) => airDate ? airDate.slice(0, 10) : "no date yet";
 
 export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: Props) {
-    const [ expanded, setExpanded ] = useState<number[]>([]);
+    // null until the user opens or closes something; the watchlist decides until then
+    const [ expanded, setExpanded ] = useState<number[] | null>(null);
+
+    const watched = (season: SeasonInfo) => {
+        return season.episodes.some(e => monitored.has(episodeKey(season.season_number, e.episode_number)));
+    };
+
+    // a season with anything on the watchlist starts open, so the state that is
+    // already there is visible without a click
+    const open = expanded ?? seasons.filter(watched).map(season => season.season_number);
 
     const statusOf = (seasonNumber: number, episodeNumber: number): WatchStatus | null => {
         const season = item?.seasons.find(s => s.seasonNumber === seasonNumber);
@@ -48,9 +57,16 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
     };
 
     const toggleExpanded = (seasonNumber: number) => {
-        setExpanded(prev => prev.includes(seasonNumber)
-            ? prev.filter(v => v !== seasonNumber)
-            : [ ...prev, seasonNumber ]);
+        setExpanded(open.includes(seasonNumber)
+            ? open.filter(v => v !== seasonNumber)
+            : [ ...open, seasonNumber ]);
+    };
+
+    // freeze what is open first: otherwise unticking the last episode of a season
+    // would fold it up under the cursor
+    const toggle = (seasonNumber: number, episodeNumbers: number[] | null, checked: boolean) => {
+        setExpanded(open);
+        onToggle(seasonNumber, episodeNumbers, checked);
     };
 
     return (
@@ -61,7 +77,7 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
                     ? false
                     : picked.length === season.episodes.length ? true : "indeterminate";
 
-                const isOpen = expanded.includes(season.season_number);
+                const isOpen = open.includes(season.season_number);
                 const downloaded = item?.seasons.find(s => s.seasonNumber === season.season_number)?.downloadedCount || 0;
 
                 return (
@@ -71,7 +87,7 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
                                 className="cursor-pointer"
                                 checked={state}
                                 disabled={disabled || season.episodes.length === 0}
-                                onCheckedChange={(checked) => onToggle(season.season_number, null, checked === true)}
+                                onCheckedChange={(checked) => toggle(season.season_number, null, checked === true)}
                             />
 
                             <button
@@ -110,7 +126,7 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
                                             className="cursor-pointer"
                                             checked={monitored.has(episodeKey(season.season_number, episode.episode_number))}
                                             disabled={disabled}
-                                            onCheckedChange={(checked) => onToggle(season.season_number, [ episode.episode_number ], checked === true)}
+                                            onCheckedChange={(checked) => toggle(season.season_number, [ episode.episode_number ], checked === true)}
                                         />
 
                                         <span className={classNames("text-sm", { "text-muted-foreground": ! isAired })}>

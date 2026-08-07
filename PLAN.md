@@ -311,6 +311,7 @@ Két kérés, egy felület: (a) évadon belül epizódonként is lehessen válas
 - A `Download` gomb a bepipált epizódokat tölti (`planSeasonGrab` / `executeSeasonGrab` `episodeNumbers`-e eddig is tudta ezt, csak a felület nem használta). Ha egy évad összes epizódja ki van pipálva, üres epizódlista megy — az a szerveren „teljes évadot" jelent, így a season pack útja megmarad.
 - A „nem elérhető" dialógus is pontosabb lett: már csak a *ténylegesen hiányzó* epizódokat teszi figyelt állapotba, nem az egész évadukat.
 - Új komponens: [src/components/season-picker.tsx](src/components/season-picker.tsx) — lenyitható évadok, félig kipipált évadnál `indeterminate` állapot (ehhez a shadcn `Checkbox` kapott egy `MinusIcon`-os ágat, eddig üres keretben mutatott pipát), epizódonként cím, dátum és letöltési állapot.
+- **Az az évad, amiben van watchlistelt rész, alapból nyitva van.** A nyitott halmaz az első kattintásig a watchlistből származik, utána a felhasználó döntése viszi — és minden pipa-váltás előtt „befagy", különben az évad utolsó pipájának kiszedése becsukná az évadot a kurzor alatt.
 
 **Élő ellenőrzés:** nem watchlistelt sorozat `S1E3`-át bepipálva létrejött a sor egyetlen figyelt epizóddal (`episodeCount=1`), a teljes `S2`-t bepipálva 10/10 lett, visszavéve újra 1, az utolsó pipa kiszedésekor pedig a sor eltűnt. A watchlist a teszt előtti állapotában maradt, a te `#17`-es sorozatod érintetlen.
 
