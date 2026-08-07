@@ -14,8 +14,8 @@ import { WatchlistBadge } from "@/components/watchlist-badge";
 import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { episodeKey, SeasonInfo, SeasonPicker } from "@/components/season-picker";
 import {
     Dialog,
     DialogContent,
@@ -24,13 +24,6 @@ import {
     DialogHeader,
     DialogTitle
 } from "@/components/ui/dialog";
-
-type SeasonInfo = {
-    season_number: number;
-    name: string;
-    air_date: string | null;
-    episode_count: number;
-};
 
 type MissingSeason = {
     seasonNumber: number;
@@ -42,7 +35,8 @@ export default function Page() {
     let [media, setMedia] = useState<Media>();
     let [seasons, setSeasons] = useState<SeasonInfo[]>([]);
     let [item, setItem] = useState<WatchlistItem>();
-    let [selected, setSelected] = useState<number[]>([]);
+    // "<season>:<episode>" keys — the watchlist state, mirrored so a tick is instant
+    let [monitored, setMonitored] = useState<Set<string>>(new Set());
     let [isDownloading, setDownloading] = useState(false);
     let [isSaving, setSaving] = useState(false);
     let [missing, setMissing] = useState<MissingSeason[] | null>(null);
@@ -60,7 +54,7 @@ export default function Page() {
             });
     }, [ type, id ])
 
-    // the watchlist item carries the per season monitored flags
+    // the watchlist item carries the per episode monitored flags
     useEffect(() => {
         if (! entry) {
             setItem(undefined);
@@ -72,16 +66,90 @@ export default function Page() {
             .catch(err => console.error(err));
     }, [ entry?.id, isDownloading ])
 
+    // whatever the server says wins, every toggle answers with the whole item
+    useEffect(() => {
+        const next = new Set<string>();
+
+        for (const season of item?.seasons || []) {
+            for (const episode of season.episodes || []) {
+                if (episode.monitored) {
+                    next.add(episodeKey(season.seasonNumber, episode.episodeNumber));
+                }
+            }
+        }
+
+        setMonitored(next);
+    }, [ item ])
+
     if (! media) {
         return <>loading</>;
     }
 
     const isTv = media.type === "tv";
 
-    const toggleSeason = (seasonNumber: number, checked: boolean) => {
-        setSelected(prev => checked
-            ? [ ...prev, seasonNumber ]
-            : prev.filter(v => v !== seasonNumber));
+    const selection = seasons
+        .map(season => {
+            const picked = season.episodes
+                .filter(episode => monitored.has(episodeKey(season.season_number, episode.episode_number)))
+                .map(episode => episode.episode_number);
+
+            return {
+                seasonNumber: season.season_number,
+                // an empty list means the whole season on the api side
+                episodeNumbers: picked.length === season.episodes.length ? [] : picked,
+                count: picked.length
+            };
+        })
+        .filter(season => season.count > 0);
+
+    const pickedCount = selection.reduce((sum, season) => sum + season.count, 0);
+
+    /**
+     * The tick is the watchlist itself: it adds the show on the first episode and
+     * removes it again when the last one is unticked.
+     */
+    const toggle = async (seasonNumber: number, episodeNumbers: number[] | null, checked: boolean) => {
+        const affected = episodeNumbers
+            || seasons.find(s => s.season_number === seasonNumber)?.episodes.map(e => e.episode_number)
+            || [];
+
+        setMonitored(prev => {
+            const next = new Set(prev);
+
+            for (const episodeNumber of affected) {
+                const key = episodeKey(seasonNumber, episodeNumber);
+
+                if (checked) {
+                    next.add(key);
+                } else {
+                    next.delete(key);
+                }
+            }
+
+            return next;
+        });
+
+        setSaving(true);
+
+        try {
+            const res = await axios.patch("/api/watchlist", {
+                tmdbId,
+                type,
+                monitored: checked,
+                seasonNumber,
+                ...(episodeNumbers ? { episodes: episodeNumbers } : {})
+            });
+
+            setItem(res.data.result || undefined);
+
+        } catch(err) {
+            console.error(err);
+            toast("Could not update the watchlist.");
+
+        } finally {
+            setSaving(false);
+            refresh();
+        }
     }
 
     const download = () => {
@@ -89,7 +157,7 @@ export default function Page() {
         setMissing(null);
         setMovieMissing(false);
 
-        axios.post("/api/download", { type, id: tmdbId, seasons: selected })
+        axios.post("/api/download", { type, id: tmdbId, seasons: selection })
             .then(res => {
                 if (res.data.message) {
                     toast(res.data.message);
@@ -113,9 +181,25 @@ export default function Page() {
     const watchMissing = async () => {
         setSaving(true);
 
-        const seasonNumbers = (missing || []).map(v => v.seasonNumber);
+        if (movieMissing) {
+            await add(type as string, tmdbId, media.name);
 
-        await add(type as string, tmdbId, media.name, seasonNumbers.length > 0 ? seasonNumbers : undefined);
+        } else {
+            // only the episodes that were actually missing, not their whole season
+            for (const season of missing || []) {
+                const res = await axios.patch("/api/watchlist", {
+                    tmdbId,
+                    type,
+                    monitored: true,
+                    seasonNumber: season.seasonNumber,
+                    episodes: season.episodeNumbers
+                });
+
+                setItem(res.data.result || undefined);
+            }
+
+            refresh();
+        }
 
         setSaving(false);
         setMissing(null);
@@ -164,12 +248,12 @@ export default function Page() {
                     <Button
                         className="cursor-pointer"
                         onClick={download}
-                        disabled={isDownloading || (isTv && selected.length === 0)}
+                        disabled={isDownloading || (isTv && pickedCount === 0)}
                     >
                         <Loader2 className={classNames("animate-spin", { "hidden": !isDownloading })} />
                         <Download className={classNames({ "hidden": isDownloading })} />
                         Download
-                        { isTv && selected.length > 0 ? ` ${ selected.length } season${ selected.length > 1 ? "s" : "" }` : "" }
+                        { isTv && pickedCount > 0 ? ` ${ pickedCount } episode${ pickedCount > 1 ? "s" : "" }` : "" }
                     </Button>
 
                     {entry && <Button
@@ -184,41 +268,19 @@ export default function Page() {
                 {isTv && <div className="pt-10 max-w-2xl">
                     <h2 className="text-lg font-medium">Seasons</h2>
                     <p className="text-sm text-muted-foreground">
-                        Pick the seasons you want. Whatever is available starts downloading right away.
+                        Tick what you want — a whole season or single episodes. Ticking puts it on your
+                        watchlist right away, unticking takes it off.
                     </p>
 
                     <Separator className="my-3" />
 
-                    <div className="flex flex-col gap-1">
-                        {seasons.map(season => {
-                            const dbSeason = item?.seasons.find(s => s.seasonNumber === season.season_number);
-
-                            return (
-                                <label
-                                    key={season.season_number}
-                                    className="flex cursor-pointer items-center gap-3 py-1"
-                                >
-                                    <Checkbox
-                                        className="cursor-pointer"
-                                        checked={selected.includes(season.season_number)}
-                                        onCheckedChange={(checked) => toggleSeason(season.season_number, checked === true)}
-                                    />
-
-                                    <span className="text-sm">
-                                        <span className="font-medium">{ season.name }</span>
-                                        <span className="text-muted-foreground">
-                                            { " — " }{ season.episode_count } episodes
-                                            { season.air_date ? ` (${ season.air_date.split("-")[0] })` : "" }
-                                            { dbSeason && dbSeason.downloadedCount > 0
-                                                ? ` — ${ dbSeason.downloadedCount }/${ dbSeason.episodeCount } downloaded`
-                                                : "" }
-                                            { dbSeason?.monitored ? " — watching" : "" }
-                                        </span>
-                                    </span>
-                                </label>
-                            );
-                        })}
-                    </div>
+                    <SeasonPicker
+                        seasons={seasons}
+                        item={item}
+                        monitored={monitored}
+                        onToggle={toggle}
+                        disabled={isSaving}
+                    />
                 </div>}
             </div>
         </div>

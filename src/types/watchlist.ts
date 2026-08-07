@@ -13,11 +13,21 @@ export type WatchlistEntry = {
     downloadedCount: number;
 };
 
+export type WatchlistEpisodeItem = {
+    episodeNumber: number;
+    monitored: boolean;
+    status: WatchStatus;
+    airDate: string | null;
+};
+
+// `episodes` is only filled by the single item endpoint — the list would carry every
+// episode of every show for nothing.
 export type WatchlistSeasonItem = {
     seasonNumber: number;
     monitored: boolean;
     episodeCount: number;
     downloadedCount: number;
+    episodes?: WatchlistEpisodeItem[];
 };
 
 // One row of `GET /api/watchlist` — database state plus TMDB metadata.

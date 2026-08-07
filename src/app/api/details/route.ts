@@ -25,7 +25,14 @@ export async function GET(req: NextRequest) {
                 season_number: s.season_number,
                 name: s.name,
                 air_date: s.air_date,
-                episode_count: s.episode_count
+                episode_count: s.episode_count,
+                episodes: s.episodes.map(e => {
+                    return {
+                        episode_number: e.episode_number,
+                        name: e.name,
+                        air_date: e.air_date
+                    };
+                })
             };
         })
     });

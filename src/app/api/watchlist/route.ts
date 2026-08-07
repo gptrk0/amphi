@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, toContentType } from "@/lib/watchlist";
+import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, setMonitored, toContentType } from "@/lib/watchlist";
 
 export async function GET(req: NextRequest) {
     const slim = req.nextUrl.searchParams.get('slim');
@@ -47,5 +47,45 @@ export async function POST(req: NextRequest) {
         console.error(err);
 
         return Response.json({ success: false, message: 'Failed to add to watchlist!' }, { status: 500 });
+    }
+}
+
+/**
+ * Turns a season or single episodes on and off. Works by tmdbId rather than by row
+ * id, because ticking the first episode of a show that is not on the watchlist yet
+ * has to create the row — and unticking the last one deletes it again, in which case
+ * `result` comes back null.
+ */
+export async function PATCH(req: NextRequest) {
+    try {
+        let body = await req.json();
+
+        let tmdbId = Number(body?.tmdbId);
+        let type = toContentType(body?.type);
+        let monitored = body?.monitored;
+
+        let seasonNumber = body?.seasonNumber === undefined ? undefined : Number(body.seasonNumber);
+        let episodeNumbers = Array.isArray(body?.episodes) ? body.episodes.map(Number) : undefined;
+
+        if (! tmdbId || ! type || typeof monitored !== "boolean") {
+            return Response.json({ success: false, message: 'Invalid tmdbId, type or monitored flag!' }, { status: 400 });
+        }
+
+        if (seasonNumber !== undefined && Number.isNaN(seasonNumber)) {
+            return Response.json({ success: false, message: 'Invalid season number!' }, { status: 400 });
+        }
+
+        if (episodeNumbers?.some(Number.isNaN)) {
+            return Response.json({ success: false, message: 'Invalid episode number!' }, { status: 400 });
+        }
+
+        let result = await setMonitored(tmdbId, type, monitored, { seasonNumber, episodeNumbers });
+
+        return Response.json({ success: true, result });
+
+    } catch(err) {
+        console.error(err);
+
+        return Response.json({ success: false, message: 'Failed to update the watchlist!' }, { status: 500 });
     }
 }

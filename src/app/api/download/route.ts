@@ -7,13 +7,41 @@ export type MissingSeason = {
     episodeNumbers: number[];
 };
 
+type SeasonRequest = {
+    seasonNumber: number;
+    episodeNumbers: number[];
+};
+
+/**
+ * `seasons` is either a list of season numbers (the whole season) or a list of
+ * `{ seasonNumber, episodeNumbers }` — an empty episode list also means the whole
+ * season.
+ */
+const toSeasonRequests = (value: unknown): SeasonRequest[] => {
+    if (! Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map(entry => {
+            const seasonNumber = Number(typeof entry === "object" && entry !== null ? (entry as any).seasonNumber : entry);
+            const episodes = typeof entry === "object" && entry !== null ? (entry as any).episodeNumbers : null;
+
+            return {
+                seasonNumber,
+                episodeNumbers: Array.isArray(episodes) ? episodes.map(Number).filter((v: number) => ! Number.isNaN(v)) : []
+            };
+        })
+        .filter(entry => ! Number.isNaN(entry.seasonNumber));
+};
+
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
 
         const type = body?.type;
         const id = Number(body?.id);
-        const seasons: number[] = Array.isArray(body?.seasons) ? body.seasons.map(Number).filter(Boolean) : [];
+        const seasons = toSeasonRequests(body?.seasons);
 
         if (! id || (type !== "movie" && type !== "tv")) {
             return Response.json({ success: false, message: "Invalid type or id!" }, { status: 400 });
@@ -52,19 +80,23 @@ export async function POST(req: NextRequest) {
         const started: StartedDownload[] = [];
         const missing: MissingSeason[] = [];
 
-        for (const seasonNumber of seasons) {
-            const plan = await planSeasonGrab(id, seasonNumber);
+        for (const { seasonNumber, episodeNumbers } of seasons) {
+            const wanted = episodeNumbers.length > 0 ? episodeNumbers : undefined;
+            const plan = await planSeasonGrab(id, seasonNumber, { episodeNumbers: wanted });
 
             if (! plan) {
                 continue;
             }
 
             if (plan.pack || plan.episodes.some(episode => episode.release)) {
-                started.push(...await executeSeasonGrab(id, plan));
+                started.push(...await executeSeasonGrab(id, plan, { episodeNumbers: wanted }));
             }
 
-            if (plan.missing.length > 0) {
-                missing.push({ seasonNumber, episodeNumbers: plan.missing });
+            // only report what was actually asked for as missing
+            const gaps = wanted ? plan.missing.filter(v => wanted.includes(v)) : plan.missing;
+
+            if (gaps.length > 0) {
+                missing.push({ seasonNumber, episodeNumbers: gaps });
             }
         }
 

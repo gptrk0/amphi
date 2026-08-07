@@ -296,9 +296,23 @@ Amit ebből átvettem:
 - [ ] Értesítések (böngésző push / Telegram / Discord webhook), amikor egy watchlist-elem letöltésre készen áll.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
-- [ ] **Epizód-szintű nézet**: a részletnézeten évad-szintű összegzés van (`X/Y downloaded`), epizódonkénti lista/állapot nincs.
-- [ ] **Évad-monitorozás kézi váltása a felületen** (a `PATCH` API megvan, csak nincs hozzá kontroll a checkboxos átalakítás után).
-- [ ] **`Stop watching` gomb** a részletnézeten: most a teljes watchlist-sort törli (a letöltés-nyilvántartással együtt). Eldöntendő, hogy maradjon-e így, vagy csak a monitorozást kapcsolja ki.
+- [x] **Epizód-szintű nézet és választás** — lásd a lenti alfejezetet (2026-08-07).
+- [x] **Évad-monitorozás kézi váltása a felületen** — ugyanott; a régi, sosem hívott `PATCH /api/watchlist/:id/seasons/:n` végpont helyére a `PATCH /api/watchlist` lépett.
+- [ ] **`Stop watching` gomb** a részletnézeten: továbbra is a teljes watchlist-sort törli. Most már van finomabb út is (pipák kiszedése), tehát a gomb maradhat „mindent töröl" jelentéssel — de az epizódok letöltés-nyilvántartását is viszi, ezt még el kell dönteni.
+
+#### Epizódonkénti választás és élő watchlist-pipák (2026-08-07-i kérés) ✅
+
+Két kérés, egy felület: (a) évadon belül epizódonként is lehessen választani, (b) egy watchlisten lévő sorozat adatlapján látszódjanak a watchlistelt részek, és a pipa ki/bevétele módosítsa is a watchlistet.
+
+**A pipa jelentése egységes lett: a pipa *maga* a watchlist.** Nincs külön „kijelölés" és „watchlist" állapot — egy epizód bepipálása azonnal felveszi (és ha a sorozat még nincs a listán, létrehozza a sort), a kiszedése levéve. Ha az utolsó pipa is kikerül, és nincs se letöltés alatti, se letöltött epizód, akkor **a sorozat egésze lekerül a watchlistről** (`pruneWatchlistItem`) — különben egy „semmit sem figyelünk" sor maradna a listán.
+
+- A művelet `tmdbId` alapján megy (`PATCH /api/watchlist`), nem sor-azonosító alapján: az első pipánál még nincs sor, amire hivatkozni lehetne.
+- A `GET /api/watchlist/:id` mostantól epizódonkénti állapotot is ad (`monitored`, `status`, `airDate`); a **lista-végpont szándékosan nem**, mert ott minden sorozat minden epizódja fölöslegesen utazna.
+- A `Download` gomb a bepipált epizódokat tölti (`planSeasonGrab` / `executeSeasonGrab` `episodeNumbers`-e eddig is tudta ezt, csak a felület nem használta). Ha egy évad összes epizódja ki van pipálva, üres epizódlista megy — az a szerveren „teljes évadot" jelent, így a season pack útja megmarad.
+- A „nem elérhető" dialógus is pontosabb lett: már csak a *ténylegesen hiányzó* epizódokat teszi figyelt állapotba, nem az egész évadukat.
+- Új komponens: [src/components/season-picker.tsx](src/components/season-picker.tsx) — lenyitható évadok, félig kipipált évadnál `indeterminate` állapot (ehhez a shadcn `Checkbox` kapott egy `MinusIcon`-os ágat, eddig üres keretben mutatott pipát), epizódonként cím, dátum és letöltési állapot.
+
+**Élő ellenőrzés:** nem watchlistelt sorozat `S1E3`-át bepipálva létrejött a sor egyetlen figyelt epizóddal (`episodeCount=1`), a teljes `S2`-t bepipálva 10/10 lett, visszavéve újra 1, az utolsó pipa kiszedésekor pedig a sor eltűnt. A watchlist a teszt előtti állapotában maradt, a te `#17`-es sorozatod érintetlen.
 
 #### Bejelentés: a kész letöltés nem került át a „letöltöttek" közé (2026-08-06) ✅ javítva 2026-08-07
 
@@ -468,12 +482,12 @@ Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANG
 | `GET /api/discover?type&category&genre&page` | TMDB discover: trending / popular / top_rated / upcoming / now_playing / airing_today / on_the_air, vagy genre-szűrt lista |
 | `GET /api/discover/sections?view` | a főoldal / `/movies` / `/series` kész sorai, sorok között dedupálva, hero-val |
 | `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
-| `GET /api/details?type&id` | metaadat + tv-nél évadlista |
+| `GET /api/details?type&id` | metaadat + tv-nél évad- és epizódlista (cím, `air_date`) |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
 | `GET /api/watchlist` | dúsított lista (TMDB metaadattal) |
 | `GET /api/watchlist?slim=1` | csak azonosítók + állapot, TMDB-hívás nélkül |
 | `POST /api/watchlist` | `{ tmdbId, type, seasons? }` — `seasons` esetén csak azokat monitorozza |
-| `GET`/`DELETE /api/watchlist/:id` | egy elem lekérése / eltávolítása (cascade) |
-| `PATCH /api/watchlist/:id/seasons/:n` | `{ monitored }` |
-| `POST /api/download` | `{ type, id, seasons? }` → `{ started, missing / missingMovie }` |
+| `GET`/`DELETE /api/watchlist/:id` | egy elem lekérése (epizódonkénti állapottal) / eltávolítása (cascade) |
+| `PATCH /api/watchlist` | `{ tmdbId, type, monitored, seasonNumber?, episodes? }` — évad vagy egyes epizódok be/ki; felveszi a sort, ha kell, és törli, ha kiürül (`result: null`) |
+| `POST /api/download` | `{ type, id, seasons? }` — `seasons` lehet `[1,2]` vagy `[{ seasonNumber, episodeNumbers }]` → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása |

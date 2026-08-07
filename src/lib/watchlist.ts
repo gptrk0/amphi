@@ -110,7 +110,7 @@ export const getWatchlistSlim = async (): Promise<WatchlistEntry[]> => {
 /**
  * Seasons are not stored, they are read back from the units that carry the number.
  */
-const toSeasons = (units: UnitRow[]): WatchlistSeasonItem[] => {
+const toSeasons = (units: UnitRow[], withEpisodes: boolean): WatchlistSeasonItem[] => {
     const grouped = new Map<number, UnitRow[]>();
 
     for (const unit of units) {
@@ -127,7 +127,17 @@ const toSeasons = (units: UnitRow[]): WatchlistSeasonItem[] => {
             seasonNumber,
             monitored: seasonUnits.some(unit => unit.monitored),
             episodeCount: seasonUnits.length,
-            downloadedCount: seasonUnits.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length
+            downloadedCount: seasonUnits.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length,
+            ...(withEpisodes ? {
+                episodes: seasonUnits
+                    .filter(unit => unit.episodeNumber !== null)
+                    .map(unit => ({
+                        episodeNumber: unit.episodeNumber as number,
+                        monitored: unit.monitored,
+                        status: unit.status,
+                        airDate: unit.airDate ? unit.airDate.toISOString() : null
+                    }))
+            } : {})
         }));
 };
 
@@ -135,27 +145,27 @@ const toSeasons = (units: UnitRow[]): WatchlistSeasonItem[] => {
  * Adds TMDB metadata to a row. On a TMDB failure `media` is null and only the
  * download state is shown.
  */
-export const withMedia = async (item: WatchlistRow): Promise<WatchlistItem> => {
+export const withMedia = async (item: WatchlistRow, withEpisodes = false): Promise<WatchlistItem> => {
     const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
 
     return {
         ...toWatchlistEntry(item),
         media: metadata ? metadata.media : null,
         addedAt: item.addedAt.toISOString(),
-        seasons: toSeasons(item.units)
+        seasons: toSeasons(item.units, withEpisodes)
     };
 };
 
 export const getWatchlistWithMedia = async (): Promise<WatchlistItem[]> => {
     const items = await getWatchlist();
 
-    return await Promise.all(items.map(withMedia));
+    return await Promise.all(items.map(item => withMedia(item)));
 };
 
 export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistItem | null> => {
     const item = await getWatchlistItem(id);
 
-    return item ? await withMedia(item) : null;
+    return item ? await withMedia(item, true) : null;
 };
 
 export const toAirDate = (date: string | null | undefined) => date ? new Date(date) : null;
@@ -323,9 +333,67 @@ export const setSeasonsMonitored = async (watchlistId: number, monitored: boolea
     });
 };
 
-export const setSeasonMonitored = async (watchlistId: number, seasonNumber: number, monitored: boolean) => {
-    return await prisma.watchlistUnit.updateMany({
-        where: { watchlistId, seasonNumber },
+/**
+ * A show nobody watches and nothing was downloaded from has no reason to sit on the
+ * watchlist — unchecking the last episode has to take the row with it.
+ */
+const pruneWatchlistItem = async (id: number): Promise<WatchlistItem | null> => {
+    const keep = await prisma.watchlistUnit.count({
+        where: {
+            watchlistId: id,
+            OR: [ { monitored: true }, { status: { not: PrismaWatchStatus.PENDING } } ]
+        }
+    });
+
+    if (keep > 0) {
+        return await getWatchlistItemWithMedia(id);
+    }
+
+    await removeFromWatchlist(id);
+
+    return null;
+};
+
+/**
+ * The checkbox on the details page writes straight through: ticking something puts
+ * the show on the watchlist if it is not there yet, unticking the last thing takes
+ * it off again. Without `episodeNumbers` the whole season is meant.
+ */
+export const setMonitored = async (
+    tmdbId: number,
+    type: ContentType,
+    monitored: boolean,
+    target: { seasonNumber?: number, episodeNumbers?: number[] } = {}
+): Promise<WatchlistItem | null> => {
+    let row = await prisma.watchlist.findUnique({ where: { tmdbId_type: { tmdbId, type } } });
+
+    if (! row) {
+        if (! monitored) {
+            return null;
+        }
+
+        // added with nothing monitored; only the requested part is turned on below
+        const created = await addToWatchlist(tmdbId, type, []);
+
+        if (! created) {
+            return null;
+        }
+
+        row = await prisma.watchlist.findUnique({ where: { id: created.id } });
+    }
+
+    if (! row) {
+        return null;
+    }
+
+    await prisma.watchlistUnit.updateMany({
+        where: {
+            watchlistId: row.id,
+            seasonNumber: target.seasonNumber ?? { not: null },
+            ...(target.episodeNumbers ? { episodeNumber: { in: target.episodeNumbers } } : {})
+        },
         data: { monitored }
     });
+
+    return await pruneWatchlistItem(row.id);
 };
