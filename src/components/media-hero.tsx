@@ -7,12 +7,12 @@ import { Bookmark, BookmarkX, Download, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWatchlist } from "@/context/watchlist";
-import { useDownload } from "@/hooks/use-download";
+import { useDownload } from "@/context/download";
 import { Media } from "@/types/media";
 
 export function MediaHero({ media }: { media: Media }) {
     const { getEntry, add, remove } = useWatchlist();
-    const download = useDownload();
+    const { startDownload } = useDownload();
     const entry = getEntry(media.type, media.id);
     const details = `/details/${ media.type }/${ media.id }`;
 
@@ -42,7 +42,7 @@ export function MediaHero({ media }: { media: Media }) {
                 <div className="flex flex-wrap gap-2 pt-1">
                     {/* series need their seasons picked first, so they go to the detail page */}
                     {media.type === "movie"
-                        ? <Button onClick={() => download(media)}>
+                        ? <Button onClick={() => startDownload({ type: media.type, tmdbId: media.id, name: media.name })}>
                             <Download /> Download
                         </Button>
                         : <Button asChild>

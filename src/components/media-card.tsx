@@ -15,7 +15,7 @@ import {
 import { Badge } from "./ui/badge"
 import { WatchlistBadge } from "./watchlist-badge"
 import { useWatchlist } from "@/context/watchlist"
-import { useDownload } from "@/hooks/use-download"
+import { useDownload } from "@/context/download"
 import { Media } from "@/types/media"
 import Link from "next/link"
 
@@ -35,7 +35,7 @@ export function MediaCard({
     ...props
 }: Props) {
     const { getEntry, add, remove } = useWatchlist();
-    const download = useDownload();
+    const { startDownload } = useDownload();
     const entry = getEntry(media.type, media.id);
 
     return (
@@ -81,7 +81,10 @@ export function MediaCard({
                     {media.type === "movie" && <>
                         <ContextMenuSeparator />
 
-                        <ContextMenuItem className="cursor-pointer" onClick={() => download(media)}>
+                        <ContextMenuItem
+                            className="cursor-pointer"
+                            onClick={() => startDownload({ type: media.type, tmdbId: media.id, name: media.name })}
+                        >
                             <Download /> Download now
                         </ContextMenuItem>
                     </>}

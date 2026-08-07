@@ -1,7 +1,7 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { getQualityProfile, selectEpisodeRelease, selectRelease, selectSeasonRelease } from "@/lib/release";
+import { getQualityProfile, ReleaseSelection, selectEpisodeRelease, selectRelease, selectSeasonRelease } from "@/lib/release";
 import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
 import {
     addToWatchlist,
@@ -10,7 +10,18 @@ import {
     markUnitsDownloading
 } from "@/lib/watchlist";
 
-export type EpisodePlan = {
+/**
+ * The runners up are kept next to the winner so a download can be offered as a
+ * choice. `release` stays the one the profile picked, which is what the scanner
+ * takes without asking, and `filtered` is how many releases the profile threw
+ * away — a count worth showing when nothing is left.
+ */
+export type ReleaseOptions = {
+    candidates: IndexerResult[];
+    filtered: number;
+};
+
+export type EpisodePlan = ReleaseOptions & {
     episodeNumber: number;
     aired: boolean;
     release: IndexerResult | null;
@@ -22,13 +33,24 @@ export type SeasonPlan = {
     // every episode of the season is out, so a pack cannot be missing anything
     allAired: boolean;
     pack: IndexerResult | null;
+    packOptions: ReleaseOptions;
     episodes: EpisodePlan[];
     missing: number[];
 };
 
-export type MoviePlan = {
+export type MoviePlan = ReleaseOptions & {
     release: IndexerResult | null;
     resultCount: number;
+};
+
+// how many releases a download dialog offers to choose from
+const OPTION_COUNT = Number(process.env.DOWNLOAD_OPTION_COUNT || 5);
+
+const toOptions = (selection: ReleaseSelection): ReleaseOptions => {
+    return {
+        candidates: selection.candidates.slice(0, OPTION_COUNT).map(scored => scored.release),
+        filtered: selection.rejected.length
+    };
 };
 
 export type StartedDownload = {
@@ -64,7 +86,11 @@ export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> =
         originalLanguage: metadata.original_language
     });
 
-    return { release: selection.picked?.release || null, resultCount: releases.length };
+    return {
+        release: selection.picked?.release || null,
+        resultCount: releases.length,
+        ...toOptions(selection)
+    };
 };
 
 const EPISODE_SEARCH_CONCURRENCY = Number(process.env.EPISODE_SEARCH_CONCURRENCY || 3);
@@ -125,7 +151,7 @@ export const planSeasonGrab = async (
         // `aired` keeps saying what TMDB says — only the search is forced, so the
         // pack rules below still reason about the real state of the season
         if (! aired && ! options.force) {
-            return { episodeNumber, aired, release: null };
+            return { episodeNumber, aired, release: null, candidates: [], filtered: 0 };
         }
 
         const own = options.episodeNumbers && ! options.episodeNumbers.includes(episodeNumber)
@@ -133,14 +159,20 @@ export const planSeasonGrab = async (
             : await findEpisodeReleases({ imdbId, title: metadata.original_name, season: seasonNumber, episode: episodeNumber });
 
         const pool = own.length > 0 ? own : releases;
-        const picked = selectEpisodeRelease(pool, seasonNumber, episodeNumber, profile, titles, metadata.original_language).picked;
+        const selection = selectEpisodeRelease(pool, seasonNumber, episodeNumber, profile, titles, metadata.original_language);
 
-        return { episodeNumber, aired, release: picked ? picked.release : null };
+        return {
+            episodeNumber,
+            aired,
+            release: selection.picked ? selection.picked.release : null,
+            ...toOptions(selection)
+        };
     });
 
     // always looked up, not only when an episode is missing: a season that is fully
     // out is worth taking as one torrent even if every episode is there on its own
-    const pack = selectSeasonRelease(releases, seasonNumber, season.episodes.length, profile, titles, metadata.original_language).picked?.release || null;
+    const packSelection = selectSeasonRelease(releases, seasonNumber, season.episodes.length, profile, titles, metadata.original_language);
+    const pack = packSelection.picked?.release || null;
 
     // with a pack in hand everything already aired is obtainable, whether or not the
     // pack ends up being the one that is grabbed
@@ -150,7 +182,15 @@ export const planSeasonGrab = async (
 
     const allAired = episodes.length > 0 && episodes.every(episode => episode.aired);
 
-    return { seasonNumber, episodeCount: season.episodes.length, allAired, pack, episodes, missing };
+    return {
+        seasonNumber,
+        episodeCount: season.episodes.length,
+        allAired,
+        pack,
+        packOptions: toOptions(packSelection),
+        episodes,
+        missing
+    };
 };
 
 // A download only needs a row to track the torrent by hash, so nothing is
@@ -235,30 +275,34 @@ export const shouldUsePack = (plan: SeasonPlan, requested: number[], started: bo
  * never decide differently.
  */
 export const planSeasonGrabs = async (
-    watchlistId: number,
+    watchlistId: number | null,
     plan: SeasonPlan,
     options: { episodeNumbers?: number[], usePack?: boolean } = {}
 ) => {
-    const rows = await getSeasonUnits(watchlistId, plan.seasonNumber);
+    const rows = watchlistId ? await getSeasonUnits(watchlistId, plan.seasonNumber) : [];
     const wanted = options.episodeNumbers;
 
     const numbers = (list: typeof rows) => {
         return list.map(row => row.episodeNumber).filter((v): v is number => v !== null);
     };
 
-    const grabbable = rows.filter(row => GRABBABLE_STATUS.includes(row.status));
-    const requested = wanted
-        ? grabbable.filter(row => row.episodeNumber !== null && wanted.includes(row.episodeNumber))
-        : grabbable;
+    // a show that is not on the watchlist yet has no rows, and then nothing has been
+    // grabbed before: the season itself is what can be taken. this is the preview of
+    // a first download, where creating the rows would be a side effect of looking
+    const grabbable = rows.length > 0
+        ? numbers(rows.filter(row => GRABBABLE_STATUS.includes(row.status)))
+        : plan.episodes.map(episode => episode.episodeNumber);
+
+    const requested = wanted ? grabbable.filter(episodeNumber => wanted.includes(episodeNumber)) : grabbable;
 
     const started = rows.some(row => row.status === WatchStatus.DOWNLOADING || row.status === WatchStatus.DOWNLOADED);
-    const usePack = options.usePack ?? shouldUsePack(plan, numbers(requested), started);
+    const usePack = options.usePack ?? shouldUsePack(plan, requested, started);
 
     // one pack torrent brings the whole season, so it claims every episode still to
     // get — not only the ones this round happened to ask for
-    const eligible = numbers(usePack ? grabbable : requested);
+    const eligible = usePack ? grabbable : requested;
 
-    return { rows, usePack, grabs: planGrabs(plan, eligible, usePack) };
+    return { rows, usePack, eligible, grabs: planGrabs(plan, eligible, usePack) };
 };
 
 const label = (seasonNumber: number, grab: PlannedGrab) => {

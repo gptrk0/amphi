@@ -1,43 +1,54 @@
 import { NextRequest } from "next/server";
 
+import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
+import { MissingSeason } from "@/types/download";
 
-export type MissingSeason = {
-    seasonNumber: number;
-    episodeNumbers: number[];
-};
+const toPicks = (value: unknown): Record<string, string> => {
+    if (typeof value !== "object" || value === null) {
+        return {};
+    }
 
-type SeasonRequest = {
-    seasonNumber: number;
-    episodeNumbers: number[];
+    const picks: Record<string, string> = {};
+
+    for (const [ key, guid ] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof guid === "string") {
+            picks[key] = guid;
+        }
+    }
+
+    return picks;
 };
 
 /**
- * `seasons` is either a list of season numbers (the whole season) or a list of
- * `{ seasonNumber, episodeNumbers }` — an empty episode list also means the whole
- * season.
+ * With a `planId` the releases the user picked in the dialog are grabbed. Without
+ * one the quality profile decides on its own, the same way the scanner does.
  */
-const toSeasonRequests = (value: unknown): SeasonRequest[] => {
-    if (! Array.isArray(value)) {
-        return [];
-    }
-
-    return value
-        .map(entry => {
-            const seasonNumber = Number(typeof entry === "object" && entry !== null ? (entry as any).seasonNumber : entry);
-            const episodes = typeof entry === "object" && entry !== null ? (entry as any).episodeNumbers : null;
-
-            return {
-                seasonNumber,
-                episodeNumbers: Array.isArray(episodes) ? episodes.map(Number).filter((v: number) => ! Number.isNaN(v)) : []
-            };
-        })
-        .filter(entry => ! Number.isNaN(entry.seasonNumber));
-};
-
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
+
+        const planId = typeof body?.planId === "string" ? body.planId : null;
+
+        if (planId) {
+            const plan = getStoredPlan(planId);
+
+            if (! plan) {
+                // searching again is the only honest answer, and it is the client
+                // that knows what was asked for
+                return Response.json({ success: false, expired: true, message: "The search results expired, please try again." }, { status: 410 });
+            }
+
+            const started = await executeStoredPlan(plan, toPicks(body?.picks));
+
+            return Response.json({
+                success: true,
+                started,
+                message: started.length > 0
+                    ? `Started ${ started.length } download${ started.length > 1 ? "s" : "" }.`
+                    : "Could not start the download."
+            });
+        }
 
         const type = body?.type;
         const id = Number(body?.id);

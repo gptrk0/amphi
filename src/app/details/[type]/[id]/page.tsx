@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import axios from "axios";
 import { toast } from "sonner";
-import { BookmarkX, Download, Loader2 } from "lucide-react";
-import classNames from "classnames";
+import { BookmarkX, Download } from "lucide-react";
 
 import { Media } from "@/types/media";
 import { WatchlistItem } from "@/types/watchlist";
+import { useDownload } from "@/context/download";
 import { useWatchlist } from "@/context/watchlist";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import Image from "next/image";
@@ -16,19 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { episodeKey, SeasonInfo, SeasonPicker } from "@/components/season-picker";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle
-} from "@/components/ui/dialog";
-
-type MissingSeason = {
-    seasonNumber: number;
-    episodeNumbers: number[];
-};
 
 export default function Page() {
     let { type, id } = useParams();
@@ -37,13 +24,11 @@ export default function Page() {
     let [item, setItem] = useState<WatchlistItem>();
     // "<season>:<episode>" keys — the watchlist state, mirrored so a tick is instant
     let [monitored, setMonitored] = useState<Set<string>>(new Set());
-    let [isDownloading, setDownloading] = useState(false);
     let [isSaving, setSaving] = useState(false);
-    let [missing, setMissing] = useState<MissingSeason[] | null>(null);
-    let [movieMissing, setMovieMissing] = useState(false);
 
     const tmdbId = Number(id);
-    const { getEntry, add, remove, refresh } = useWatchlist();
+    const { getEntry, remove, refresh } = useWatchlist();
+    const { startDownload } = useDownload();
     const entry = getEntry(type as string, tmdbId);
 
     useEffect(() => {
@@ -64,7 +49,9 @@ export default function Page() {
         axios.get(`/api/watchlist/${ entry.id }`)
             .then(res => setItem(res.data.result))
             .catch(err => console.error(err));
-    }, [ entry?.id, isDownloading ])
+        // the whole entry, not its id: a finished download replaces it and the
+        // episode states below have to follow
+    }, [ entry ])
 
     // whatever the server says wins, every toggle answers with the whole item
     useEffect(() => {
@@ -153,62 +140,16 @@ export default function Page() {
     }
 
     const download = () => {
-        setDownloading(true);
-        setMissing(null);
-        setMovieMissing(false);
-
-        axios.post("/api/download", { type, id: tmdbId, seasons: selection })
-            .then(res => {
-                if (res.data.message) {
-                    toast(res.data.message);
-                }
-
-                if (res.data.missingMovie) {
-                    setMovieMissing(true);
-                } else if (res.data.missing?.length > 0) {
-                    setMissing(res.data.missing);
-                }
-
-                refresh();
-            })
-            .catch(err => {
-                console.error(err);
-                toast(err.response?.data?.message || "Could not start the download.");
-            })
-            .finally(() => setDownloading(false));
+        startDownload({
+            type: type as string,
+            tmdbId,
+            name: media.name,
+            seasons: selection.map(season => ({
+                seasonNumber: season.seasonNumber,
+                episodeNumbers: season.episodeNumbers
+            }))
+        });
     }
-
-    const watchMissing = async () => {
-        setSaving(true);
-
-        if (movieMissing) {
-            await add(type as string, tmdbId, media.name);
-
-        } else {
-            // only the episodes that were actually missing, not their whole season
-            for (const season of missing || []) {
-                const res = await axios.patch("/api/watchlist", {
-                    tmdbId,
-                    type,
-                    monitored: true,
-                    seasonNumber: season.seasonNumber,
-                    episodes: season.episodeNumbers
-                });
-
-                setItem(res.data.result || undefined);
-            }
-
-            refresh();
-        }
-
-        setSaving(false);
-        setMissing(null);
-        setMovieMissing(false);
-    }
-
-    const missingSummary = (missing || []).map(season => {
-        return `Season ${ season.seasonNumber }: episode${ season.episodeNumbers.length > 1 ? "s" : "" } ${ season.episodeNumbers.join(", ") }`;
-    });
 
     return <>
         <div className="relative">
@@ -248,10 +189,9 @@ export default function Page() {
                     <Button
                         className="cursor-pointer"
                         onClick={download}
-                        disabled={isDownloading || (isTv && pickedCount === 0)}
+                        disabled={isTv && pickedCount === 0}
                     >
-                        <Loader2 className={classNames("animate-spin", { "hidden": !isDownloading })} />
-                        <Download className={classNames({ "hidden": isDownloading })} />
+                        <Download />
                         Download
                         { isTv && pickedCount > 0 ? ` ${ pickedCount } episode${ pickedCount > 1 ? "s" : "" }` : "" }
                     </Button>
@@ -284,40 +224,5 @@ export default function Page() {
                 </div>}
             </div>
         </div>
-
-        <Dialog
-            open={movieMissing || (missing !== null && missing.length > 0)}
-            onOpenChange={(open) => { if (! open) { setMissing(null); setMovieMissing(false); } }}
-        >
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>Not available yet</DialogTitle>
-                    <DialogDescription>
-                        { movieMissing
-                            ? `${ media.name } is not on your indexers right now. Add it to your watchlist and it will be downloaded as soon as it shows up?`
-                            : "These episodes are not available yet. Add them to your watchlist and they will be downloaded as soon as they show up?" }
-                    </DialogDescription>
-                </DialogHeader>
-
-                {missingSummary.length > 0 && <div className="text-sm text-muted-foreground">
-                    {missingSummary.map(line => <div key={line}>{ line }</div>)}
-                </div>}
-
-                <DialogFooter>
-                    <Button
-                        variant="outline"
-                        className="cursor-pointer"
-                        onClick={() => { setMissing(null); setMovieMissing(false); }}
-                    >
-                        No thanks
-                    </Button>
-
-                    <Button className="cursor-pointer" onClick={watchMissing} disabled={isSaving}>
-                        <Loader2 className={classNames("animate-spin", { "hidden": !isSaving })} />
-                        Add to watchlist
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
     </>;
 }
