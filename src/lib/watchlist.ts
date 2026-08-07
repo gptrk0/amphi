@@ -421,14 +421,44 @@ export const setSeasonsMonitored = async (watchlistId: number, monitored: boolea
 };
 
 /**
+ * A search that came back empty is bookkeeping, not a possession: once a unit is
+ * not watched any more, its SEARCHING or FAILED state is about a search nobody
+ * asked for. Clearing it is what lets the row be pruned — otherwise the very
+ * scanning that a title needs while it waits for a release is what keeps it stuck
+ * on the watchlist.
+ */
+const clearIdleSearches = async (watchlistId: number) => {
+    return await prisma.watchlistUnit.updateMany({
+        where: {
+            watchlistId,
+            monitored: false,
+            status: { in: [ PrismaWatchStatus.SEARCHING, PrismaWatchStatus.FAILED ] }
+        },
+        data: {
+            status: PrismaWatchStatus.PENDING,
+            torrentHash: null,
+            searchAttempts: 0,
+            lastCheckedAt: null
+        }
+    });
+};
+
+/**
  * A show nobody watches and nothing was downloaded from has no reason to sit on the
- * watchlist — unchecking the last episode has to take the row with it.
+ * watchlist — unchecking the last episode has to take the row with it. Only a real
+ * download counts as something to keep it for; a status left over from searching
+ * does not.
  */
 export const pruneWatchlistItem = async (id: number): Promise<WatchlistItem | null> => {
+    await clearIdleSearches(id);
+
     const keep = await prisma.watchlistUnit.count({
         where: {
             watchlistId: id,
-            OR: [ { monitored: true }, { status: { not: PrismaWatchStatus.PENDING } } ]
+            OR: [
+                { monitored: true },
+                { status: { in: [ PrismaWatchStatus.DOWNLOADING, PrismaWatchStatus.DOWNLOADED ] } }
+            ]
         }
     });
 
