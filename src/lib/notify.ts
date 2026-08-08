@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { settingList, settingText } from "@/lib/settings";
+import { loadSettings, settingList, settingText } from "@/lib/settings";
 
 /**
  * Telegram notifications. The point of the app is that it works while nobody is
@@ -15,7 +15,7 @@ export type NotifyEvent = "ready" | "started" | "dropped";
 
 // overridable for a self hosted Bot API server, and it is what makes this testable
 // without talking to Telegram
-const api = () => settingText("TELEGRAM_API_URL", "https://api.telegram.org").replace(/\/+$/, "");
+const api = () => settingText("TELEGRAM_API_URL").replace(/\/+$/, "");
 
 // a hanging request must not hold up the sync round it was called from
 const TIMEOUT_MS = 10 * 1000;
@@ -56,6 +56,8 @@ const escape = (value: string) => value
  * without having to open the app.
  */
 export const notify = async (event: NotifyEvent, title: string, detail?: string) => {
+    await loadSettings();
+
     if (! isNotifyConfigured() || ! wants(event)) {
         return false;
     }

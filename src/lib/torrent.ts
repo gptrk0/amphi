@@ -2,7 +2,7 @@ import axios, { AxiosRequestConfig } from "axios";
 
 import { IndexerResult } from "@/lib/indexer";
 import { TorrentFile } from "@/lib/payload";
-import { settingText } from "@/lib/settings";
+import { loadSettings, settingText } from "@/lib/settings";
 
 export type TorrentStatus = {
     hash: string;
@@ -19,7 +19,7 @@ export type TorrentStatus = {
     seeds: number;
 };
 
-const category = () => settingText("TORRENT_CATEGORY", "aioseerr");
+const category = () => settingText("TORRENT_CATEGORY");
 
 export const MANUAL_TAG = "aioseerr-manual";
 
@@ -37,6 +37,8 @@ const baseUrl = () => settingText("TORRENT_URL").replace(/\/+$/, "");
 const globalForTorrent = global as unknown as { qbitSid: string | null };
 
 const request = async (path: string, config: AxiosRequestConfig = {}, retryOnAuthError = true): Promise<any> => {
+    await loadSettings();
+
     const res = await axios.request({
         url: `${ baseUrl() }${ path }`,
         method: config.method || "get",

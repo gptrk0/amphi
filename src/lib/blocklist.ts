@@ -18,7 +18,7 @@ import { settingNumber } from "@/lib/settings";
 
 // 0 = a stall is never forgiven either. A BAD_PAYLOAD never expires regardless: the
 // content of a torrent does not improve with time.
-const ttlDays = () => settingNumber("BLOCKED_RELEASE_TTL_DAYS", 30);
+const ttlDays = () => settingNumber("BLOCKED_RELEASE_TTL_DAYS");
 
 // long enough that a scan round does not re-query per release, short enough that a
 // block written by one request is seen by the next

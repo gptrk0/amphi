@@ -54,7 +54,7 @@ export type MoviePlan = ReleaseOptions & {
 };
 
 // how many releases a download dialog offers to choose from
-const optionCount = () => settingNumber("DOWNLOAD_OPTION_COUNT", 5);
+const optionCount = () => settingNumber("DOWNLOAD_OPTION_COUNT");
 
 // Films and shows want different folders — every media server expects them apart.
 // Empty leaves the destination to the qBittorrent category, as before.
@@ -111,7 +111,7 @@ export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> =
     };
 };
 
-const episodeConcurrency = () => settingNumber("EPISODE_SEARCH_CONCURRENCY", 3);
+const episodeConcurrency = () => settingNumber("EPISODE_SEARCH_CONCURRENCY");
 
 const mapLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
     const results: R[] = new Array(items.length);

@@ -3,12 +3,12 @@ import { TorrentStatus } from "@/lib/torrent";
 
 // how long a download may sit still before it is given up on. Read per call, so the
 // admin page does not need a restart to change it.
-export const stallMinutes = () => settingNumber("STALL_MINUTES", 60);
+export const stallMinutes = () => settingNumber("STALL_MINUTES");
 
 const stallMs = () => stallMinutes() * 60 * 1000;
 
 // a half finished file is not worth keeping, but the deletion is a real one
-export const stallDeleteFiles = () => settingFlag("STALL_DELETE_FILES", true);
+export const stallDeleteFiles = () => settingFlag("STALL_DELETE_FILES");
 
 type StallEntry = { progress: number, since: number };
 

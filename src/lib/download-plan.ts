@@ -62,7 +62,7 @@ type StoredPlan = {
 
 // A search costs tens of seconds, so the plan behind a dialog is kept instead of
 // being made again when the choice comes back. It only has to outlive the dialog.
-const ttlMs = () => settingNumber("DOWNLOAD_PLAN_TTL_MINUTES", 15) * 60 * 1000;
+const ttlMs = () => settingNumber("DOWNLOAD_PLAN_TTL_MINUTES") * 60 * 1000;
 const MAX_PLANS = 20;
 
 const globalForPlans = global as unknown as { downloadPlans: Map<string, StoredPlan> };

@@ -6,10 +6,9 @@
  * padded up to a believable episode size, with a name that passed every check the
  * scoring could make.
  *
- * The extension lists live in the env and nowhere else — there is no built in copy to
- * fall back to. Two consequences worth knowing:
+ * The extension lists are settings, and two of their edge cases matter here:
  *
- * - **An unset list rejects nothing.** A missing configuration is not evidence that a
+ * - **An empty list rejects nothing.** A missing configuration is not evidence that a
  *   download is bad, and treating it as such would delete every torrent.
  * - **`*` accepts everything**, so it is the way to switch a single rule off without
  *   emptying the list you would want back later.
@@ -32,7 +31,7 @@ const ACCEPT_ALL = "*";
 const RAR_PART = /^r\d{2}$/;
 
 // the deletion is a real one, but a payload like this is not worth keeping
-export const payloadDeleteFiles = () => settingFlag("PAYLOAD_DELETE_FILES", true);
+export const payloadDeleteFiles = () => settingFlag("PAYLOAD_DELETE_FILES");
 
 // a leading dot is the natural way to write these, in an env file or in a form field
 const clean = (values: string[]) => values.map(v => v.toLowerCase().replace(/^\.+/, "")).filter(Boolean);

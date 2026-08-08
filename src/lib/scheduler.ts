@@ -19,19 +19,19 @@ import {
     toMediaType
 } from "@/lib/watchlist";
 
-const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES", 15) * 60 * 1000;
+const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES") * 60 * 1000;
 
 // Reading the client's state back is one local request, while a scan round is
 // dozens of indexer calls — so noticing that something finished does not have to
 // wait for the next round.
-const syncIntervalMs = () => settingNumber("DOWNLOAD_SYNC_INTERVAL_MINUTES", 1) * 60 * 1000;
-const backoffBaseMs = () => settingNumber("SEARCH_BACKOFF_MINUTES", 30) * 60 * 1000;
-const maxBackoffMs = () => settingNumber("SEARCH_MAX_BACKOFF_HOURS", 24) * 60 * 60 * 1000;
+const syncIntervalMs = () => settingNumber("DOWNLOAD_SYNC_INTERVAL_MINUTES") * 60 * 1000;
+const backoffBaseMs = () => settingNumber("SEARCH_BACKOFF_MINUTES") * 60 * 1000;
+const maxBackoffMs = () => settingNumber("SEARCH_MAX_BACKOFF_HOURS") * 60 * 60 * 1000;
 const START_DELAY_MS = 15 * 1000;
 
 // with SCAN_DRY_RUN=1 no torrent is added and no search state is written. syncDownloads
 // is not affected: it only mirrors back what the client already reports.
-const isDryRun = () => settingFlag("SCAN_DRY_RUN", false);
+const isDryRun = () => settingFlag("SCAN_DRY_RUN");
 
 const log = (message: string) => console.log(`[scheduler]${ isDryRun() ? " [dry-run]" : "" } ${ message }`);
 
@@ -547,12 +547,12 @@ export const startScheduler = async () => {
     // a list can be empty, and a check that cannot reject anything must not look like
     // it is guarding something
     if (! isPayloadCheckConfigured()) {
-        log("payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on");
+        log("payload check is OFF: fill in the extension lists under Settings / Content check");
     }
 
     log(isNotifyConfigured()
         ? "telegram notifications are on"
-        : "telegram notifications are OFF: set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and TELEGRAM_EVENTS");
+        : "telegram notifications are OFF: fill in the token, the chat id and the events under Settings / Notifications");
 
     /**
      * Reschedules itself instead of using setInterval, because the interval is a

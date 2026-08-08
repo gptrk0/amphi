@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TagInput } from "@/components/tag-input";
 
 type SettingItem = {
     key: string;
@@ -19,25 +21,43 @@ type SettingItem = {
     label: string;
     type: "string" | "number" | "boolean" | "list" | "table";
     secret: boolean;
+    ordered: boolean;
     help: string;
     placeholder: string;
-    source: "database" | "env" | "unset";
+    default: string;
+    hasDefault: boolean;
+    source: "database" | "default" | "unset";
     value: string;
     isSet: boolean;
 };
 
 const SOURCE: Record<SettingItem["source"], { text: string, variant: "default" | "secondary" | "outline" }> = {
-    database: { text: "saved here", variant: "default" },
-    env: { text: "from .env", variant: "secondary" },
+    database: { text: "edited", variant: "default" },
+    default: { text: "default", variant: "secondary" },
     unset: { text: "not set", variant: "outline" }
 };
 
 const isOn = (value: string) => value.trim() === "1" || value.trim().toLowerCase() === "true";
 
+const slug = (group: string) => group.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+// a size table entry is `resolution:gb`, and half an entry silently drops out of the
+// parsed table instead of failing
+const tableEntry = (tag: string) => {
+    const [ name, size, ...rest ] = tag.split(":");
+
+    if (! name || ! size || rest.length > 0 || ! Number.isFinite(Number(size))) {
+        return "Write it as 1080p:2 — a resolution and its size in GB.";
+    }
+
+    return null;
+};
+
 export default function Page() {
     const [ items, setItems ] = useState<SettingItem[]>();
     const [ values, setValues ] = useState<Record<string, string>>({});
     const [ isSaving, setSaving ] = useState(false);
+    const [ tab, setTab ] = useState("");
 
     const load = (data: { settings: SettingItem[] }) => {
         setItems(data.settings);
@@ -45,6 +65,9 @@ export default function Page() {
     };
 
     useEffect(() => {
+        // the hash keeps a reload, and a link, on the same tab
+        setTab(window.location.hash.replace("#", ""));
+
         axios.get("/api/settings")
             .then(res => load(res.data))
             .catch(err => {
@@ -66,6 +89,10 @@ export default function Page() {
     }, [ items, values ]);
 
     const dirtyCount = Object.keys(dirty).length;
+
+    const dirtyGroups = useMemo(() => new Set((items || [])
+        .filter(item => item.key in dirty)
+        .map(item => item.group)), [ items, dirty ]);
 
     const save = async () => {
         if (dirtyCount === 0) {
@@ -89,13 +116,13 @@ export default function Page() {
         }
     };
 
-    /** Removing the override, which is the same thing as going back to what .env says. */
+    /** Deleting the row, which is the same thing as going back to the default. */
     const reset = async (item: SettingItem) => {
         try {
             const res = await axios.delete("/api/settings", { params: { key: item.key } });
 
             load(res.data);
-            toast(`${ item.label } follows the environment again.`);
+            toast(item.hasDefault ? `${ item.label } is back to its default.` : `${ item.label } is cleared.`);
 
         } catch(err) {
             console.error(err);
@@ -131,6 +158,18 @@ export default function Page() {
             );
         }
 
+        if (item.type === "list" || item.type === "table") {
+            return (
+                <TagInput
+                    value={value}
+                    onChange={set}
+                    ordered={item.ordered}
+                    placeholder={item.placeholder}
+                    validate={item.type === "table" ? tableEntry : undefined}
+                />
+            );
+        }
+
         return (
             <Input
                 type={item.secret ? "password" : "text"}
@@ -145,15 +184,18 @@ export default function Page() {
         );
     };
 
+    const active = groups.find(group => slug(group) === tab) || groups[0];
+
     return (
         <div className="p-4 md:p-8">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
                     <h2 className="text-2xl font-semibold tracking-tight">Settings</h2>
                     <p className="max-w-2xl text-sm text-muted-foreground">
-                        Admin settings. Anything saved here overrides the environment; clearing a field
-                        hands it back to <code className="text-xs">.env</code>. Changes take effect on the
-                        next search or scan round — no restart.
+                        Everything the app reads lives here — the environment is only used to find the
+                        database. A field you have not touched follows its default and is not stored;
+                        clearing one hands it back. Changes take effect on the next search or scan
+                        round, without a restart.
                     </p>
                 </div>
 
@@ -166,12 +208,26 @@ export default function Page() {
 
             <Separator className="my-5" />
 
-            <div className="space-y-10">
-                {groups.map(group => (
-                    <section key={group}>
-                        <h3 className="text-lg font-semibold tracking-tight">{ group }</h3>
+            <Tabs
+                value={active}
+                onValueChange={(next) => {
+                    setTab(slug(next));
+                    window.history.replaceState(null, "", `#${ slug(next) }`);
+                }}
+            >
+                <TabsList className="h-auto flex-wrap justify-start">
+                    {groups.map(group => (
+                        <TabsTrigger key={group} value={group} className="cursor-pointer">
+                            { group }
 
-                        <div className="mt-1 divide-y">
+                            {dirtyGroups.has(group) && <span className="bg-primary size-1.5 rounded-full" />}
+                        </TabsTrigger>
+                    ))}
+                </TabsList>
+
+                {groups.map(group => (
+                    <TabsContent key={group} value={group}>
+                        <div className="divide-y">
                             {items.filter(item => item.group === group).map(item => (
                                 <div
                                     key={item.key}
@@ -195,7 +251,9 @@ export default function Page() {
                                             variant="ghost"
                                             size="sm"
                                             className="cursor-pointer"
-                                            title="Clear the override and follow .env again"
+                                            title={item.hasDefault
+                                                ? `Back to the default${ item.default ? `: ${ item.default }` : "" }`
+                                                : "Clear it"}
                                             onClick={() => reset(item)}
                                         >
                                             <RotateCcw />
@@ -204,9 +262,9 @@ export default function Page() {
                                 </div>
                             ))}
                         </div>
-                    </section>
+                    </TabsContent>
                 ))}
-            </div>
+            </Tabs>
         </div>
     );
 }

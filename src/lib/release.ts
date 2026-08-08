@@ -59,27 +59,6 @@ export type ReleaseSelection = {
     rejected: RejectedRelease[];
 };
 
-const DEFAULT_RESOLUTIONS = "1080p,720p,2160p";
-const DEFAULT_EXCLUDES = "cam,camrip,hdcam,ts,telesync,hdts,telecine,tc,workprint,screener,scr,exe,msi,apk";
-
-// A file this much smaller than the claimed resolution is not that video.
-const DEFAULT_MIN_SIZE_MOVIE = "2160p:8,1080p:2,720p:0.8,480p:0.3";
-const DEFAULT_MIN_SIZE_EPISODE = "2160p:1.5,1080p:0.4,720p:0.15,480p:0.05";
-
-// h264 plays everywhere; hevc/av1 are a fallback
-const DEFAULT_PREFERRED_CODECS = "x264,h264,avc";
-
-// first one wins; an untagged release counts as DEFAULT_LANGUAGE
-const DEFAULT_PREFERRED_LANGUAGES = "hun,eng";
-const DEFAULT_LANGUAGE = "eng";
-
-// only applies when the release is neither preferred nor in the original language
-const DEFAULT_EXCLUDE_LANGUAGES = [
-    "ita", "ger", "fre", "spa", "por", "rus", "pol", "cze", "slo", "tur", "ara",
-    "hin", "tam", "tel", "kor", "jpn", "chi", "tha", "vie", "ukr", "rum", "bul",
-    "dut", "swe", "nor", "dan", "fin", "gre", "heb", "per", "ind"
-].join(",");
-
 const GB = 1024 * 1024 * 1024;
 
 const list = (value: string) => value.split(",").map(v => v.trim().toLowerCase()).filter(Boolean);
@@ -99,30 +78,30 @@ const parseSizeTable = (value: string): Record<string, number> => {
 };
 
 /**
- * Read fresh every call, from the settings layer rather than the env directly — a value
- * saved on the admin page has to take effect on the next search, not the next restart.
+ * Read fresh on every call rather than captured once — a value saved on the admin page
+ * has to take effect on the next search, not on the next restart.
  */
 export const getQualityProfile = (): QualityProfile => {
     const priority = settingList("INDEXER_PRIORITY").map(v => v.toLowerCase());
 
     return {
-        resolutions: list(settingText("QUALITY_RESOLUTIONS", DEFAULT_RESOLUTIONS)),
-        excludeKeywords: list(settingText("QUALITY_EXCLUDE", DEFAULT_EXCLUDES)),
-        minSeeders: settingNumber("QUALITY_MIN_SEEDERS", 1),
-        maxSizeGb: settingNumber("QUALITY_MAX_SIZE_GB", 0),
-        maxPackSizeGb: settingNumber("QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB", 5),
-        minSizeMovie: parseSizeTable(settingText("QUALITY_MIN_SIZE_MOVIE", DEFAULT_MIN_SIZE_MOVIE)),
-        minSizeEpisode: parseSizeTable(settingText("QUALITY_MIN_SIZE_EPISODE", DEFAULT_MIN_SIZE_EPISODE)),
-        preferredCodecs: list(settingText("QUALITY_PREFERRED_CODECS", DEFAULT_PREFERRED_CODECS)),
-        codecBonus: settingNumber("QUALITY_CODEC_BONUS", 500),
-        preferredLanguages: list(settingText("QUALITY_PREFERRED_LANGUAGES", DEFAULT_PREFERRED_LANGUAGES)),
-        excludeLanguages: list(settingText("QUALITY_EXCLUDE_LANGUAGES", DEFAULT_EXCLUDE_LANGUAGES)),
-        defaultLanguage: settingText("QUALITY_DEFAULT_LANGUAGE", DEFAULT_LANGUAGE).toLowerCase(),
-        languageBonus: settingNumber("QUALITY_LANGUAGE_BONUS", 1000000),
-        languageFirst: settingFlag("QUALITY_LANGUAGE_FIRST", false),
+        resolutions: list(settingText("QUALITY_RESOLUTIONS")),
+        excludeKeywords: list(settingText("QUALITY_EXCLUDE")),
+        minSeeders: settingNumber("QUALITY_MIN_SEEDERS"),
+        maxSizeGb: settingNumber("QUALITY_MAX_SIZE_GB"),
+        maxPackSizeGb: settingNumber("QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB"),
+        minSizeMovie: parseSizeTable(settingText("QUALITY_MIN_SIZE_MOVIE")),
+        minSizeEpisode: parseSizeTable(settingText("QUALITY_MIN_SIZE_EPISODE")),
+        preferredCodecs: list(settingText("QUALITY_PREFERRED_CODECS")),
+        codecBonus: settingNumber("QUALITY_CODEC_BONUS"),
+        preferredLanguages: list(settingText("QUALITY_PREFERRED_LANGUAGES")),
+        excludeLanguages: list(settingText("QUALITY_EXCLUDE_LANGUAGES")),
+        defaultLanguage: settingText("QUALITY_DEFAULT_LANGUAGE").toLowerCase(),
+        languageBonus: settingNumber("QUALITY_LANGUAGE_BONUS"),
+        languageFirst: settingFlag("QUALITY_LANGUAGE_FIRST"),
         // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
         indexerPriority: priority.length > 0 ? priority : getIndexerIds(),
-        indexerBonus: settingNumber("INDEXER_PRIORITY_BONUS", 100000)
+        indexerBonus: settingNumber("INDEXER_PRIORITY_BONUS")
     };
 };
 

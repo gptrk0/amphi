@@ -1,9 +1,11 @@
 import {
+    deleteSetting,
     isSecret,
     loadSettings,
     SETTING_GROUPS,
     SETTINGS,
     saveSettings,
+    settingDef,
     settingSource,
     settingText
 } from "@/lib/settings";
@@ -24,8 +26,13 @@ const toItem = (key: string) => {
         label: def.label,
         type: def.type,
         secret: !! def.secret,
+        ordered: !! def.ordered,
         help: def.help || "",
         placeholder: def.placeholder || "",
+        // shown as "back to X" on the reset button, so it is worth knowing even when the
+        // saved value is what is in the field
+        default: def.default ?? "",
+        hasDefault: def.default !== undefined,
         source,
         // where it comes from is worth showing even for a secret; the value is not
         value: def.secret ? "" : settingText(key),
@@ -33,15 +40,13 @@ const toItem = (key: string) => {
     };
 };
 
+const state = () => ({ groups: SETTING_GROUPS, settings: SETTINGS.map(def => toItem(def.key)) });
+
 export async function GET() {
     try {
         await loadSettings(true);
 
-        return Response.json({
-            success: true,
-            groups: SETTING_GROUPS,
-            settings: SETTINGS.map(def => toItem(def.key))
-        });
+        return Response.json({ success: true, ...state() });
 
     } catch(err) {
         console.error(err);
@@ -59,15 +64,31 @@ export async function PUT(req: Request) {
             return Response.json({ success: false, message: "Nothing to save." }, { status: 400 });
         }
 
-        // an untouched secret arrives as an empty string, and empty means "clear it" —
-        // so those are dropped rather than wiping a key nobody meant to change
         const wanted: Record<string, string> = {};
 
         for (const [ key, value ] of Object.entries(values as Record<string, unknown>)) {
-            const text = typeof value === "string" ? value : String(value ?? "");
+            const def = settingDef(key);
 
-            if (isSecret(key) && text.trim() === "") {
+            if (! def) {
                 continue;
+            }
+
+            const text = (typeof value === "string" ? value : String(value ?? "")).trim();
+
+            // an untouched secret arrives as an empty string, and empty would mean "back
+            // to nothing" — so those are dropped rather than wiping a key nobody meant
+            // to change. Clearing one is the separate DELETE below
+            if (isSecret(key) && text === "") {
+                continue;
+            }
+
+            // a number that is not one would silently become the default on the next
+            // read, so it is refused here instead
+            if (def.type === "number" && text !== "" && ! Number.isFinite(Number(text))) {
+                return Response.json({
+                    success: false,
+                    message: `${ def.label } has to be a number.`
+                }, { status: 400 });
             }
 
             wanted[key] = text;
@@ -75,12 +96,7 @@ export async function PUT(req: Request) {
 
         const changed = await saveSettings(wanted);
 
-        return Response.json({
-            success: true,
-            changed: changed.length,
-            groups: SETTING_GROUPS,
-            settings: SETTINGS.map(def => toItem(def.key))
-        });
+        return Response.json({ success: true, changed: changed.length, ...state() });
 
     } catch(err) {
         console.error(err);
@@ -90,24 +106,18 @@ export async function PUT(req: Request) {
 }
 
 /**
- * Clearing a secret is a separate, explicit action for the same reason: an empty field
- * cannot mean it.
+ * Back to the default. Also the only way to clear a secret, for the same reason an empty
+ * field cannot mean it.
  */
 export async function DELETE(req: Request) {
     try {
         const key = new URL(req.url).searchParams.get("key");
 
-        if (! key || ! SETTINGS.some(def => def.key === key)) {
+        if (! key || ! (await deleteSetting(key))) {
             return Response.json({ success: false, message: "Unknown setting." }, { status: 400 });
         }
 
-        await saveSettings({ [key]: "" });
-
-        return Response.json({
-            success: true,
-            groups: SETTING_GROUPS,
-            settings: SETTINGS.map(def => toItem(def.key))
-        });
+        return Response.json({ success: true, ...state() });
 
     } catch(err) {
         console.error(err);

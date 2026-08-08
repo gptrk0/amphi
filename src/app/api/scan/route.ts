@@ -15,7 +15,7 @@ export async function POST(req: Request) {
 
         return Response.json({
             success: true,
-            dryRun: settingFlag("SCAN_DRY_RUN", false),
+            dryRun: settingFlag("SCAN_DRY_RUN"),
             message: started ? "Scan finished." : "A scan is already running."
         });
 

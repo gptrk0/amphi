@@ -4,6 +4,12 @@ export async function register() {
         return;
     }
 
+    // every setting is read synchronously from a cache of the table, so the table has to
+    // be in memory before the first request is served — nothing else answers those keys
+    const { loadSettings } = await import("@/lib/settings");
+
+    await loadSettings(true);
+
     if (process.env.SCAN_DISABLED === "1") {
         console.log("[scheduler] disabled by SCAN_DISABLED");
 

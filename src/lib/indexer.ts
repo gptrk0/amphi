@@ -1,7 +1,7 @@
 import axios from "axios";
 import { XMLParser } from "fast-xml-parser";
 
-import { settingList, settingNumber, settingText } from "@/lib/settings";
+import { loadSettings, settingList, settingNumber, settingText } from "@/lib/settings";
 
 export type IndexerCaps = {
     search: string[];
@@ -39,7 +39,7 @@ export type SeasonQuery = {
     season: number;
 };
 
-const capsTtlMs = () => settingNumber("INDEXER_CAPS_TTL_MINUTES", 360) * 60 * 1000;
+const capsTtlMs = () => settingNumber("INDEXER_CAPS_TTL_MINUTES") * 60 * 1000;
 
 const EMPTY_CAPS: IndexerCaps = { search: [], movie: [], tv: [] };
 
@@ -68,6 +68,8 @@ type TorznabResponse = {
 };
 
 const request = async (indexerId: string, params: Record<string, string | number>): Promise<TorznabResponse> => {
+    await loadSettings();
+
     try {
         const res = await axios.get(`${ settingText("INDEXER_URL") }/api/v2.0/indexers/${ indexerId }/results/torznab/api`, {
             params: {

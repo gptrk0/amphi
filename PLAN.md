@@ -40,7 +40,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 | Torrent-kiválasztás | Konfigurálható profil, ebben a sorrendben: **felbontás → nyelv → indexer-prioritás → seederek → kodek**. Jelenlegi beállítás: `1080p > 720p > 2160p` (FullHD a preferált), indexer-prioritás `ncore > limetorrents > thepiratebay`, x264/h264 előnyben (~500 seeder értékű bónusz), plusz hamis-release védelem (cím/év egyezés, minimum méret a bemondott felbontáshoz). |
 | Nyelvi preferencia | **Magyar, utána angol** (`QUALITY_PREFERRED_LANGUAGES=hun,eng`), a jelöletlen release angolnak számít. A többi nyelv kizárva — kivéve, ha az a cím **eredeti nyelve** (TMDB `original_language`), így a japán/francia filmek saját nyelvű release-ei megmaradnak. A `QUALITY_LANGUAGE_FIRST=1` a nyelvet a felbontás elé emeli (720p magyar > 1080p angol); alapból `0`. |
 | Metaadat tárolása | **Nem tároljuk** — a DB-ben csak `tmdbId` + `type` + letöltési állapot van, a cím/poszter/leírás mindig a TMDB-ből jön, TTL-es cache-en keresztül (`TMDB_CACHE_TTL_MINUTES`, default 12 óra). Az API réteg dúsítja fel a watchlist sorokat, a frontend ugyanazt a `Media` alakot kapja, mint a discovernél. Ára: TMDB kiesésnél nincs cím/poszter a watchlist nézetben (az állapot és a letöltés viszont megy). |
-| Indexer-kezelés | **Indexerenként külön hívás, képesség-alapon** — nem a Jackett aggregate endpointján keresztül. Indexerenként `t=caps` (cache-elve), és amit az adott indexer tud, azzal keresünk (`imdbid`, egyébként `q` = eredeti cím + év/season+ep). Az indexer id-k listája env-ből (`INDEXER_IDS`), mert a Jackett admin API-ja session cookie-t kér, csak api kulccsal `400 Cookies required`. |
+| Indexer-kezelés | **Indexerenként külön hívás, képesség-alapon** — nem a Jackett aggregate endpointján keresztül. Indexerenként `t=caps` (cache-elve), és amit az adott indexer tud, azzal keresünk (`imdbid`, egyébként `q` = eredeti cím + év/season+ep). Az indexer id-k listája beállítás (`INDEXER_IDS`), mert a Jackett admin API-ja session cookie-t kér, csak api kulccsal `400 Cookies required`. |
 
 ---
 
@@ -48,7 +48,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-08: négy tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` és a `Setting`. Utóbbi kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — a többi az env-ből jön; ld. a lenti „Settings oldal" alfejezetet. A `BlockedRelease` pedig az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
+**2026-08-08: négy tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` és a `Setting`. Utóbbi kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` pedig az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
 
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
 
@@ -205,7 +205,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
 - [x] Env-változók: `WATCHLIST_SCAN_INTERVAL_MINUTES` (15), `SEARCH_BACKOFF_MINUTES` (30), `MAX_SEARCH_ATTEMPTS` (10), `PACK_AFTER_ATTEMPTS` (2), `SCAN_DISABLED`, `SCAN_DRY_RUN`.
 - [x] `searchAttempts`-alapú retry + `lastCheckedAt`-alapú backoff (egy jövőre megjelenő film nem kerül keresésre minden körben).
 - [x] Csak `NEXT_RUNTIME === "nodejs"` alatt indul, globális flag (nem indul kétszer hot reloadnál) + futás-mutex (átfedő tick kimarad), és 15 másodperc késleltetéssel az első kör.
-- [x] **`SCAN_DRY_RUN=1`**: a scanner csak logolja, mit töltene le — semmit nem ad a qBittorrenthez és semmit nem ír a DB-be. A `.env`-ben **ez az induló beállítás**, hogy az első éles kör ne indítson váratlanul tucatnyi letöltést. `POST /api/scan` kézzel is lefuttat egy kört.
+- [x] **`SCAN_DRY_RUN`**: a scanner csak logolja, mit töltene le — semmit nem ad a qBittorrenthez és semmit nem ír a DB-be. A Settings / Scanner tabon kapcsolható, egy új install a *kikapcsolt* defaulttal indul. `POST /api/scan` kézzel is lefuttat egy kört.
 - [x] Epizód elsődlegesen egyedileg, `PACK_AFTER_ATTEMPTS` (default 2) sikertelen kör után évad-pack.
 - [x] `/api/download` átírva a fenti egy-gombos logikára: film → `{ started, missingMovie }`, sorozat → `{ started, missing: [{ seasonNumber, episodeNumbers }] }`. A hiányzókra a UI kérdez rá, és a válasz csak a kijelölt évadokat monitorozza (`POST /api/watchlist` + `seasons`).
 - [x] **[src/lib/grab.ts](src/lib/grab.ts)** — a keresés → pontozás → qBittorrent → DB lánc egy helyen, ezt használja a UI és a scheduler is:
@@ -275,7 +275,7 @@ Amit ebből átvettem:
 - [x] A `useDownload` hook kiemelve ([src/hooks/use-download.ts](src/hooks/use-download.ts)), mert a kártya és a hero is használja.
 
 ### Fázis 6 — Torrent-kiválasztás finomítása
-- [x] Konfigurálható felbontás-prioritás, kodek-preferencia, indexer-prioritás, méret-küszöbök, kizáró kulcsszavak (env-ben; DB-s Settings a Fázis 8-ban).
+- [x] Konfigurálható felbontás-prioritás, kodek-preferencia, indexer-prioritás, méret-küszöbök, kizáró kulcsszavak (2026-08-08 óta a `/settings` Quality és Language tabján).
 - [x] Pontozó függvény + hamis-release védelem (cím/év egyezés, minimum méret a bemondott felbontáshoz).
 - [x] **Cím-egyezés javítása: a season packek nagy része hibásan kiesett** (2026-08-07, a pack-szabály mérése közben derült ki). A `PTT.parse()` bent hagyja az évad-jelölőt a címben, ha nem követi olyasmi, amit metaadatnak ismer fel: a `Ted Lasso S01 1080p` címe `"Ted Lasso S01"` lett, ami nem egyezett a `"Ted Lasso"`-val, tehát „más sorozatnak" számított. Most a záró évad-jelölő (`S01`, `S01-S02`, `Season 1`, opcionális `COMPLETE`) levágásra kerül a összehasonlítás előtt.
   - Mérés a saját indexereiden, pontozásig eljutó jelöltek száma **előtte → utána**: Ted Lasso S1 **2 → 12** (54 találatból), Severance S1 **4 → 16** (62-ből), Game of Thrones S1 **1 → 15** (153-ból).
@@ -314,8 +314,8 @@ Amit ebből átvettem:
 ### Fázis 7 — Robusztusság / üzemeltetés
 - [x] A scanner retry/backoff-ja megvan (`searchAttempts`, `lastCheckedAt`), az indexer-hívások hibái nem dobnak, csak logolnak és üres listát adnak, a torznab `error` válasz (pl. `203`) fallbackot indít.
 - [x] **Növekvő várakozás, plafon nélküli újrapróbálkozás** (2026-08-07-i kérés). Eddig `MAX_SEARCH_ATTEMPTS=10` és fix 30 perc volt: egy elem **5 óra alatt** elérte a 10 próbálkozást, `FAILED` lett, és a `dueFilter` (`searchAttempts < MAX`) **soha többé nem vette elő** — vagyis az app pont azokat adta fel, amiket figyelnie kellett volna (még meg nem jelent, vagy trackeren még nem fent lévő tartalom). Most a várakozás duplázódik (`SEARCH_BACKOFF_MINUTES=30` → 1h → 2h → 4h → … `SEARCH_MAX_BACKOFF_HOURS=24`), és nincs feladás.
-  - A `dueFilter` a lekérdezésben csak durva előszűrő (a legrövidebb lehetséges várakozás), a soronkénti backoffot az `isDue` alkalmazza JS-ben. Így a `.env` átírása azonnal hat, nem fagy bele egy tárolt `nextCheckAt` oszlopba — és nem kell hozzá migráció sem.
-  - A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` env-változó ezzel **kikerült a kódból**; ha a `.env`-edben bent maradtak, egyszerűen figyelmen kívül maradnak.
+  - A `dueFilter` a lekérdezésben csak durva előszűrő (a legrövidebb lehetséges várakozás), a soronkénti backoffot az `isDue` alkalmazza JS-ben. Így a beállítás átírása azonnal hat, nem fagy bele egy tárolt `nextCheckAt` oszlopba — és nem kell hozzá migráció sem.
+  - A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` ezzel **kikerült a kódból**.
   - A `WatchStatus.FAILED`-et így **semmi nem állítja be automatikusan**. Az enum benne marad (a `deriveStatus`, a badge és a `GRABBABLE_STATUS` kezeli), későbbi kézi „feladom" funkcióhoz.
   - Élőben ellenőrizve: `attempts=5` + „1 órája nézve" → a scanner kihagyta (a backoff ekkor 16h); „20 órája nézve" → feldolgozta, és `attempt 6, next in 24h` került a logba.
 - [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás).
@@ -328,7 +328,7 @@ Amit ebből átvettem:
 - [x] **Git repo** — `git init -b main`, első commit 76 fájllal (8094 sor). A `.gitignore` javítva: a generált Prisma kliens `prisma/generated` alatt van, de a `.gitignore` a `/src/generated/prisma` halott útvonalat zárta ki, így 4,9 MB generált kód került volna be. Bekerült még a `/.claude/settings.local.json` és a `/.verify-*.ts` is.
   - Commit előtt ellenőrizve: a `.env`, `node_modules`, `.next`, `prisma/generated` egyike sincs staged-elve, és a `.env` egyetlen valós értéke (TMDB / Jackett / qBittorrent / DB) sem fordul elő a commitolt 76 fájl egyikében sem.
   - **Remote nincs** és push sem történt — az a te döntésed. Előtte érdemes újra lefuttatni ugyanezt az ellenőrzést.
-- [x] **`.env.example`** — mind a ~40 env-változó értékek nélkül, kommentelve. A `.env` gitignore-olt, enélkül egy friss klón nem lenne indítható.
+- [x] **`.env.example`** — a `.env` gitignore-olt, enélkül egy friss klón nem lenne indítható. 2026-08-08 óta mindössze nyolc sor: `APP_*`, `DATABASE_*`, `SCAN_DISABLED`, `COMPOSE_*` — minden más beállítás a `/settings` oldalon van.
 - [x] **Duplikált `prisma.config.ts`** (2026-08-08) — a `prisma validate` kiírja, melyiket tölti be (`Loaded Prisma config from prisma.config.ts`, a repo gyökeréből, mert a CLI a munkakönyvtárból indul). A `prisma/prisma.config.ts` halott volt, törölve; a `validate` és a `migrate status` utána is hibátlan.
 - [x] **CRLF sorvégek** — `.gitattributes` (`* text=auto eol=lf`), 2026-08-07.
 - [x] **Lint** (2026-08-08) — 78 találatról nullára. A többsége gépies volt (`prefer-const`), egy valódi elgépelés is kijött: a `tooltip.tsx`-ben egy magányos `1` állt utasításként a provider után. A keresősáv debounce-effektje mostantól a `navigate`-re hivatkozik (`useCallback`), nem megy el mellette. A maradék 35 `any` mind a három külső formátumot olvasó fájlban volt (TMDB, torznab, qBittorrent) — ott a szabály fájl-szinten kikapcsolva, indoklással az `eslint.config.mjs`-ben; máshol továbbra is hiba.
@@ -337,7 +337,7 @@ Amit ebből átvettem:
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
 
 ### Fázis 8 — Későbbi, opcionális
-- [x] **Settings UI** (2026-08-08) — `/settings`, 45 beállítás kilenc csoportban, DB-ből felülírva. Lásd a lenti „Settings oldal" alfejezetet.
+- [x] **Settings UI** (2026-08-08) — `/settings`, 50 beállítás kilenc al-tabon, **kizárólag** a DB-ből, a defaultok a registryben. Lásd a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket.
 - [x] **Telegram-értesítések** (2026-08-08) — ld. a lenti „Telegram-értesítések" alfejezetet. Böngésző push és Discord webhook továbbra is nyitott; a [notify.ts](src/lib/notify.ts) egy csatornát ismer, egy másik hozzávétele új `notify` implementációt jelent, nem átépítést.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
@@ -554,12 +554,12 @@ A torrent egyetlen fájlja: `Silo S03E07 MULTI 1080p WEB H264-HiggsBoson.scr`, *
 | réteg | mi lett |
 |---|---|
 | **Dátum, kivétel nélkül** | A `force` mostantól **csak a backoffot** kapcsolja ki. Az `airDate` szűrő a `scanMovies`-ban és a `scanEpisodes`-ben mindig érvényes, és a `planSeasonGrab` `force` opciója (ami az `aired` ellenőrzést kerülte meg) **megszűnt** — nem hívó dönti el, hanem nincs rá lehetőség. Egy még meg nem jelent tartalomra illeszkedő release definíció szerint hamis, és a neve tetszőlegesen jó lehet: ez az egyetlen ellenőrzés, ami elkapja. |
-| **A hasznos tartalom ellenőrzése** ([payload.ts](src/lib/payload.ts)) | Az indexer csak nevet ad, a torrent tartalma viszont lebuktatja a hamisítványt. A `syncDownloads` **még letöltés közben**, a „kész" megállapítása *előtt* megnézi a fájllistát (`getTorrentFiles`). Rossznak számít, ha **a legnagyobb fájl futtatható**, vagy ha **egyetlen videófájl sincs benne**. Ilyenkor a torrent a fájljaival törlődik (`PAYLOAD_DELETE_FILES=1`), a release neve a stall-feketelistára kerül, a unitok `PENDING`-re állnak azonnali esedékességgel. Dry-runban csak logol. A három kiterjesztés-lista **kizárólag env-ből** jön (`PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS`) — lásd alább. |
+| **A hasznos tartalom ellenőrzése** ([payload.ts](src/lib/payload.ts)) | Az indexer csak nevet ad, a torrent tartalma viszont lebuktatja a hamisítványt. A `syncDownloads` **még letöltés közben**, a „kész" megállapítása *előtt* megnézi a fájllistát (`getTorrentFiles`). Rossznak számít, ha **a legnagyobb fájl futtatható**, vagy ha **egyetlen videófájl sincs benne**. Ilyenkor a torrent a fájljaival törlődik (`PAYLOAD_DELETE_FILES=1`), a release neve a stall-feketelistára kerül, a unitok `PENDING`-re állnak azonnali esedékességgel. Dry-runban csak logol. A három kiterjesztés-lista beállítás, a Settings / Content check tabon tag-ekként szerkeszthető (`PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS`) — lásd alább. |
 
-**A listák csak env-ből jönnek** (2026-08-08-i kérés, nincs kódba írt tartalék). Ennek két következménye van, és mindkettő szándékos:
-- **Beállítatlan lista = az a szabály ki van kapcsolva.** Az üres listát *nem* értelmezi „semmi nem videó"-ként, mert az minden torrentet törölne — egy hiányzó konfiguráció nem bizonyíték arra, hogy a letöltés rossz. A `startScheduler` ezért kiírja, ha a védelem nem él: `payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on` — egy néma, nem működő biztosíték rosszabb, mint a semmi.
-- **`*` = minden elfogadott**, vagyis az a lista semmit nem utasít el. Így egy szabály kikapcsolható anélkül, hogy a listát ki kellene ürítened (és később visszaírnod). A `PAYLOAD_EXECUTABLE_EXTENSIONS=*` tehát *nem* azt jelenti, hogy minden futtathatónak számít — hanem hogy ez a szabály nem szól bele.
-- Mivel nincs default, a három sor bekerült a **`.env`-edbe** is (eddig ott csak az alapértéktől eltérő beállítások voltak) — enélkül az ellenőrzés nem futott volna.
+**A listák viselkedése.** Két szélső eset, mindkettő szándékos:
+- **Kiürített lista = az a szabály ki van kapcsolva.** Az üres listát *nem* értelmezi „semmi nem videó"-ként, mert az minden torrentet törölne — egy hiányzó konfiguráció nem bizonyíték arra, hogy a letöltés rossz. A `startScheduler` ezért kiírja, ha a védelem nem él: `payload check is OFF: fill in the extension lists under Settings / Content check` — egy néma, nem működő biztosíték rosszabb, mint a semmi. (Az üres lista **el is tárolódik**, épp azért, hogy a kikapcsolás ne váltson vissza a defaultra; ld. „Csak a settings, env nélkül".)
+- **`*` = minden elfogadott**, vagyis az a lista semmit nem utasít el. Így egy szabály kikapcsolható anélkül, hogy a listát ki kellene ürítened (és később visszaírnod). A `PAYLOAD_EXECUTABLE_EXTENSIONS=*` tehát *nem* azt jelenti, hogy minden futtathatónak számít — hanem hogy ez a szabály nem szól bele. A `*` tag a felületen kiemelt színt kap.
+- A 2026-08-08 reggeli „ne legyen kódba írt default" kérés miatt eredetileg a `.env`-be került a három sor; ma a registry defaultjai adják ugyanezt a három listát, tehát egy friss install is *bekapcsolt* ellenőrzéssel indul.
 - A `.r00`–`.r99` nem külön lista: a `rar` bejegyzést követi az archív listában, tehát ha kiveszed a `rar`-t, a többrészes archívum sem számít annak.
 
 **Csak biztos esetben avatkozik be** — a vakriasztás itt drágább lenne, mint egy átcsúszó hamisítvány:
@@ -594,16 +594,13 @@ A dátumszűrő ugyanezen az adaton: egy **erőltetett** scan most `0` epizódot
 
 Kérés: „env-ből átvinni néhány dolgot UI-ról szerkeszthetőnek, egy settings oldal alá, ahol admin beállítások lesznek; mindent vigyél be UI-ra, amit lehet és érdemes."
 
-**Felmérés.** A kód **52 env-változót** olvasott, ebből **19 modul-szintű konstans** — azok import-időben olvasnak, tehát egy UI-ból mentett érték csak újraindítás után hatott volna. Mindegyik függvénnyé lett (`STALL_MS` → `stallMs()`, `CATEGORY` → `category()`, `TMDB_LANGUAGE` → `language()`, …). **45 beállítás** került a felületre kilenc csoportban: TMDB, Indexers, Torrent client, Quality, Language, Scanner, Content check, Notifications, Download dialog.
+**Felmérés.** A kód **52 env-változót** olvasott, ebből **19 modul-szintű konstans** — azok import-időben olvasnak, tehát egy UI-ból mentett érték csak újraindítás után hatott volna. Mindegyik függvénnyé lett (`STALL_MS` → `stallMs()`, `CATEGORY` → `category()`, `TMDB_LANGUAGE` → `language()`, …). **50 beállítás** került a felületre kilenc csoportban: TMDB, Indexers, Torrent client, Quality, Language, Scanner, Content check, Notifications, Download dialog.
 
 **Ami szándékosan nem került fel:** `DATABASE_*` és `APP_*` (ezek kellenek ahhoz, hogy a táblát egyáltalán elérjük — tyúk-tojás), és a **`SCAN_DISABLED`**: egy vészfék nem lehet ott, ahonnan az app kibeszélheti magát belőle.
 
-**A rétegezés.** `Setting` sor nyer, az env az, amire visszaesik. **Semmit nem másolunk a táblába induláskor**: sor csak arra a kulcsra jön létre, amit valaki tudatosan átállított, tehát a tábla döntések listája, és a `.env` mindenre továbbra is működik. Ez az, ami békíti a 2026-08-08-i „ne legyen kódba írt default" kérést a felületről szerkesztéssel: a default *még mindig* nem a kódban van, hanem az env-ben, a UI csak felülírja.
+**A rétegezés (első kiadás, aznap felülírva).** Az első változat úgy készült, hogy a `Setting` sor nyer, az env pedig az, amire visszaesik — így a default nem a kódban volt, hanem a `.env`-ben. Ezt a **„kizárólag settingsből legyen használva"** kérés váltotta le pár órával később; a végleges modell a lenti „Csak a settings, env nélkül" alfejezetben van.
 
-- **Egy mező kiürítése = a felülírás törlése**, vagyis visszatérés ahhoz, amit az env mond. Ugyanaz a gesztus, nem kettő. A `RotateCcw` gomb ugyanezt teszi egy kattintással.
-- **A sor mutatja, honnan jön** az érvényes érték: `saved here` / `from .env` / `not set`. Enélkül a legrosszabb hibalehetőség az lett volna, hogy átírod a `.env`-et és nem történik semmi, mert a DB-ben ül egy régi felülírás.
-
-**Miért szinkron az olvasás.** A `getQualityProfile()` és társai pontozó ciklusokban futnak, ott nem lehet `await` értékenként — ugyanaz a helyzet, mint a feketelistánál. A tábla `Map`-be kerül, abból olvasunk szinkronban; a `loadSettings()` induláskor és minden scan-kör elején tölt, mentés után pedig azonnal frissül. **Hideg cache soha nem hibás, csak elavult**: beolvasott sor nélkül minden kulcs az env-re esik vissza, azaz arra, amit az app e fájl előtt tett.
+**Miért szinkron az olvasás.** A `getQualityProfile()` és társai pontozó ciklusokban futnak, ott nem lehet `await` értékenként — ugyanaz a helyzet, mint a feketelistánál. A tábla `Map`-be kerül, abból olvasunk szinkronban; a `loadSettings()` induláskor és minden scan-kör elején tölt, mentés után pedig azonnal frissül.
 
 **Titkok.** A `TMDB_API_KEY`, `INDEXER_API_KEY`, `TORRENT_PASS` és `TELEGRAM_BOT_TOKEN` szerkeszthető, de **soha nem jön vissza a böngészőbe**: az API csak azt küldi, hogy be van-e állítva, a mező pedig cserélni tud, olvasni nem. Az üres érték egy titoknál nem törlés (különben egy mentés minden titkot kinullázna), ahhoz külön `DELETE` kell. **Nyitva marad:** az app-nak nincs bejelentkezése (Fázis 8), tehát aki eléri a hálózaton, az *átírni* továbbra is át tudja ezeket — az olvashatatlanság ezt nem pótolja, csak a legrosszabbat zárja ki.
 
@@ -622,6 +619,46 @@ DELETE mindharomra        ->  source=env / unset, dryRun=false
 ```
 
 Titok-körforgás: `TORRENT_PASS` mentése után `source=database`, `value=""`, `isSet=true`; **üres értékkel PUT → `changed:0`** (nem törli); explicit `DELETE` után vissza `env`-re — utána a qBittorrent-kapcsolat sértetlen (`v5.2.2`, 2 torrent). A két közben lefuttatott scan-kör **semmit nem indított**: mind a négy Silo-rész `PENDING`, torrent nélkül, a dátum-visszatartás dry-run nélkül is fogott.
+
+#### Csak a settings, env nélkül (2026-08-08-i kérés) ✅
+
+Kérés: „nem akarom, hogy env-ben is legyenek ezek, azt akarom hogy kizárólag settingsből legyen használva" — plusz: a vesszős értékek **tag-ként** legyenek szerkeszthetők, és a settings kapjon **al-tabokat**.
+
+**Hol lakik ezután egy érték.** A `Setting` tábla, és semmi más. Amelyik kulcsnak nincs sora, az a **registryben lévő `default`-ot** használja ([settings.ts](src/lib/settings.ts)), ami az egyetlen példánya annak az értéknek: egyetlen hívási hely sem visz magával tartalékot, tehát pontosan egy helyen kell megnézni, mit tesz egy beállítás nélküli install. Ami install-specifikus (URL, jelszó, chat id), annak **szándékosan nincs default**ja: `not set`, amíg valaki ki nem tölti.
+
+Ez visszafelé mozdítja a 2026-08-08 reggeli „ne legyen kódba írt default" kérést, ezért érdemes kimondani, miért: env nélkül a default vagy a kódban van, vagy nincs sehol — és ha nincs sehol, akkor egy friss install minden szabállyal kikapcsolva indul (a tartalom-ellenőrzés is), 45 üres mezővel. A kérés *célja* viszont az volt, hogy ne legyen **rejtett** tartalék egy pontozó függvény `??`-je mögött. A registry-default nem rejtett: egy sorban áll a beállítás mellett, a felületen látszik, és a badge megmondja, hogy azt kapod-e vagy a sajátodat.
+
+**A régi értékek átvitele.** [scripts/import-env-settings.ts](scripts/import-env-settings.ts) egyszer lefutott: **9 kulcs került át** a táblába (TMDB kulcs, Jackett URL + kulcs + indexer id-k, qBittorrent URL/user/pass, Telegram token + chat id). **21 kulcs** értéke szó szerint megegyezett az új default-tal, tehát nem kapott sort — a viselkedés így bizonyítottan nem változott, a tábla mégis csak a *döntéseket* tartalmazza. A script a repóban maradt a művelet emlékeként, és újrafuttatva sem ír felül semmit.
+
+**Üres ≠ törölt.** Ez a fontos új szabály, és egy csapdát javít: ha egy lista kiürítése a sort törölné, akkor a „kapcsold ki ezt a szabályt" gesztus visszahozná a defaultot. Ezért **listánál az üres érték eltárolódik** (`source=database`, `value=""`, vagyis a szabály kikapcsolva), a defaulthoz visszatérés pedig a `RotateCcw` gomb, azaz `DELETE`. Nem-listánál marad a régi működés: az üres érték törli a sort, mert egy üres torrent-kategória vagy egy üres intervallum nem döntés — az előbbi épp a legrosszabb (kategória nélkül a scanner a kliens *összes* torrentjét látná).
+
+**Ami nem lehet szám.** Egy elírt `STALL_MINUTES=abc` a következő olvasásnál némán a defaultra esett volna vissza, ezért a `PUT` már **400-al elutasítja** (`"Give up after standing still (minutes) has to be a number."`), és nem ír semmit.
+
+**Hideg cache már nem elég.** Amíg az env volt a tartalék, egy be nem olvasott tábla legfeljebb elavult volt. Most viszont a defaultokkal válaszolna, ami *rossz* válasz egy beállított kulcsra. Ezért a `loadSettings(true)` bekerült az [instrumentation.ts](src/instrumentation.ts) `register()`-ébe, **még a `SCAN_DISABLED` ág előtt** (különben scanner nélkül soha nem töltött volna), és egy TTL-es `loadSettings()` a három kimenő úton is: `media.ts` `cached()`, `indexer.ts` `request()`, `torrent.ts` `request()`, plus a `notify()`. Mind a négy egyetlen szűk pont, amin minden TMDB / indexer / qBittorrent / Telegram hívás átmegy.
+
+**Tag-ek.** [tag-input.tsx](src/components/tag-input.tsx): a vesszős értékek badge-ként jelennek meg, `×`-szel törölhetők, Enterrel/vesszővel vehetők fel, egy vesszős szöveg beillesztése az egészet szétszedi, üres mezőn a Backspace az utolsó tag-et *visszabontja* szerkesztésre. A komponens kifelé továbbra is a vesszős stringet adja, tehát az oldal dirty-figyelése és a beállítás formátuma nem duplikálódik. Két extra:
+
+- **A sorrend-érzékeny listák (`ordered`) húzhatók** — felbontás (legjobb elöl), nyelv (első nyer), indexer-prioritás, kodek. Enélkül egy pozíció megváltoztatása azzal járt volna, hogy a listát kiürítve újra begépeled.
+- A **`*`** tag kiemelten látszik (primary színnel), mert az „fogadj el mindent" jelentése ellentétes az összes többi tag-gel.
+- A `table` típusú beállítás (`2160p:8`) ugyanezt a mezőt kapja, de **validál**: fél bejegyzés (`1080p`) nem vehető fel, mert a parser némán kihagyta volna.
+
+**Al-tabok.** A kilenc csoport kilenc tab lett egyetlen hosszú oldal helyett, a mentés viszont **globális maradt**: a fejlécben áll, és az összes tab változását küldi el egyszerre — így nem lehet tabot váltani úgy, hogy közben elveszik a szerkesztés. Amelyik tabon módosítás van, az egy pontot kap a nevéhez, és az aktív tab a hash-ben marad (`/settings#content-check`), tehát linkelhető és túléli az újratöltést.
+
+**Mérés** (a futó appon, a végleges modellel):
+
+```
+GET /api/settings, mind az 50 sor:  9 adatbazisbol, 37 a registry default-jabol, 4 unset
+tipus szerint: 18 szam, 15 string, 11 lista, 4 igen/nem, 2 tablazat  (13 mezo tag-es)
+QUALITY_EXCLUDE ures listaval mentve  ->  source=database  value=""     (a szabaly kikapcsolva)
+ugyanaz DELETE utan                   ->  source=default   value="cam,camrip,..."
+STALL_MINUTES=abc                     ->  400, az ertek valtozatlan (60, default)
+TORRENT_MOVIE_PATH="" (string)        ->  a sor torlodik, source=unset
+TORRENT_PASS="" (titok)               ->  changed:0, a jelszo megmarad
+```
+
+Az env kiürítése után újraindítva: `[scheduler] started, scanning every 15 minutes` + `telegram notifications are on` (a token már csak a DB-ben van), `/` 200, `/details/tv/125988` 200 „Silo"-val, `POST /api/scan` `dryRun:false`, `getClientVersion()` `v5.2.2` 2 torrenttel — tehát TMDB, Jackett, qBittorrent és a Telegram mind a táblából konfigurálódik. A `.env` 8 sorra fogyott (`APP_*`, `DATABASE_*`, `SCAN_DISABLED`, `COMPOSE_*`).
+
+**Összehasonlítás: a Jellyseerr/Overseerr ugyanezt fájlban tartja** — `config/settings.json`, egy induláskor beolvasott, memóriában tartott singletonnal, a defaultokkal a kódban; env-ből ott is csak a bootstrap jön (port, config könyvtár, DB, loglevel). Ugyanaz a szerkezet, más tároló. Egy különbség szándékos: a `settings.json`-be a *teljes* objektum kiíródik, tehát utólag nem látszik, mi volt döntés és mi default — nálunk csak a döntések kapnak sort, ezért tud a felület `edited` / `default` badge-et mutatni. A DB mellett szól még, hogy a Postgres amúgy is kötelező dependencia, és a beállítások a DB-mentéssel együtt utaznak; ellene, hogy egy elrontott `DATABASE_URL` mellett a settings sem érhető el (a `settings.json` ilyenkor is olvasható lenne).
 
 #### Telegram-értesítések (2026-08-08-i kérés) ✅
 
@@ -776,7 +813,7 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
-2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor a **scanner** is indíthat letöltéseket. A kézi letöltés (a kiadásválasztó ablakon keresztül) ettől függetlenül mindig valódi — 2026-08-08-án az *Obsession* így jött le, végig helyesen. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
+2. **Dry run ki** a Settings / Scanner tabon, amikor a **scanner** is indíthat letöltéseket. A kézi letöltés (a kiadásválasztó ablakon keresztül) ettől függetlenül mindig valódi — 2026-08-08-án az *Obsession* így jött le, végig helyesen. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
 3. **A watchlist 2026-08-08-án üres** (0 `Watchlist` és 0 `WatchlistUnit` sor) — vagyis a dry-run kikapcsolása önmagában semmit nem indítana el, csak azt, amit ezután felveszel.
 
 ---
@@ -805,9 +842,15 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy), `BLOCKED_RELEASE_TTL_DAYS` (default 30 — ennyi idő után kap új esélyt egy elakadás miatt eldobott release; `0` = soha; a hamis tartalmú mindig végleges), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_EVENTS` (`ready,started,dropped` vagy `*`; beállítatlan = nem küld), `TELEGRAM_API_URL` (opcionális, önhosztolt Bot API szerverhez).
+**Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind az 50, a csoportjával, a típusával és a súgójával együtt. A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
 
-A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta), ha a `.env`-ben bent maradtak, figyelmen kívül maradnak.
+<details><summary>A korábbi env-lista (2026-08-08 előtt) — már csak referencia</summary>
+
+`TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy), `BLOCKED_RELEASE_TTL_DAYS` (default 30 — ennyi idő után kap új esélyt egy elakadás miatt eldobott release; `0` = soha; a hamis tartalmú mindig végleges), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_EVENTS` (`ready,started,dropped` vagy `*`; beállítatlan = nem küld), `TELEGRAM_API_URL` (opcionális, önhosztolt Bot API szerverhez).
+
+</details>
+
+A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta).
 
 **Nyelv:** a kód, a kommentek és a felület angol. A TMDB metaadat is angolul jön (`TMDB_LANGUAGE`, default `en-US`) — `hu-HU`-ra állítva visszakapható a magyar cím/leírás anélkül, hogy a felület nyelve változna. Ez a terv-dokumentum marad magyar.
 
@@ -827,8 +870,10 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
 | [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
-| [src/lib/settings.ts](src/lib/settings.ts) | a 45 admin beállítás registryje + a `Setting` tábla és az env rétegezése, szinkron olvasással |
-| [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: csoportok, forrás-badge, felülírás törlése |
+| [src/lib/settings.ts](src/lib/settings.ts) | az 50 beállítás registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
+| [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: al-tabok, forrás-badge, tag-es listák, visszaállítás defaultra |
+| [src/components/tag-input.tsx](src/components/tag-input.tsx) | vesszős érték tag-ekként: felvesz, töröl, sorrend-érzékenynél húzható |
+| [scripts/import-env-settings.ts](scripts/import-env-settings.ts) | egyszeri: a `.env`-ben maradt beállítások átvitele a táblába (a művelet emléke) |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
@@ -860,6 +905,6 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
-| `GET /api/settings` | a 45 admin beállítás csoportokkal, érvényes értékkel és forrással (`database` / `env` / `unset`); titok értéke sosem jön vissza |
-| `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni; üres érték törli a felülírást, üres titok viszont nem változtat semmit |
-| `DELETE /api/settings?key=` | egy felülírás törlése, vagyis vissza az env-re — titoknál ez az egyetlen mód a törlésre |
+| `GET /api/settings` | az 50 beállítás csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
+| `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése; üres titok nem változtat semmit; szám típusra a nem-szám 400 |
+| `DELETE /api/settings?key=` | vissza a registry defaultjára (default nélküli kulcsnál `unset`) — titoknál ez az egyetlen mód a törlésre |

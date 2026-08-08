@@ -10,17 +10,17 @@ import {
 } from "@/types/media";
 import axios from "axios";
 
-import { settingNumber, settingText } from "@/lib/settings";
+import { loadSettings, settingNumber, settingText } from "@/lib/settings";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const apiKey = () => settingText("TMDB_API_KEY");
-const language = () => settingText("TMDB_LANGUAGE", "en-US");
+const language = () => settingText("TMDB_LANGUAGE");
 
 // certifications and streaming services are per country, and the language already
 // carries one — "en-US" means the US ratings board and US providers
 const region = () => (settingText("TMDB_REGION") || language().split("-")[1] || "US").toUpperCase();
 
-const cacheTtlMs = () => settingNumber("TMDB_CACHE_TTL_MINUTES", 720) * 60 * 1000;
+const cacheTtlMs = () => settingNumber("TMDB_CACHE_TTL_MINUTES") * 60 * 1000;
 
 type CacheEntry = { value: unknown, expiresAt: number };
 
@@ -31,7 +31,7 @@ const tmdbCache = globalForTmdb.tmdbCache || new Map<string, CacheEntry>();
 globalForTmdb.tmdbCache = tmdbCache;
 
 // discover rows move faster than metadata, so they get their own, shorter ttl
-const discoverTtlMs = () => settingNumber("DISCOVER_CACHE_TTL_MINUTES", 60) * 60 * 1000;
+const discoverTtlMs = () => settingNumber("DISCOVER_CACHE_TTL_MINUTES") * 60 * 1000;
 
 const cached = async <T>(
     key: string,
@@ -39,6 +39,10 @@ const cached = async <T>(
     isEmpty: (value: T) => boolean,
     ttl: number = cacheTtlMs()
 ): Promise<T> => {
+    // every TMDB read comes through here, which makes it the cheap place to be sure the
+    // settings are in memory — the call is a no-op while its own cache is warm
+    await loadSettings();
+
     const hit = tmdbCache.get(key);
 
     if (hit && hit.expiresAt > Date.now()) {
