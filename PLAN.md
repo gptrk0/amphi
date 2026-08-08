@@ -338,7 +338,7 @@ Amit ebből átvettem:
 
 ### Fázis 8 — Későbbi, opcionális
 - [ ] Settings UI (indexer/torrent/TMDB/minőségi profil DB-ből szerkeszthetően, ne csak `.env`) — ide tartozik az indexer-prioritás és a minőségi profil felületről állítása is.
-- [ ] Értesítések (böngésző push / Telegram / Discord webhook), amikor egy watchlist-elem letöltésre készen áll.
+- [x] **Telegram-értesítések** (2026-08-08) — ld. a lenti „Telegram-értesítések" alfejezetet. Böngésző push és Discord webhook továbbra is nyitott; a [notify.ts](src/lib/notify.ts) egy csatornát ismer, egy másik hozzávétele új `notify` implementációt jelent, nem átépítést.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
 - [x] **Epizód-szintű nézet és választás** — lásd a lenti alfejezetet (2026-08-07).
@@ -590,6 +590,44 @@ A dátumszűrő ugyanezen az adaton: egy **erőltetett** scan most `0` epizódot
 
 **Megoldva 2026-08-08-án:** a feketelista **tábla lett** (`BlockedRelease`), tehát egy szerver-újraindítás után ugyanaz a hamis release már nem kap új esélyt. Ld. a lenti „A feketelista tábla lett" alfejezetet. A **már `DOWNLOADED`** unitok tartalmát a sync szándékosan nem nézi újra (különben minden könyvtárbeli torrent fájllistája lekérésre kerülne minden körben, és egy rossznak ítélt film unitja a „letöltéskor levett” `monitored` miatt némán kiesne a keresésből).
 
+#### Telegram-értesítések (2026-08-08-i kérés) ✅
+
+Az app lényege, hogy akkor is dolgozik, amikor senki nem figyeli — eddig viszont csak úgy lehetett megtudni, hogy valami elkészült, ha benyitottál az oldalra. [notify.ts](src/lib/notify.ts), Telegram Bot API `sendMessage`-en.
+
+**Három esemény**, mindegyik a `syncDownloads`/scanner meglévő döntési pontjain:
+
+| esemény | mikor | mit ír |
+|---|---|---|
+| `ready` | egy letöltés befejeződött és nézhető | `✅ Ready to watch` + cím + a release neve |
+| `started` | a scanner talált valamit és beadta a kliensbe | `⬇️ Download started` + cím + a release neve |
+| `dropped` | egy már lehúzott release hamisnak vagy halottnak bizonyult | `⚠️ Release dropped` + cím + az ok és a release neve |
+
+**Konfiguráció**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_EVENTS` — utóbbi ugyanazt a konvenciót követi, mint a payload-listák: **beállítatlan = nem küld semmit**, `*` = mindent. A `TELEGRAM_API_URL` felülírható (önhosztolt Bot API szerverhez, és ez tette mérhetővé a dolgot Telegram nélkül). A `startScheduler` induláskor kiírja, hogy be van-e kapcsolva — ahogy a payload-ellenőrzés is.
+
+**Amit szándékosan nem tesz:** a *kézi* letöltésre nem küld `started`-et, mert azt a felületen amúgy is látod; az értesítés arról szól, ami magától történt. Dry-runban nem kell külön kezelés: ott nem indul letöltés (`started` nincs), a stall- és payload-ág pedig a törlés előtt kilép (`dropped` nincs), a `syncDownloads` viszont dry-runban is tükröz, tehát a `ready` helyesen szól.
+
+**Sosem dob és sosem lóg**: 10 másodperces timeout, minden hiba csak logol. Egy elveszett üzenet elveszett üzenet — a letöltés nem múlhat rajta.
+
+**Mérés.** A Bot API helyére egy lokális szerver került, ami rögzíti, mi menne ki. A kapuzás:
+
+```
+nothing configured                  configured=no   sent=false  requests=0
+token only                          configured=no   sent=false  requests=0
+token + chat, no events             configured=no   sent=false  requests=0
+events=ready only, sending ready    configured=yes  sent=true   requests=1
+events=ready only, sending started  configured=yes  sent=false  requests=0
+events=*, sending dropped           configured=yes  sent=true   requests=1
+```
+
+És végig, eldobható sorokkal egy valódi, kész torrentre (amit watchliston semmi nem birtokol), tehát igazi `syncDownloads`-on és igazi TMDB-címképzésen át:
+
+```
+<b>✅ Ready to watch</b>\nFight Club\n<i>Mortal.Kombat.II.2026…HUN-FULCRUM</i>
+<b>✅ Ready to watch</b>\nReacher S02 — 2 episodes\n<i>Mortal.Kombat.II.2026…HUN-FULCRUM</i>
+```
+
+A HTML-escape is ellenőrizve (`Fish <&> Chips` → `Fish &lt;&amp;&gt; Chips`), mert a release-nevek tele vannak olyan karakterrel, ami a Telegram HTML-parsereit eltörné. Halott végpontra: `ECONNREFUSED` logolva, `sent=false`, kivétel nélkül. Utána a torrent érintetlen, az eldobható sorok törölve.
+
 #### A feketelista tábla lett (2026-08-08) ✅
 
 A `.scr`-es incidens után ez volt a legkonkrétabb nyitott pont: az eldobott release-ek neve **memóriában** élt, a folyamat élettartamára. Minden dev-szerver újraindítás új esélyt adott ugyanannak a hamisítványnak — és aznap ez nem elméleti volt.
@@ -734,7 +772,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy), `BLOCKED_RELEASE_TTL_DAYS` (default 30 — ennyi idő után kap új esélyt egy elakadás miatt eldobott release; `0` = soha; a hamis tartalmú mindig végleges).
+Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy), `BLOCKED_RELEASE_TTL_DAYS` (default 30 — ennyi idő után kap új esélyt egy elakadás miatt eldobott release; `0` = soha; a hamis tartalmú mindig végleges), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_EVENTS` (`ready,started,dropped` vagy `*`; beállítatlan = nem küld), `TELEGRAM_API_URL` (opcionális, önhosztolt Bot API szerverhez).
 
 A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta), ha a `.env`-ben bent maradtak, figyelmen kívül maradnak.
 
@@ -755,6 +793,7 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
+| [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |

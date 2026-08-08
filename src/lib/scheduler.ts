@@ -7,13 +7,15 @@ import { BlockReason, blockRelease } from "@/lib/blocklist";
 import { forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
 import { inspectPayload, isPayloadCheckConfigured, PAYLOAD_DELETE_FILES } from "@/lib/payload";
 import { getTorrentFiles, getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
+import { isNotifyConfigured, notify } from "@/lib/notify";
 import {
     ensureMovieUnit,
     forgetUnits,
     markUnitsDownloading,
     pruneWatchlistItem,
     syncTvSeasons,
-    toAirDate
+    toAirDate,
+    toMediaType
 } from "@/lib/watchlist";
 
 const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
@@ -100,6 +102,39 @@ const unitLabel = (units: { episodeNumber: number | null, watchlist: { tmdbId: n
     return episodes === 0 ? `movie ${ tmdbId }` : `show ${ tmdbId }, ${ episodes } episode(s)`;
 };
 
+const code = (value: number | null) => String(value ?? 0).padStart(2, "0");
+
+// structural on purpose, like unitLabel above: only what the label needs
+type UnitWithItem = {
+    seasonNumber: number | null;
+    episodeNumber: number | null;
+    watchlist: { tmdbId: number, type: ContentType };
+};
+
+/**
+ * The same thing as `unitLabel` but for a person: a title instead of a tmdb id. The
+ * metadata is cached, so this costs nothing on the usual path.
+ */
+const readableLabel = async (units: UnitWithItem[]) => {
+    const item = units[0].watchlist;
+    const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
+    const name = metadata ? metadata.media.name : `TMDB #${ item.tmdbId }`;
+    const episodes = units.filter(unit => unit.episodeNumber !== null);
+
+    if (episodes.length === 0) {
+        return name;
+    }
+
+    if (episodes.length === 1) {
+        return `${ name } S${ code(episodes[0].seasonNumber) }E${ code(episodes[0].episodeNumber) }`;
+    }
+
+    const seasons = [ ...new Set(episodes.map(unit => unit.seasonNumber)) ];
+    const where = seasons.length === 1 ? ` S${ code(seasons[0]) }` : "";
+
+    return `${ name }${ where } — ${ episodes.length } episodes`;
+};
+
 /**
  * Reads download state back from qBittorrent. The loop runs over hashes rather than
  * units, because the episodes of a season pack are finished by one torrent at once.
@@ -172,6 +207,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             }
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
+            await notify("dropped", await readableLabel(running), `${ payload.reason } — ${ torrent.name }`);
 
             await removeTorrent(hash, PAYLOAD_DELETE_FILES);
             forgetStall(hash);
@@ -206,6 +242,8 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
                 }
             });
 
+            await notify("ready", await readableLabel(running), torrent.name);
+
         } else if (torrent.isFailed) {
             syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`);
 
@@ -226,11 +264,10 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
                 continue;
             }
 
-            await blockRelease(
-                normalizeTitle(torrent.name),
-                BlockReason.STALLED,
-                `stood still at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes`
-            );
+            const stalled = `stood still at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes`;
+
+            await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
+            await notify("dropped", await readableLabel(running), `${ stalled } — ${ torrent.name }`);
 
             await removeTorrent(hash, STALL_DELETE_FILES);
             forgetStall(hash);
@@ -287,6 +324,8 @@ export const scanMovies = async (options: ScanOptions = {}) => {
                 if (! started) {
                     await markUnitsDownloading([ unit.id ], null);
                 }
+
+                await notify("started", await readableLabel([ unit ]), plan.release.title);
             }
 
             continue;
@@ -365,6 +404,13 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
 
         if (! isDryRun() && grabs.length > 0) {
             await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack });
+
+            for (const grab of grabs) {
+                const covered = units.filter(unit => unit.episodeNumber !== null
+                    && grab.episodeNumbers.includes(unit.episodeNumber));
+
+                await notify("started", await readableLabel(covered.length > 0 ? covered : units), grab.release.title);
+            }
         }
 
         const grabbed = new Set(grabs.flatMap(grab => grab.episodeNumbers));
@@ -494,6 +540,10 @@ export const startScheduler = () => {
     if (! isPayloadCheckConfigured()) {
         log("payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on");
     }
+
+    log(isNotifyConfigured()
+        ? "telegram notifications are on"
+        : "telegram notifications are OFF: set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and TELEGRAM_EVENTS");
 
     setTimeout(() => void runScan(), START_DELAY_MS);
     setInterval(() => void runScan(), SCAN_INTERVAL_MS);
