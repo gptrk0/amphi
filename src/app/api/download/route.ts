@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
 import { isIndexerConfigured } from "@/lib/indexer";
+import { errorText, logError, logInfo, logWarn } from "@/lib/log";
 import { isClientConfigured } from "@/lib/torrent";
 import { loadSettings, NotConfiguredError } from "@/lib/settings";
 import { MissingSeason } from "@/types/download";
@@ -24,6 +25,20 @@ const missingService = async () => {
     }
 
     return null;
+};
+
+/**
+ * Every download the user asked for by hand, one line each. The scanner logs its own
+ * grabs, and this is the other half of the answer to "where did this file come from".
+ */
+const logStarted = async (started: StartedDownload[]) => {
+    for (const download of started) {
+        await logInfo(
+            "download",
+            `asked for by hand: ${ download.title }`,
+            `${ download.label }${ download.hash ? `, torrent ${ download.hash.slice(0, 8) }` : ", the client returned no hash" }`
+        );
+    }
 };
 
 const toPicks = (value: unknown): Record<string, string> => {
@@ -53,6 +68,8 @@ export async function POST(req: NextRequest) {
         const notConfigured = await missingService();
 
         if (notConfigured) {
+            await logWarn("download", "a download was asked for and refused", notConfigured);
+
             return Response.json({ success: false, message: notConfigured }, { status: 400 });
         }
 
@@ -68,6 +85,8 @@ export async function POST(req: NextRequest) {
             }
 
             const started = await executeStoredPlan(plan, toPicks(body?.picks));
+
+            await logStarted(started);
 
             return Response.json({
                 success: true,
@@ -94,6 +113,8 @@ export async function POST(req: NextRequest) {
             }
 
             if (! plan.release) {
+                await logInfo("download", `nothing usable for movie ${ id }`, `${ plan.resultCount } results came back and every one was filtered out`);
+
                 return Response.json({
                     success: true,
                     started: [],
@@ -103,6 +124,8 @@ export async function POST(req: NextRequest) {
             }
 
             const started = await executeMovieGrab(id, plan.release);
+
+            await logStarted(started ? [ started ] : []);
 
             return Response.json({
                 success: true,
@@ -139,6 +162,8 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        await logStarted(started);
+
         return Response.json({
             success: true,
             started,
@@ -154,8 +179,12 @@ export async function POST(req: NextRequest) {
         // a setting that was cleared between the check above and the grab, or a path that
         // does not check: still the user's answer, not a server error
         if (err instanceof NotConfiguredError) {
+            await logWarn("download", "a download was asked for and refused", err.message);
+
             return Response.json({ success: false, message: err.message }, { status: 400 });
         }
+
+        await logError("download", "starting a download failed", errorText(err));
 
         return Response.json({ success: false, message: "Failed to start the download!" }, { status: 500 });
     }

@@ -20,16 +20,45 @@ enum WatchStatus {
   FAILED
 }
 
-/// A setting edited from the admin page. One row per overridden key, and only for the
-/// ones that were actually changed: everything else falls through to the env, so the
-/// table stays a list of deliberate decisions rather than a copy of the whole config.
+/// A setting edited from the admin page. One row per key that was actually changed:
+/// everything else falls through to the `default` in the settings registry, so the table
+/// stays a list of deliberate decisions rather than a copy of the whole config.
 ///
 /// The value is text whatever the setting is — the registry in `settings.ts` knows how
-/// to read it, and it is the same string an env variable would have carried.
+/// to read it.
 model Setting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+/// The app's own log. It runs unattended, so the interesting things happen when nobody
+/// is looking: what it grabbed at three in the morning, which release it threw away and
+/// why, and which setting was changed just before it all stopped working. `docker logs`
+/// has all of that too, but only for whoever can reach a shell, and only until the
+/// container is recreated.
+///
+/// `source` is the module the line came from (`scheduler`, `download`, `settings`, …),
+/// which is what the admin page filters on. `message` is the whole story in one line and
+/// `detail` carries the specifics — a release name, an error, an old and a new value.
+/// Never a secret: `writeLog` scrubs api keys out of both.
+model LogEntry {
+  id      Int      @id @default(autoincrement())
+  at      DateTime @default(now())
+  level   LogLevel
+  source  String
+  message String
+  detail  String?
+
+  // the only query that is not by id: dropping everything older than the retention
+  @@index([at])
 }
 
 enum BlockReason {

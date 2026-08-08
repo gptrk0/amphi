@@ -10,8 +10,15 @@ export async function register() {
 
     await loadSettings(true);
 
+    // imported down here for the same reason: the log module reaches the database
+    const { logInfo, logWarn } = await import("@/lib/log");
+
+    // where the log starts after a restart, which is the question every unexplained gap
+    // in it turns out to be
+    await logInfo("app", "the server started");
+
     if (process.env.SCAN_DISABLED === "1") {
-        console.log("[scheduler] disabled by SCAN_DISABLED");
+        await logWarn("app", "the scanner is off: SCAN_DISABLED=1 in the environment, nothing is searched or downloaded on its own");
 
         return;
     }

@@ -48,7 +48,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-08: négy tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` és a `Setting`. Utóbbi kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` pedig az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
+**2026-08-08: öt tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease`, a `Setting` és a `LogEntry`. A `Setting` kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` és a `LogEntry` az a kettő, ami nem a watchlistről szól: egyiknek sincs relációja semmivel. A feketelista kulcsa a normalizált release-név (ld. „A feketelista tábla lett"), a `LogEntry` pedig maga a napló, amit a `/log` oldal mutat (ld. „Admin log oldal"). Mindhárom sémája itt van, a `WatchlistUnit` után.
 
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
 
@@ -121,6 +121,28 @@ model BlockedRelease {
   expiresAt DateTime?   // null = soha nem jár le
 
   @@index([expiresAt])
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+// az app saját naplója, amit a /log oldal mutat. `source` = a modul, ami írta
+// (scheduler, download, settings, …); a `detail` a részlet: release-név, hiba,
+// régi és új érték. Titok sosem — a writeLog kiszűri.
+model LogEntry {
+  id      Int      @id @default(autoincrement())
+  at      DateTime @default(now())
+  level   LogLevel
+  source  String
+  message String
+  detail  String?
+
+  // az egyetlen kérdés, ami nem id szerint megy: a megőrzési időn túli sorok törlése
+  @@index([at])
 }
 ```
 
@@ -318,7 +340,8 @@ Amit ebből átvettem:
   - A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` ezzel **kikerült a kódból**.
   - A `WatchStatus.FAILED`-et így **semmi nem állítja be automatikusan**. Az enum benne marad (a `deriveStatus`, a badge és a `GRABBABLE_STATUS` kezeli), későbbi kézi „feladom" funkcióhoz.
   - Élőben ellenőrizve: `attempts=5` + „1 órája nézve" → a scanner kihagyta (a backoff ekkor 16h); „20 órája nézve" → feldolgozta, és `attempt 6, next in 24h` került a logba.
-- [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás).
+- [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás). **2026-08-08 óta ugyanezek a sorok a `LogEntry` táblába is mennek**, és a `/log` oldalon élőben látszanak — ld. a lenti „Admin log oldal" alfejezetet.
+- [x] **Log a felületen** (2026-08-08) — `/log`: szint/forrás/szöveg szűrő, SSE-s élő követés, megőrzési idő. A fontos műveletek (scanner-döntések, kézi letöltés, beállítás-változás és -törlés, watchlist-műveletek, kifelé menő hibák) mind írnak bele.
 - [x] `discover` route hibakezelése: a catch-ág nem `return`-ölt, csak konstruált egy eldobott `Response`-t — most logol, és a hibás oldal egyszerűen kimarad az eredményből.
 - [x] **`entrypoint.sh` dev módja** (2026-08-07) — korábban csak a Prisma Studio-t indította, a Next dev szervert kézzel kellett elindítani a konténerben. Mivel a `startScheduler()` az `instrumentation.ts`-ből, **a Next szerverrel együtt** indul, ez azt jelentette, hogy alapból semmilyen háttérkör nem futott — a 2026-08-06-i „kész letöltés nem került át" hiba részben ebből jött. Most a Studio a háttérbe kerül, a dev szerver pedig `exec bun run dev`-vel a fő processz.
   - Következmény: a konténer a dev szerver élettartamáig él. Ha a dev szerver kilép, a konténer is leáll (`docker compose up -d aioseerr_app` hozza vissza) — cserébe egy néma, nem futó szerver nem maradhat észrevétlen.
@@ -337,7 +360,7 @@ Amit ebből átvettem:
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
 
 ### Fázis 8 — Későbbi, opcionális
-- [x] **Settings UI** (2026-08-08) — `/settings`, 50 beállítás kilenc al-tabon, **kizárólag** a DB-ből, a defaultok a registryben. Lásd a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket.
+- [x] **Settings UI** (2026-08-08) — `/settings`, 52 beállítás tíz al-tabon (a *Log* csoport az admin log oldallal jött), **kizárólag** a DB-ből, a defaultok a registryben. Lásd a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket.
 - [x] **Telegram-értesítések** (2026-08-08) — ld. a lenti „Telegram-értesítések" alfejezetet. Böngésző push és Discord webhook továbbra is nyitott; a [notify.ts](src/lib/notify.ts) egy csatornát ismer, egy másik hozzávétele új `notify` implementációt jelent, nem átépítést.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
@@ -829,13 +852,52 @@ Amit ez alapján átírtam:
 
 **Ára / ami nyitva marad:** a `loading.tsx` streaming boundary-t csinál, tehát a válasz feje (200) már elment, mire a TMDB-lekérés kiderítené, hogy nincs ilyen id — az ismeretlen `/details/movie/999999999` és `/details/person/550` **helyesen a 404-es oldalt rajzolja ki, de HTTP 200-as státusszal**. Böngészőből ez nem látszik, a felhasználó a 404-es lapot kapja (eddig egy örök skeletont kapott, tehát ez így is javulás); ha a státuszkód is fontos lesz, a boundary és a 404 közül kell választani.
 
+#### Admin log oldal (2026-08-08-i kérés) ✅
+
+Kérés: legyen egy admin funkció, amivel az oldalon nézhető a log, akár valós időben; gondoljam át, érdemes-e websocket szerver; és **minden fontos művelet írjon logba**.
+
+**Hol tárolódik.** `LogEntry` tábla (`20260808194024_log_entries`, tisztán additív). A `docker logs`-ban eddig is ott volt minden, de csak annak, aki shellt kap a konténerbe, és csak addig, amíg a konténer él. A tábla ugyanaz a döntés, mint a feketelistánál: ami a működés magyarázatához kell, az nem lehet a processz élettartamához kötve.
+
+**Egy belépési pont: [log.ts](src/lib/log.ts).** A `writeLog(level, source, message, detail?)` három dolgot garantál, és a többi kód erre épít:
+1. **soha nem dob.** Egy sikertelen naplózás nem viheti el azt a műveletet, amiről szólt — a legrosszabb eset egy kimaradó sor.
+2. **a konzol is megkapja** (`console.log` / `warn` / `error`, `[source]` prefixszel), **az insert előtt** — tehát a `docker logs` akkor is teljes, ha a DB éppen nem elérhető, és egyetlen hívási helynek sem kell mindkettőre emlékezni.
+3. **titok nem mehet bele.** Egy elutasított kérés hibateste visszaidézheti magát a kérést, egy indexer-kérésben pedig az api kulcs a query stringben van — a `scrub()` az `apikey=` / `token=` / `password=` alakot és a Telegram `/bot<token>/` útvonalat maszkolja. Mérve: `…?apikey=SUPERSECRET123` → `…?apikey=***`, `…/bot123456789:AAHfake-Token_x/…` → `…/bot***/…`.
+
+**Ami logol.** Az összes `[scheduler]` sor (a modul saját `log()`-ja most a `writeLog`-ot hívja, tehát egy helyen dől el a formátum), a kézi letöltés minden elindított torrentje, a beállítás-változás, a watchlist-műveletek, és kifelé menő hibák a TMDB / indexer / qBittorrent / Telegram felől. Szint szerint: `WARN` a ledobott release, az eltűnt torrent, a friss install „nincs beállítva" sorai és **a beállítás-törlés** (2026-08-08-án egy félrekattintás így vitte el az indexer api kulcsot — ez a sor az, ami megmondta volna, hova lettek a keresések), `ERROR` a scan-kör és a sync hibája.
+
+**Két dolog, amit a naplózás nem tehet meg: elárasztani és lelassítani.**
+- Az azonos, sorozatban jövő hibák egy percre összecsuknak (`logThrottled`): egy rossz TMDB kulcs a főoldal minden sorát elbukja egyszerre, és hét azonos sor nem hét információ. Ugyanígy indexerenként és qBittorrent-műveletenként.
+- A **beállítatlan** kliens nem hiba, amit óránként hatvanszor ki kell írni — a `NotConfiguredError` a torrent-modulban némán kimarad, mert a scheduler indulásnál egyszer már megmondta.
+- A **kör-összefoglaló** (`round finished in 4s: 12 searched, 1 grabbed`) `INFO`, ha volt mit átnézni, és `DEBUG`, ha nem — különben naponta 96 „nem volt dolgom" sor temetné be a többit.
+- A `DEBUG` szint alapból **nem is íródik ki** (Settings / Log → *Keep debug entries*), a megőrzés pedig 14 nap (`0` = örökre), amit egy írás kimenetén ellenőriz óránként — így a takarítás akkor sem áll le, ha a scanner ki van kapcsolva, és nem is fut, amikor nincs mit takarítani.
+
+**Miért nem websocket (végiggondolva, nem elvből).** Amit a felület kér, az **egyirányú**: szerver → böngésző. A websockethez HTTP `upgrade` kell, amihez az App Router route handlerében nincs hozzáférés — vagy **saját szerver** (`server.ts`), amivel a `next dev --turbopack` esik el, vagy **második processz** külön porton, ami viszont nem látja azt a processzen belüli értesítést, amiből az egész él (és a schedulerrel is ugyanez a helyzet: az app egy processzre van tervezve). Az SSE ezzel szemben egy route handlerben elfér, nincs hozzá csomag, és az `EventSource` magától újrakapcsolódik. **Amire később ugyanez a stream jó lesz**, mert mind szerver → kliens: a letöltés-haladás a watchlist/library táblában (ma 5 másodperces poll, minden körben egy qBittorrent-hívással), a „scan-kör fut / kész" állapot, és egy toast arról, hogy valami megjött. Ha egyszer tényleg kétirányú kell, **egyetlen fájl és a benne lévő hook változik** — a `log.ts` értesítője transzport-független.
+
+**Amit a stream helyesen tesz.** Egy kapcsolat = egy **kurzor a táblán**: az írás nem küldi el a sort, csak felébreszti a hurkot, ami utána az `id > utolsó` kérdést teszi fel. Így a tábla az egyetlen igazság, egy sor nem érkezhet kétszer vagy fordított sorrendben, és a **más processz** által írt sor is megjelenik. Az `id:` mező minden frame-ben ott van, tehát egy megszakadt kapcsolat a böngésző saját `Last-Event-ID` fejével pontosan onnan folytatja — nem replikálva a már látott sorokat. 15 másodperces üresjárati tick egyszerre keep-alive (a bufferelő proxyk ellen az `X-Accel-Buffering: no` is), és ez a biztonsági háló a kihagyott ébresztésre.
+
+**Mérve** (futó dev szerveren, egyszerre nyitott streammel):
+
+```
+0.3s  first page: 3 entries, newestId 3        <- szerverindulás sorai a táblában
+1.1s  stream 200 text/event-stream
+2.2s  -> DELETE /api/log cleared 3
+2.2s  <- WARN app | the log was cleared …      <- ugyanabban a processzben: azonnal
+17.2s <- INFO app | written by another process <- másik processz írta: az üresjárati tick hozta
+```
+
+Plusz a beállítás-út: `PUT` → `INFO setting changed: Log / Keep debug entries (LOG_DEBUG)` `"0" → "1"`, `DELETE` → `WARN setting cleared: … back to the default "0"`. Titoknál a `detail` sosem az érték, hanem `replaced` / `set for the first time`.
+
+**A felület** (`/log`, az ADMIN menüben a Settings mellett): szintszűrő (a *Warnings* a hibákat is tartalmazza), forrás-választó a tábla tényleges forrásaival és darabszámukkal, szöveges keresés (300 ms debounce, a `message` és a `detail` felett), *Live* kapcsoló zöld/sárga/szürke ponttal, és *Clear*. A lista **legújabb elöl**, tehát az új sor elé kerül — nincs automatikus görgetés, amit el lehetne rontani. A szűrő ugyanazokat a paramétereket adja a listának és a streamnek, egy `where`-építőn keresztül, tehát a kettő nem tud eltérni; a lapozás `before=<id>`, nem offset, mert az kihagyná az azóta beérkezett sorokat.
+
+**Ami nyitva marad.** Nincs auth: aki eléri a `/log`-ot, az elolvassa — pontosan annyira, mint a `/settings`-et (ott *írni* lehet, itt *olvasni*). Ezért nem megy titok a naplóba még maszkolatlanul sem. És mint a schedulernél: **egy processzre** épül az azonnali ébresztés; több worker esetén a 15 másodperces tick lenne az egyetlen csatorna, ott Postgres `LISTEN/NOTIFY` a következő lépés.
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-08):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés). Ami maradt: **seedelés/utómunka**, és a teljes Fázis 8 (settings UI, értesítések, auth, médiaszerver).
+**Állapot (2026-08-08):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Ami maradt: **seedelés/utómunka**, auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
@@ -853,22 +915,30 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma migrate status
 docker exec -w /home/bun/app aioseerr_app bunx tsc --noEmit
 ```
 
-A `prisma migrate dev` **nem használható nem-interaktív shellből** ("Prisma Migrate has detected that the environment is non-interactive"). Migráció készítése helyette:
+A `prisma migrate dev` **nem használható nem-interaktív shellből** ("Prisma Migrate has detected that the environment is non-interactive") — de a `--create-only` igen, mert az nem kérdez semmit. Ez a rövidebb út, és a `20260808194024_log_entries` így készült:
 
 ```bash
-# 1. SQL legenerálása az élő DB → új schema diffből
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
-  --from-config-datasource --to-schema prisma/schema.prisma --script
+# 1. a migráció legenerálása (nem alkalmazza, csak megírja)
+docker exec -w /home/bun/app aioseerr_app bunx prisma migrate dev --name <nev> --create-only
 
-# 2. a kimenet mentése ide: prisma/migrations/<YYYYMMDDHHMMSS>_<nev>/migration.sql
-# 3. alkalmazás + kliens újragenerálás
+# 2. alkalmazás + kliens újragenerálás
 docker exec -w /home/bun/app aioseerr_app bunx prisma migrate deploy
 docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 ```
 
+Ha a `--create-only` mégis elakadna (shadow adatbázis nélküli környezetben), a kézi út:
+
+```bash
+# SQL legenerálása az élő DB → új schema diffből
+docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
+  --from-config-datasource --to-schema prisma/schema.prisma --script
+
+# a kimenet mentése ide: prisma/migrations/<YYYYMMDDHHMMSS>_<nev>/migration.sql, majd deploy + generate
+```
+
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-**Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind az 50, a csoportjával, a típusával és a súgójával együtt. A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
+**Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind az 52, a csoportjával, a típusával és a súgójával együtt. A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
 
 <details><summary>A korábbi env-lista (2026-08-08 előtt) — már csak referencia</summary>
 
@@ -896,8 +966,11 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
 | [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
-| [src/lib/settings.ts](src/lib/settings.ts) | az 50 beállítás registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
+| [src/lib/settings.ts](src/lib/settings.ts) | az 52 beállítás registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
+| [src/lib/log.ts](src/lib/log.ts) | a napló egyetlen belépési pontja: konzol + `LogEntry` tábla, titok-maszkolás, azonos hibák összecsukása, megőrzés, és az az értesítő, amiből az élő stream él |
 | [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: al-tabok, forrás-badge, tag-es listák, visszaállítás defaultra |
+| [src/app/log/page.tsx](src/app/log/page.tsx) | a log oldal: szint/forrás/szöveg szűrő, élő követés (SSE), `before=<id>` lapozás |
+| [src/app/api/log/stream/route.ts](src/app/api/log/stream/route.ts) | az élő stream: kurzor a táblán, `Last-Event-ID`-vel folytatható, 15 s-os üresjárati tick |
 | [src/components/tag-input.tsx](src/components/tag-input.tsx) | vesszős érték tag-ekként: felvesz, töröl, sorrend-érzékenynél húzható |
 | [scripts/import-env-settings.ts](scripts/import-env-settings.ts) | egyszeri: a `.env`-ben maradt beállítások átvitele a táblába (a művelet emléke) |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
@@ -931,6 +1004,9 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
-| `GET /api/settings` | az 50 beállítás csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
+| `GET /api/settings` | az 52 beállítás csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
 | `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése; üres titok nem változtat semmit; szám típusra a nem-szám 400 |
 | `DELETE /api/settings?key=` | vissza a registry defaultjára (default nélküli kulcsnál `unset`) — titoknál ez az egyetlen mód a törlésre |
+| `GET /api/log?level&source&q&before` | egy lap napló (200 sor), legújabb elöl, + `hasMore`, a szűrőhöz a tábla forrásai darabszámmal, és a stream indulási pontja (`newestId`, szándékosan szűrés nélkül) |
+| `GET /api/log/stream?level&source&q&after` | SSE: `event: entries` egy tömbbel, `id:` mezővel a folytatáshoz; 15 s-onként `: ping` |
+| `DELETE /api/log` | a teljes napló törlése — magáról a törlésről ír egy `WARN` sort |

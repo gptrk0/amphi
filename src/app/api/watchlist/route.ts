@@ -1,8 +1,12 @@
 import { NextRequest } from "next/server";
 
+import { logInfo } from "@/lib/log";
 import { syncDownloadsOnce } from "@/lib/scheduler";
 import { listManagedTorrents } from "@/lib/torrent";
 import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, setMonitored, toContentType } from "@/lib/watchlist";
+
+/** A title the log can be read by, since no name is stored anywhere. */
+const label = (name: string | null | undefined, tmdbId: number) => name || `TMDB #${ tmdbId }`;
 
 export async function GET(req: NextRequest) {
     const slim = req.nextUrl.searchParams.get('slim');
@@ -50,6 +54,12 @@ export async function POST(req: NextRequest) {
             return Response.json({ success: false, message: 'Media not found on tmdb!' }, { status: 404 });
         }
 
+        await logInfo(
+            "watchlist",
+            `added: ${ label(result.media?.name, tmdbId) }`,
+            seasons ? `watching season${ seasons.length === 1 ? "" : "s" } ${ seasons.join(", ") || "none yet" }` : "watching everything"
+        );
+
         return Response.json({
             success: true,
             message: `${ result.media?.name || "Media" } added to your watchlist!`,
@@ -93,6 +103,17 @@ export async function PATCH(req: NextRequest) {
         }
 
         const result = await setMonitored(tmdbId, type, monitored, { seasonNumber, episodeNumbers });
+
+        const what = [
+            seasonNumber === undefined ? "every season" : `S${ String(seasonNumber).padStart(2, "0") }`,
+            episodeNumbers ? `E${ episodeNumbers.join(",E") }` : ""
+        ].filter(Boolean).join("");
+
+        await logInfo(
+            "watchlist",
+            `${ monitored ? "watching" : "no longer watching" } ${ what }: ${ label(result?.media?.name, tmdbId) }`,
+            result ? undefined : "nothing is left to watch on it, so it came off the watchlist"
+        );
 
         return Response.json({ success: true, result });
 

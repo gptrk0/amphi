@@ -1,5 +1,6 @@
-import { ContentType, WatchStatus } from "../../prisma/generated/client";
+import { ContentType, LogLevel, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
+import { errorText, writeLog } from "@/lib/log";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import { getMediaMetadata, getTvSeasons, isTmdbConfigured } from "@/lib/media";
 import { isIndexerConfigured } from "@/lib/indexer";
@@ -34,10 +35,16 @@ const START_DELAY_MS = 15 * 1000;
 // is not affected: it only mirrors back what the client already reports.
 const isDryRun = () => settingFlag("SCAN_DRY_RUN");
 
-const log = (message: string) => console.log(`[scheduler]${ isDryRun() ? " [dry-run]" : "" } ${ message }`);
+// `writeLog` prints to the console and stores the line, so the admin page and
+// `docker logs` can never end up telling different stories
+const log = (message: string, level: LogLevel = LogLevel.INFO, detail?: string) => {
+    return writeLog(level, "scheduler", `${ isDryRun() ? "[dry-run] " : "" }${ message }`, detail);
+};
 
 // syncDownloads writes in dry-run as well, so its lines must not claim otherwise
-const syncLog = (message: string) => console.log(`[scheduler] ${ message }`);
+const syncLog = (message: string, level: LogLevel = LogLevel.INFO, detail?: string) => {
+    return writeLog(level, "scheduler", message, detail);
+};
 
 const globalForScheduler = global as unknown as {
     schedulerStarted: boolean,
@@ -87,7 +94,7 @@ const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) 
     const torrent = await getTorrentStatus(hash);
 
     if (torrent) {
-        syncLog(`torrent ${ hash.slice(0, 8) } is outside the managed category`);
+        await syncLog(`torrent ${ hash.slice(0, 8) } is outside the managed category`);
     }
 
     return torrent;
@@ -171,14 +178,14 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             // never finished was cancelled or failed and is worth another search,
             // while a finished one was watched and cleaned up
             if (done.length > 0) {
-                syncLog(`${ unitLabel(done) }: removed from the client after finishing, treated as watched and deleted`);
+                await syncLog(`${ unitLabel(done) }: removed from the client after finishing, treated as watched and deleted`);
 
                 await forgetUnits(done.map(unit => unit.id));
                 await pruneWatchlistItem(done[0].watchlistId);
             }
 
             if (running.length > 0) {
-                syncLog(`${ unitLabel(running) }: torrent is gone from the client, queued for a new search`);
+                await syncLog(`${ unitLabel(running) }: torrent is gone from the client, queued for a new search`, LogLevel.WARN);
 
                 await prisma.watchlistUnit.updateMany({
                     where,
@@ -200,10 +207,10 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
         const payload = inspectPayload(await getTorrentFiles(hash));
 
         if (payload.bad) {
-            syncLog(`${ unitLabel(running) }: ${ payload.reason } (${ torrent.name }), not the release it claims to be — dropping it`);
+            await syncLog(`${ unitLabel(running) }: ${ payload.reason } (${ torrent.name }), not the release it claims to be — dropping it`, LogLevel.WARN);
 
             if (isDryRun()) {
-                log("a bad payload is left alone in dry-run, the torrent stays");
+                await log("a bad payload is left alone in dry-run, the torrent stays");
 
                 continue;
             }
@@ -228,7 +235,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
         }
 
         if (torrent.isComplete) {
-            syncLog(`${ unitLabel(running) }: downloaded (${ torrent.name })`);
+            await syncLog(`${ unitLabel(running) }: downloaded (${ torrent.name })`);
 
             // A finished film is off the watchlist the moment it lands — there is
             // never anything left to watch for. An episode keeps the flag: it is the
@@ -247,7 +254,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             await notify("ready", await readableLabel(running), torrent.name);
 
         } else if (torrent.isFailed) {
-            syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`);
+            await syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`, LogLevel.WARN);
 
             await prisma.watchlistUnit.updateMany({
                 where,
@@ -258,10 +265,10 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             // nothing has arrived for the whole threshold: the release is dead, not
             // slow. it goes with its files, is remembered so the next search does
             // not pick it again, and the units are due immediately
-            syncLog(`${ unitLabel(running) }: stalled at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes (${ torrent.state }), dropping it for another release`);
+            await syncLog(`${ unitLabel(running) }: stalled at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes (${ torrent.state }), dropping it for another release`, LogLevel.WARN);
 
             if (isDryRun()) {
-                log("stall handling is skipped in dry-run, the torrent stays");
+                await log("stall handling is skipped in dry-run, the torrent stays");
 
                 continue;
             }
@@ -313,17 +320,26 @@ export const scanMovies = async (options: ScanOptions = {}) => {
         include: { watchlist: true }
     });
 
-    for (const unit of options.force ? units : units.filter(isDue)) {
+    const due = options.force ? units : units.filter(isDue);
+    let grabbed = 0;
+
+    for (const unit of due) {
         const tmdbId = unit.watchlist.tmdbId;
         const plan = await planMovieGrab(tmdbId);
 
         if (plan?.release) {
-            log(`movie ${ tmdbId }: grabbing ${ plan.release.title }`);
+            await log(`movie ${ tmdbId }: grabbing ${ plan.release.title }`);
+
+            grabbed++;
 
             if (! isDryRun()) {
                 const started = await executeMovieGrab(tmdbId, plan.release);
 
                 if (! started) {
+                    // the release was picked but the client did not take it, and the unit
+                    // is marked downloading with no hash — worth saying out loud
+                    await log(`movie ${ tmdbId }: the torrent client did not take the release`, LogLevel.WARN);
+
                     await markUnitsDownloading([ unit.id ], null);
                 }
 
@@ -335,7 +351,7 @@ export const scanMovies = async (options: ScanOptions = {}) => {
 
         const attempts = unit.searchAttempts + 1;
 
-        log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+        await log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
         if (! isDryRun()) {
             await prisma.watchlistUnit.update({
@@ -348,6 +364,9 @@ export const scanMovies = async (options: ScanOptions = {}) => {
             });
         }
     }
+
+    // what the round summary is made of: how much was looked at, how much came of it
+    return { looked: due.length, grabbed };
 };
 
 /**
@@ -369,6 +388,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
     });
 
     const due = options.force ? found : found.filter(isDue);
+    let grabCount = 0;
 
     const groups = new Map<string, { watchlistId: number, tmdbId: number, seasonNumber: number, units: typeof due }>();
 
@@ -401,8 +421,10 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         const { usePack, grabs } = await planSeasonGrabs(watchlistId, plan, { episodeNumbers });
 
         for (const grab of grabs) {
-            log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
+            await log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
         }
+
+        grabCount += grabs.length;
 
         if (! isDryRun() && grabs.length > 0) {
             await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack });
@@ -424,7 +446,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
 
             const attempts = unit.searchAttempts + 1;
 
-            log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+            await log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
             if (! isDryRun()) {
                 await prisma.watchlistUnit.update({
@@ -438,6 +460,8 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
             }
         }
     }
+
+    return { looked: due.length, grabbed: grabCount };
 };
 
 /**
@@ -496,7 +520,10 @@ export const syncDownloadsOnce = async (preloaded?: TorrentStatus[]) => {
         await syncDownloads(preloaded);
 
     } catch(err) {
-        console.error("[scheduler] sync failed", err);
+        // the console keeps the stack, the log keeps the line
+        console.error(err);
+
+        await syncLog("reading the downloads back failed", LogLevel.ERROR, errorText(err));
 
     } finally {
         globalForScheduler.syncRunning = false;
@@ -507,7 +534,7 @@ export const syncDownloadsOnce = async (preloaded?: TorrentStatus[]) => {
 
 export const runScan = async (options: ScanOptions = {}) => {
     if (globalForScheduler.schedulerRunning) {
-        log("previous run is still going, skipping this tick");
+        await log("previous run is still going, skipping this tick");
 
         return false;
     }
@@ -515,8 +542,10 @@ export const runScan = async (options: ScanOptions = {}) => {
     globalForScheduler.schedulerRunning = true;
 
     if (options.force) {
-        log("manual scan: every monitored item that is out, backoff ignored");
+        await log("manual scan: every monitored item that is out, backoff ignored");
     }
+
+    const startedAt = Date.now();
 
     try {
         // the settings are read synchronously from here on, so the round starts by
@@ -525,11 +554,25 @@ export const runScan = async (options: ScanOptions = {}) => {
 
         await syncDownloadsOnce();
         await refreshMetadata();
-        await scanMovies(options);
-        await scanEpisodes(options);
+
+        const movies = await scanMovies(options);
+        const episodes = await scanEpisodes(options);
+
+        const looked = movies.looked + episodes.looked;
+        const grabbed = movies.grabbed + episodes.grabbed;
+
+        // a round that had nothing to do is the normal case every fifteen minutes, and
+        // ninety-six of those a day would bury the lines that matter — so that one is
+        // only kept when debug entries are asked for
+        await log(
+            `round finished in ${ Math.round((Date.now() - startedAt) / 1000) }s: ${ looked } searched, ${ grabbed } grabbed`,
+            looked > 0 ? LogLevel.INFO : LogLevel.DEBUG
+        );
 
     } catch(err) {
-        console.error("[scheduler] run failed", err);
+        console.error(err);
+
+        await log("the scan round failed", LogLevel.ERROR, errorText(err));
 
     } finally {
         globalForScheduler.schedulerRunning = false;
@@ -549,31 +592,34 @@ export const startScheduler = async () => {
     // before the first line is logged
     await loadSettings(true);
 
-    log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
+    await log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
 
     // a list can be empty, and a check that cannot reject anything must not look like
     // it is guarding something
     // a fresh install has none of these, and a scanner that searches nothing every
     // fifteen minutes looks like it is working
     if (! isTmdbConfigured()) {
-        log("TMDB is not configured: nothing can be listed or searched until the api key is in (Settings / TMDB)");
+        await log("TMDB is not configured: nothing can be listed or searched until the api key is in (Settings / TMDB)", LogLevel.WARN);
     }
 
     if (! isIndexerConfigured()) {
-        log("no indexer is configured: every search comes back empty (Settings / Indexers)");
+        await log("no indexer is configured: every search comes back empty (Settings / Indexers)", LogLevel.WARN);
     }
 
     if (! isClientConfigured()) {
-        log("the torrent client is not configured: nothing can be downloaded (Settings / Torrent client)");
+        await log("the torrent client is not configured: nothing can be downloaded (Settings / Torrent client)", LogLevel.WARN);
     }
 
     if (! isPayloadCheckConfigured()) {
-        log("payload check is OFF: fill in the extension lists under Settings / Content check");
+        await log("payload check is OFF: fill in the extension lists under Settings / Content check", LogLevel.WARN);
     }
 
-    log(isNotifyConfigured()
-        ? "telegram notifications are on"
-        : "telegram notifications are OFF: fill in the token, the chat id and the events under Settings / Notifications");
+    if (isNotifyConfigured()) {
+        await log("telegram notifications are on");
+
+    } else {
+        await log("telegram notifications are OFF: fill in the token, the chat id and the events under Settings / Notifications", LogLevel.WARN);
+    }
 
     /**
      * Reschedules itself instead of using setInterval, because the interval is a
@@ -587,7 +633,9 @@ export const startScheduler = async () => {
 
             } catch(err) {
                 // never let one bad round end the loop
-                console.error("[scheduler] tick failed", err);
+                console.error(err);
+
+                await log("a scheduled tick failed, the loop carries on", LogLevel.ERROR, errorText(err));
             }
 
             setTimeout(tick, everyMs());

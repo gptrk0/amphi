@@ -139,7 +139,11 @@ export const SETTINGS: SettingDef[] = [
 
     // Download dialog
     { key: "DOWNLOAD_OPTION_COUNT", group: "Download dialog", label: "Releases to offer", type: "number", default: "5" },
-    { key: "DOWNLOAD_PLAN_TTL_MINUTES", group: "Download dialog", label: "Search result kept for (minutes)", type: "number", default: "15", help: "How long the search behind an open dialog is kept, so answering it does not search again." }
+    { key: "DOWNLOAD_PLAN_TTL_MINUTES", group: "Download dialog", label: "Search result kept for (minutes)", type: "number", default: "15", help: "How long the search behind an open dialog is kept, so answering it does not search again." },
+
+    // Log
+    { key: "LOG_RETENTION_DAYS", group: "Log", label: "Keep entries for (days)", type: "number", default: "14", help: "0 = keep everything. Checked once an hour, on the way out of a write." },
+    { key: "LOG_DEBUG", group: "Log", label: "Keep debug entries", type: "boolean", default: "0", help: "Every indexer search and every preview, which is a lot of lines — worth turning on while something is being chased down." }
 ];
 
 export const SETTING_GROUPS = [ ...new Set(SETTINGS.map(def => def.group)) ];

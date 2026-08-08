@@ -66,6 +66,10 @@ const menus: {
             {
                 title: "Settings",
                 url: "/settings"
+            },
+            {
+                title: "Log",
+                url: "/log"
             }
         ]
     }

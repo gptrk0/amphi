@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { logInfo, logWarn } from "@/lib/log";
 import { deleteItem, getWatchlistItem, getWatchlistItemWithMedia, stopWatching, toMediaType } from "@/lib/watchlist";
 
 type Params = { params: Promise<{ id: string }> };
@@ -55,6 +56,25 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         const result = withTorrent
             ? await deleteItem(watchlistId, withFiles)
             : await stopWatching(watchlistId);
+
+        const name = result?.media?.name || `TMDB #${ item.tmdbId }`;
+
+        // deleting takes the torrents with it, and with `files=1` the files too — the one
+        // action in the app that cannot be undone
+        if (withTorrent) {
+            await logWarn(
+                "watchlist",
+                `deleted: ${ name }`,
+                withFiles ? "the torrents and their files were removed from the client" : "the torrents were removed, the files were kept"
+            );
+
+        } else {
+            await logInfo(
+                "watchlist",
+                `stopped watching: ${ name }`,
+                result ? "what is already downloaded stays listed" : "nothing was downloaded from it, so the item is gone"
+            );
+        }
 
         // no title is stored, the caller renders the message from what it already knows
         return Response.json({

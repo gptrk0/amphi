@@ -1,3 +1,4 @@
+import { logInfo, logWarn } from "@/lib/log";
 import {
     deleteSetting,
     isSecret,
@@ -41,6 +42,28 @@ const toItem = (key: string) => {
 };
 
 const state = () => ({ groups: SETTING_GROUPS, settings: SETTINGS.map(def => toItem(def.key)) });
+
+// a long list would push everything else out of the line
+const clip = (value: string) => value.length > 120 ? `${ value.slice(0, 119) }…` : value;
+
+/**
+ * A changed setting is worth a log line: half of what looks like a broken app is
+ * something that was edited here. A secret is named, never quoted — the log page is as
+ * public as this one is, which is to say anyone who can reach it.
+ */
+const change = (key: string, before: string, after: string) => {
+    if (isSecret(key)) {
+        return before === "" ? "set for the first time" : "replaced";
+    }
+
+    return `"${ clip(before) }" → "${ clip(after) }"`;
+};
+
+const name = (key: string) => {
+    const def = settingDef(key);
+
+    return def ? `${ def.group } / ${ def.label } (${ key })` : key;
+};
 
 export async function GET() {
     try {
@@ -94,7 +117,14 @@ export async function PUT(req: Request) {
             wanted[key] = text;
         }
 
+        // read before the save, or the "from" half of every line would be the new value
+        const before = Object.fromEntries(Object.keys(wanted).map(key => [ key, settingText(key) ]));
+
         const changed = await saveSettings(wanted);
+
+        for (const key of changed) {
+            await logInfo("settings", `setting changed: ${ name(key) }`, change(key, before[key], wanted[key]));
+        }
 
         return Response.json({ success: true, changed: changed.length, ...state() });
 
@@ -116,6 +146,16 @@ export async function DELETE(req: Request) {
         if (! key || ! (await deleteSetting(key))) {
             return Response.json({ success: false, message: "Unknown setting." }, { status: 400 });
         }
+
+        const def = settingDef(key);
+
+        // a warning, not a note: a misclick here once cost the indexer api key, and this
+        // line is what would have said where the searches went
+        await logWarn(
+            "settings",
+            `setting cleared: ${ name(key) }`,
+            def?.default !== undefined ? `back to the default "${ clip(def.default) }"` : "it has no default, so it is unset now"
+        );
 
         return Response.json({ success: true, ...state() });
 

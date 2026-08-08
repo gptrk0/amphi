@@ -1,7 +1,29 @@
 import axios from "axios";
 import { XMLParser } from "fast-xml-parser";
 
+import { errorText, logDebug, LogLevel, logThrottled } from "@/lib/log";
 import { loadSettings, settingList, settingNumber, settingText } from "@/lib/settings";
+
+// an indexer that is down fails every search of a round, and a round is dozens of
+// searches — so identical failures are folded into one line a minute
+const FAILURE_WINDOW_MS = 60 * 1000;
+
+const logFailure = (indexerId: string, what: string, description: string) => {
+    return logThrottled(
+        `indexer:${ indexerId }:${ what }:${ description }`,
+        FAILURE_WINDOW_MS,
+        LogLevel.WARN,
+        "indexer",
+        `${ indexerId }: the ${ what } failed`,
+        description
+    );
+};
+
+// capabilities can be wrong, or an indexer can reject a param it advertises — the search
+// is retried by title, so this is only interesting when something is being chased down
+const logImdbFallback = (indexerId: string, description: string) => {
+    return logDebug("indexer", `${ indexerId } rejected the imdb id, searching by title instead`, description);
+};
 
 export type IndexerCaps = {
     search: string[];
@@ -107,7 +129,7 @@ const request = async (indexerId: string, params: Record<string, string | number
         return { data };
 
     } catch(err) {
-        console.error(err);
+        await logFailure(indexerId, "request", errorText(err));
 
         return { error: { code: 0, description: "Indexer request failed" } };
     }
@@ -134,7 +156,7 @@ export const getCaps = async (indexerId: string): Promise<IndexerCaps> => {
     const res = await request(indexerId, { t: "caps" });
 
     if (res.error) {
-        console.error(`[indexer] caps failed for ${ indexerId }: ${ res.error.description }`);
+        await logFailure(indexerId, "capability lookup", res.error.description);
 
         return EMPTY_CAPS;
     }
@@ -243,13 +265,13 @@ const findMovieReleasesOn = async (indexerId: string, query: MovieQuery): Promis
 
     // capabilities can be wrong or the indexer can reject the param anyway
     if (res.error && useImdbId) {
-        console.error(`[indexer] ${ indexerId } rejected imdbid (${ res.error.description }), falling back to title search`);
+        await logImdbFallback(indexerId, res.error.description);
 
         res = await request(indexerId, { t: mode, q: text });
     }
 
     if (res.error) {
-        console.error(`[indexer] ${ indexerId } movie search failed: ${ res.error.description }`);
+        await logFailure(indexerId, "movie search", res.error.description);
 
         return [];
     }
@@ -279,13 +301,13 @@ const findEpisodeReleasesOn = async (indexerId: string, query: EpisodeQuery): Pr
         : await request(indexerId, { ...params, q: query.title });
 
     if (res.error && useImdbId) {
-        console.error(`[indexer] ${ indexerId } rejected imdbid (${ res.error.description }), falling back to title search`);
+        await logImdbFallback(indexerId, res.error.description);
 
         res = await request(indexerId, { ...params, q: query.title });
     }
 
     if (res.error) {
-        console.error(`[indexer] ${ indexerId } tv search failed: ${ res.error.description }`);
+        await logFailure(indexerId, "episode search", res.error.description);
 
         return [];
     }
@@ -316,7 +338,7 @@ const findSeasonReleasesOn = async (indexerId: string, query: SeasonQuery): Prom
     }
 
     if (res.error) {
-        console.error(`[indexer] ${ indexerId } season search failed: ${ res.error.description }`);
+        await logFailure(indexerId, "season search", res.error.description);
 
         return [];
     }

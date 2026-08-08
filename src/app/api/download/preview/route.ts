@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { buildPreview, toSeasonRequests } from "@/lib/download-plan";
 import { isIndexerConfigured } from "@/lib/indexer";
+import { errorText, logDebug, logError, logWarn } from "@/lib/log";
 import { loadSettings, NotConfiguredError } from "@/lib/settings";
 
 /**
@@ -31,11 +32,20 @@ export async function POST(req: NextRequest) {
 
         // "no releases found" would be a lie when nothing was searched
         if (! isIndexerConfigured()) {
-            return Response.json({
-                success: false,
-                message: new NotConfiguredError("An indexer", "Indexers").message
-            }, { status: 400 });
+            const { message } = new NotConfiguredError("An indexer", "Indexers");
+
+            await logWarn("download", "the release dialog could not search", message);
+
+            return Response.json({ success: false, message }, { status: 400 });
         }
+
+        // opening a dialog is a handful of indexer searches, which is worth knowing about
+        // while something is being chased down — and noise the rest of the time
+        await logDebug(
+            "download",
+            `searching for ${ type } ${ id }`,
+            seasons.length > 0 ? `seasons ${ seasons.map(season => season.seasonNumber).join(", ") }` : undefined
+        );
 
         const preview = await buildPreview(type, id, seasons);
 
@@ -47,6 +57,8 @@ export async function POST(req: NextRequest) {
 
     } catch(err) {
         console.error(err);
+
+        await logError("download", "the release search failed", errorText(err));
 
         return Response.json({ success: false, message: "Could not search the indexers!" }, { status: 500 });
     }

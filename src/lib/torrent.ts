@@ -1,8 +1,25 @@
 import axios, { AxiosRequestConfig } from "axios";
 
 import { IndexerResult } from "@/lib/indexer";
+import { errorText, LogLevel, logThrottled } from "@/lib/log";
 import { TorrentFile } from "@/lib/payload";
 import { loadSettings, NotConfiguredError, settingText } from "@/lib/settings";
+
+// the client is read back every minute, and the watchlist page asks for it every few
+// seconds — one line a minute per kind of failure is plenty
+const FAILURE_WINDOW_MS = 60 * 1000;
+
+const logFailure = (what: string, err: unknown) => {
+    // a client nobody has configured is not a failure worth repeating: the scheduler says
+    // it once at startup, and an api route asked to download answers with the reason
+    if (err instanceof NotConfiguredError) {
+        return;
+    }
+
+    const text = errorText(err);
+
+    return logThrottled(`torrent:${ what }:${ text }`, FAILURE_WINDOW_MS, LogLevel.WARN, "torrent", `qBittorrent: ${ what } failed`, text);
+};
 
 export type TorrentStatus = {
     hash: string;
@@ -162,7 +179,7 @@ const ensureCategory = async () => {
         checkedCategory = wanted;
 
     } catch(err) {
-        console.error(err);
+        await logFailure(`making sure the "${ wanted }" category exists`, err);
     }
 };
 
@@ -173,7 +190,7 @@ export const listManagedTorrents = async (): Promise<TorrentStatus[]> => {
         return Array.isArray(list) ? list.map(toStatus) : [];
 
     } catch(err) {
-        console.error(err);
+        await logFailure("listing the managed torrents", err);
 
         return [];
     }
@@ -186,7 +203,7 @@ export const getTorrentStatus = async (hash: string): Promise<TorrentStatus | nu
         return Array.isArray(list) && list.length > 0 ? toStatus(list[0]) : null;
 
     } catch(err) {
-        console.error(err);
+        await logFailure("looking a torrent up by hash", err);
 
         return null;
     }
@@ -206,7 +223,7 @@ export const getTorrentFiles = async (hash: string): Promise<TorrentFile[]> => {
         }));
 
     } catch(err) {
-        console.error(err);
+        await logFailure("reading the file list of a torrent", err);
 
         return [];
     }
@@ -251,6 +268,15 @@ export const removeTorrent = async (hash: string, deleteFiles = false) => {
         return await request("/api/v2/torrents/delete", form({ hashes: hash, deleteFiles }));
 
     } catch(err) {
-        console.error(err);
+        // the caller has already written off the torrent, so a failure here leaves it in
+        // the client with nothing pointing at it — the one case worth an unthrottled line
+        await logThrottled(
+            `torrent:delete:${ hash }`,
+            FAILURE_WINDOW_MS,
+            LogLevel.WARN,
+            "torrent",
+            `qBittorrent: torrent ${ hash.slice(0, 8) } could not be removed, it is still in the client`,
+            errorText(err)
+        );
     }
 };

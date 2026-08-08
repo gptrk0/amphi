@@ -1,5 +1,6 @@
 import axios from "axios";
 
+import { errorText, logDebug, logWarn } from "@/lib/log";
 import { loadSettings, settingList, settingText } from "@/lib/settings";
 
 /**
@@ -80,11 +81,13 @@ export const notify = async (event: NotifyEvent, title: string, detail?: string)
             { timeout: TIMEOUT_MS }
         );
 
+        await logDebug("notify", `telegram: ${ PREFIX[event] } — ${ title }`, detail);
+
         return true;
 
     } catch(err) {
         // the message is lost, the download is not — log and carry on
-        console.error("[notify] telegram send failed", axios.isAxiosError(err) ? err.response?.data || err.message : err);
+        await logWarn("notify", `the telegram message about ${ title } was not sent`, errorText(err));
 
         return false;
     }
