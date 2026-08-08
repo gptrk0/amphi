@@ -12,5 +12,5 @@ export async function register() {
 
     const { startScheduler } = await import("@/lib/scheduler");
 
-    startScheduler();
+    await startScheduler();
 }

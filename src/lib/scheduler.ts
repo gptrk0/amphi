@@ -4,8 +4,9 @@ import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, pla
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { normalizeTitle } from "@/lib/release";
 import { BlockReason, blockRelease } from "@/lib/blocklist";
-import { forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
-import { inspectPayload, isPayloadCheckConfigured, PAYLOAD_DELETE_FILES } from "@/lib/payload";
+import { forgetStall, stallDeleteFiles, stallMinutes, trackStall } from "@/lib/stall";
+import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/lib/payload";
+import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 import { getTorrentFiles, getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { isNotifyConfigured, notify } from "@/lib/notify";
 import {
@@ -18,19 +19,19 @@ import {
     toMediaType
 } from "@/lib/watchlist";
 
-const SCAN_INTERVAL_MS = Number(process.env.WATCHLIST_SCAN_INTERVAL_MINUTES || 15) * 60 * 1000;
+const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES", 15) * 60 * 1000;
 
 // Reading the client's state back is one local request, while a scan round is
 // dozens of indexer calls — so noticing that something finished does not have to
 // wait for the next round.
-const SYNC_INTERVAL_MS = Number(process.env.DOWNLOAD_SYNC_INTERVAL_MINUTES || 1) * 60 * 1000;
-const BACKOFF_MS = Number(process.env.SEARCH_BACKOFF_MINUTES || 30) * 60 * 1000;
-const MAX_BACKOFF_MS = Number(process.env.SEARCH_MAX_BACKOFF_HOURS || 24) * 60 * 60 * 1000;
+const syncIntervalMs = () => settingNumber("DOWNLOAD_SYNC_INTERVAL_MINUTES", 1) * 60 * 1000;
+const backoffBaseMs = () => settingNumber("SEARCH_BACKOFF_MINUTES", 30) * 60 * 1000;
+const maxBackoffMs = () => settingNumber("SEARCH_MAX_BACKOFF_HOURS", 24) * 60 * 60 * 1000;
 const START_DELAY_MS = 15 * 1000;
 
 // with SCAN_DRY_RUN=1 no torrent is added and no search state is written. syncDownloads
 // is not affected: it only mirrors back what the client already reports.
-const isDryRun = () => process.env.SCAN_DRY_RUN === "1";
+const isDryRun = () => settingFlag("SCAN_DRY_RUN", false);
 
 const log = (message: string) => console.log(`[scheduler]${ isDryRun() ? " [dry-run]" : "" } ${ message }`);
 
@@ -48,7 +49,7 @@ const globalForScheduler = global as unknown as {
  * given up on: a release that is not out yet may show up in a month, so a hard
  * attempt limit would quietly stop watching exactly the titles that need watching.
  */
-const backoffMs = (attempts: number) => Math.min(BACKOFF_MS * 2 ** attempts, MAX_BACKOFF_MS);
+const backoffMs = (attempts: number) => Math.min(backoffBaseMs() * 2 ** attempts, maxBackoffMs());
 
 const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
 
@@ -61,7 +62,7 @@ const dueFilter = () => {
     return {
         OR: [
             { lastCheckedAt: null },
-            { lastCheckedAt: { lt: new Date(Date.now() - BACKOFF_MS) } }
+            { lastCheckedAt: { lt: new Date(Date.now() - backoffBaseMs()) } }
         ]
     };
 };
@@ -209,7 +210,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
             await notify("dropped", await readableLabel(running), `${ payload.reason } — ${ torrent.name }`);
 
-            await removeTorrent(hash, PAYLOAD_DELETE_FILES);
+            await removeTorrent(hash, payloadDeleteFiles());
             forgetStall(hash);
 
             await prisma.watchlistUnit.updateMany({
@@ -269,7 +270,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
             await notify("dropped", await readableLabel(running), `${ stalled } — ${ torrent.name }`);
 
-            await removeTorrent(hash, STALL_DELETE_FILES);
+            await removeTorrent(hash, stallDeleteFiles());
             forgetStall(hash);
 
             await prisma.watchlistUnit.updateMany({
@@ -511,6 +512,10 @@ export const runScan = async (options: ScanOptions = {}) => {
     }
 
     try {
+        // the settings are read synchronously from here on, so the round starts by
+        // pulling in whatever the admin page changed since the last one
+        await loadSettings();
+
         await syncDownloadsOnce();
         await refreshMetadata();
         await scanMovies(options);
@@ -526,17 +531,21 @@ export const runScan = async (options: ScanOptions = {}) => {
     return true;
 };
 
-export const startScheduler = () => {
+export const startScheduler = async () => {
     if (globalForScheduler.schedulerStarted) {
         return;
     }
 
     globalForScheduler.schedulerStarted = true;
 
-    log(`started, scanning every ${ SCAN_INTERVAL_MS / 60000 } minutes, reading the client back every ${ SYNC_INTERVAL_MS / 60000 }`);
+    // every setting below is read synchronously, so the table has to be in memory
+    // before the first line is logged
+    await loadSettings(true);
 
-    // the lists come from the env only, so an empty one is a real possibility — and a
-    // check that cannot reject anything must not look like it is guarding something
+    log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
+
+    // a list can be empty, and a check that cannot reject anything must not look like
+    // it is guarding something
     if (! isPayloadCheckConfigured()) {
         log("payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on");
     }
@@ -545,7 +554,27 @@ export const startScheduler = () => {
         ? "telegram notifications are on"
         : "telegram notifications are OFF: set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and TELEGRAM_EVENTS");
 
-    setTimeout(() => void runScan(), START_DELAY_MS);
-    setInterval(() => void runScan(), SCAN_INTERVAL_MS);
-    setInterval(() => void syncDownloadsOnce(), SYNC_INTERVAL_MS);
+    /**
+     * Reschedules itself instead of using setInterval, because the interval is a
+     * setting: `setInterval` would freeze whatever it was at boot, and changing it on
+     * the admin page would need a restart to matter.
+     */
+    const loop = (run: () => Promise<unknown>, everyMs: () => number, firstDelay: number) => {
+        const tick = async () => {
+            try {
+                await run();
+
+            } catch(err) {
+                // never let one bad round end the loop
+                console.error("[scheduler] tick failed", err);
+            }
+
+            setTimeout(tick, everyMs());
+        };
+
+        setTimeout(tick, firstDelay);
+    };
+
+    loop(() => runScan(), scanIntervalMs, START_DELAY_MS);
+    loop(() => syncDownloadsOnce(), syncIntervalMs, syncIntervalMs());
 };

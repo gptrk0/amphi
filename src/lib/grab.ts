@@ -10,6 +10,7 @@ import {
     selectRelease,
     selectSeasonRelease
 } from "@/lib/release";
+import { settingNumber, settingText } from "@/lib/settings";
 import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
 import {
     addToWatchlist,
@@ -53,16 +54,16 @@ export type MoviePlan = ReleaseOptions & {
 };
 
 // how many releases a download dialog offers to choose from
-const OPTION_COUNT = Number(process.env.DOWNLOAD_OPTION_COUNT || 5);
+const optionCount = () => settingNumber("DOWNLOAD_OPTION_COUNT", 5);
 
 // Films and shows want different folders — every media server expects them apart.
 // Empty leaves the destination to the qBittorrent category, as before.
-const MOVIE_PATH = process.env.TORRENT_MOVIE_PATH || "";
-const TV_PATH = process.env.TORRENT_SERIES_PATH || "";
+const moviePath = () => settingText("TORRENT_MOVIE_PATH");
+const tvPath = () => settingText("TORRENT_SERIES_PATH");
 
 const toOptions = (selection: ReleaseSelection): ReleaseOptions => {
     return {
-        candidates: selection.candidates.slice(0, OPTION_COUNT).map(scored => scored.release),
+        candidates: selection.candidates.slice(0, optionCount()).map(scored => scored.release),
         filtered: selection.rejected.length
     };
 };
@@ -110,7 +111,7 @@ export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> =
     };
 };
 
-const EPISODE_SEARCH_CONCURRENCY = Number(process.env.EPISODE_SEARCH_CONCURRENCY || 3);
+const episodeConcurrency = () => settingNumber("EPISODE_SEARCH_CONCURRENCY", 3);
 
 const mapLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
     const results: R[] = new Array(items.length);
@@ -163,7 +164,7 @@ export const planSeasonGrab = async (
     const titles = [ metadata.original_name, metadata.media.name ];
     const now = Date.now();
 
-    const episodes: EpisodePlan[] = await mapLimited(season.episodes, EPISODE_SEARCH_CONCURRENCY, async (episode) => {
+    const episodes: EpisodePlan[] = await mapLimited(season.episodes, episodeConcurrency(), async (episode) => {
         const episodeNumber = episode.episode_number;
         const aired = !! episode.air_date && new Date(episode.air_date).getTime() <= now;
 
@@ -226,7 +227,7 @@ export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): 
     }
 
     const unit = await ensureMovieUnit(item.id);
-    const hash = await addRelease(release, movieTag(item.id), MOVIE_PATH);
+    const hash = await addRelease(release, movieTag(item.id), moviePath());
 
     await markUnitsDownloading([ unit.id ], hash);
 
@@ -417,7 +418,7 @@ export const executeSeasonGrab = async (
             ? seasonTag(item.id, plan.seasonNumber)
             : episodeTag(ids[0]);
 
-        const hash = await addRelease(grab.release, tag, TV_PATH);
+        const hash = await addRelease(grab.release, tag, tvPath());
 
         await markUnitsDownloading([ ...new Set([ ...ids, ...pack.ids ]) ], hash);
 

@@ -1,4 +1,5 @@
 import { runScan } from "@/lib/scheduler";
+import { loadSettings, settingFlag } from "@/lib/settings";
 
 export async function POST(req: Request) {
     try {
@@ -10,9 +11,11 @@ export async function POST(req: Request) {
 
         const started = await runScan({ force });
 
+        await loadSettings();
+
         return Response.json({
             success: true,
-            dryRun: process.env.SCAN_DRY_RUN === "1",
+            dryRun: settingFlag("SCAN_DRY_RUN", false),
             message: started ? "Scan finished." : "A scan is already running."
         });
 

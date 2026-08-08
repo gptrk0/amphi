@@ -1,12 +1,14 @@
+import { settingFlag, settingNumber } from "@/lib/settings";
 import { TorrentStatus } from "@/lib/torrent";
 
-// how long a download may sit still before it is given up on
-const STALL_MS = Number(process.env.STALL_MINUTES || 60) * 60 * 1000;
+// how long a download may sit still before it is given up on. Read per call, so the
+// admin page does not need a restart to change it.
+export const stallMinutes = () => settingNumber("STALL_MINUTES", 60);
+
+const stallMs = () => stallMinutes() * 60 * 1000;
 
 // a half finished file is not worth keeping, but the deletion is a real one
-export const STALL_DELETE_FILES = process.env.STALL_DELETE_FILES !== "0";
-
-export const stallMinutes = () => Math.round(STALL_MS / 60000);
+export const stallDeleteFiles = () => settingFlag("STALL_DELETE_FILES", true);
 
 type StallEntry = { progress: number, since: number };
 
@@ -60,7 +62,7 @@ export const trackStall = (torrent: TorrentStatus, now = Date.now()): boolean =>
         return false;
     }
 
-    return now - known.since >= STALL_MS;
+    return now - known.since >= stallMs();
 };
 
 export const forgetStall = (hash: string) => {

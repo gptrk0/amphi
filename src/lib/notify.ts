@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { settingList, settingText } from "@/lib/settings";
+
 /**
  * Telegram notifications. The point of the app is that it works while nobody is
  * watching it, which until now meant the only way to learn that something is ready
@@ -13,24 +15,21 @@ export type NotifyEvent = "ready" | "started" | "dropped";
 
 // overridable for a self hosted Bot API server, and it is what makes this testable
 // without talking to Telegram
-const api = () => (process.env.TELEGRAM_API_URL || "https://api.telegram.org").replace(/\/+$/, "");
+const api = () => settingText("TELEGRAM_API_URL", "https://api.telegram.org").replace(/\/+$/, "");
 
 // a hanging request must not hold up the sync round it was called from
 const TIMEOUT_MS = 10 * 1000;
 
 const ACCEPT_ALL = "*";
 
-const token = () => (process.env.TELEGRAM_BOT_TOKEN || "").trim();
-const chatId = () => (process.env.TELEGRAM_CHAT_ID || "").trim();
+const token = () => settingText("TELEGRAM_BOT_TOKEN");
+const chatId = () => settingText("TELEGRAM_CHAT_ID");
 
 /**
- * Which events are wanted, from the env and nowhere else — same rule as the payload
- * lists: unset sends nothing, `*` sends everything.
+ * Which events are wanted. No fallback, same rule as the payload lists: unset sends
+ * nothing, `*` sends everything.
  */
-const events = () => (process.env.TELEGRAM_EVENTS || "")
-    .split(",")
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
+const events = () => settingList("TELEGRAM_EVENTS").map(v => v.toLowerCase());
 
 export const isNotifyConfigured = () => !! token() && !! chatId() && events().length > 0;
 

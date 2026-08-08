@@ -10,14 +10,17 @@ import {
 } from "@/types/media";
 import axios from "axios";
 
+import { settingNumber, settingText } from "@/lib/settings";
+
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
-const TMDB_LANGUAGE = process.env.TMDB_LANGUAGE || "en-US";
+const apiKey = () => settingText("TMDB_API_KEY");
+const language = () => settingText("TMDB_LANGUAGE", "en-US");
 
 // certifications and streaming services are per country, and the language already
 // carries one — "en-US" means the US ratings board and US providers
-const TMDB_REGION = (process.env.TMDB_REGION || TMDB_LANGUAGE.split("-")[1] || "US").toUpperCase();
+const region = () => (settingText("TMDB_REGION") || language().split("-")[1] || "US").toUpperCase();
 
-const CACHE_TTL_MS = Number(process.env.TMDB_CACHE_TTL_MINUTES || 720) * 60 * 1000;
+const cacheTtlMs = () => settingNumber("TMDB_CACHE_TTL_MINUTES", 720) * 60 * 1000;
 
 type CacheEntry = { value: unknown, expiresAt: number };
 
@@ -28,13 +31,13 @@ const tmdbCache = globalForTmdb.tmdbCache || new Map<string, CacheEntry>();
 globalForTmdb.tmdbCache = tmdbCache;
 
 // discover rows move faster than metadata, so they get their own, shorter ttl
-const DISCOVER_CACHE_TTL_MS = Number(process.env.DISCOVER_CACHE_TTL_MINUTES || 60) * 60 * 1000;
+const discoverTtlMs = () => settingNumber("DISCOVER_CACHE_TTL_MINUTES", 60) * 60 * 1000;
 
 const cached = async <T>(
     key: string,
     loader: () => Promise<T>,
     isEmpty: (value: T) => boolean,
-    ttl: number = CACHE_TTL_MS
+    ttl: number = cacheTtlMs()
 ): Promise<T> => {
     const hit = tmdbCache.get(key);
 
@@ -83,8 +86,8 @@ export async function fetchMediaMetadata(type: string, id: number): Promise<Medi
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/${ type }/${ id }`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE
+                api_key: apiKey(),
+                language: language()
             }
         });
 
@@ -121,8 +124,8 @@ export async function searchMedia(query: string, page: number): Promise<MediaPag
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/search/multi`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE,
+                api_key: apiKey(),
+                language: language(),
                 include_adult: false,
                 query,
                 page
@@ -181,8 +184,8 @@ export async function fetchDiscoverPage({ type, category, page, genre }: Discove
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }${ path }`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE,
+                api_key: apiKey(),
+                language: language(),
                 page,
                 ...(byGenre ? { with_genres: genre, sort_by: "popularity.desc", include_adult: false } : {})
             }
@@ -213,7 +216,7 @@ export async function getDiscoverPage(options: DiscoverOptions): Promise<MediaPa
         `discover:${ options.type }:${ options.category }:${ options.genre || "" }:${ options.page }`,
         () => fetchDiscoverPage(options),
         (value) => value.results.length === 0,
-        DISCOVER_CACHE_TTL_MS
+        discoverTtlMs()
     );
 }
 
@@ -225,8 +228,8 @@ export async function fetchGenres(type: string): Promise<MediaGenre[]> {
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/genre/${ type }/list`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE
+                api_key: apiKey(),
+                language: language()
             }
         });
 
@@ -246,7 +249,7 @@ export async function getGenres(type: string): Promise<MediaGenre[]> {
 export async function fetchImdbId(type: string, id: number): Promise<string | null> {
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/${ type }/${ id }/external_ids`, {
-            params: { api_key: process.env.TMDB_API_KEY }
+            params: { api_key: apiKey() }
         });
 
         return res.data?.imdb_id || null;
@@ -344,12 +347,12 @@ const toTrailer = (videos: any) => {
  */
 const toCertification = (data: any, type: Media["type"]): string | null => {
     if (type === "tv") {
-        const found = (data.content_ratings?.results || []).find((v: any) => v.iso_3166_1 === TMDB_REGION);
+        const found = (data.content_ratings?.results || []).find((v: any) => v.iso_3166_1 === region());
 
         return found?.rating || null;
     }
 
-    const found = (data.release_dates?.results || []).find((v: any) => v.iso_3166_1 === TMDB_REGION);
+    const found = (data.release_dates?.results || []).find((v: any) => v.iso_3166_1 === region());
     const rated = (found?.release_dates || []).find((v: any) => v.certification);
 
     return rated?.certification || null;
@@ -372,8 +375,8 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/${ type }/${ id }`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE,
+                api_key: apiKey(),
+                language: language(),
                 append_to_response: [
                     isTv ? "aggregate_credits" : "credits",
                     "videos",
@@ -384,7 +387,7 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
                 ].join(","),
                 // a localised page still wants the english trailer when there is no
                 // local one, and untagged videos are usually the original
-                include_video_language: `${ TMDB_LANGUAGE.split("-")[0] },en,null`
+                include_video_language: `${ language().split("-")[0] },en,null`
             }
         });
 
@@ -451,8 +454,8 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/tv/${ id }`, {
             params: {
-                api_key: process.env.TMDB_API_KEY,
-                language: TMDB_LANGUAGE
+                api_key: apiKey(),
+                language: language()
             }
         });
 
@@ -464,8 +467,8 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
         const seasons = await Promise.all(seasonNumbers.map(async (seasonNumber) => {
             const seasonRes = await axios.get(`${ TMDB_BASE_URL }/tv/${ id }/season/${ seasonNumber }`, {
                 params: {
-                    api_key: process.env.TMDB_API_KEY,
-                    language: TMDB_LANGUAGE
+                    api_key: apiKey(),
+                    language: language()
                 }
             });
 

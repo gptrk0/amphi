@@ -2,6 +2,7 @@ import PTT from "parse-torrent-title";
 
 import { getIndexerIds, IndexerResult } from "@/lib/indexer";
 import { isReleaseBlocked } from "@/lib/blocklist";
+import { settingFlag, settingList, settingNumber, settingText } from "@/lib/settings";
 
 export type QualityProfile = {
     resolutions: string[];
@@ -97,28 +98,31 @@ const parseSizeTable = (value: string): Record<string, number> => {
     return table;
 };
 
+/**
+ * Read fresh every call, from the settings layer rather than the env directly — a value
+ * saved on the admin page has to take effect on the next search, not the next restart.
+ */
 export const getQualityProfile = (): QualityProfile => {
+    const priority = settingList("INDEXER_PRIORITY").map(v => v.toLowerCase());
+
     return {
-        resolutions: list(process.env.QUALITY_RESOLUTIONS || DEFAULT_RESOLUTIONS),
-        excludeKeywords: list(process.env.QUALITY_EXCLUDE || DEFAULT_EXCLUDES),
-        minSeeders: Number(process.env.QUALITY_MIN_SEEDERS || 1),
-        maxSizeGb: Number(process.env.QUALITY_MAX_SIZE_GB || 0),
-        maxPackSizeGb: Number(process.env.QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB || 5),
-        minSizeMovie: parseSizeTable(process.env.QUALITY_MIN_SIZE_MOVIE || DEFAULT_MIN_SIZE_MOVIE),
-        minSizeEpisode: parseSizeTable(process.env.QUALITY_MIN_SIZE_EPISODE || DEFAULT_MIN_SIZE_EPISODE),
-        preferredCodecs: list(process.env.QUALITY_PREFERRED_CODECS || DEFAULT_PREFERRED_CODECS),
-        codecBonus: Number(process.env.QUALITY_CODEC_BONUS || 500),
-        preferredLanguages: list(process.env.QUALITY_PREFERRED_LANGUAGES || DEFAULT_PREFERRED_LANGUAGES),
-        excludeLanguages: list(process.env.QUALITY_EXCLUDE_LANGUAGES || DEFAULT_EXCLUDE_LANGUAGES),
-        defaultLanguage: (process.env.QUALITY_DEFAULT_LANGUAGE || DEFAULT_LANGUAGE).trim().toLowerCase(),
-        languageBonus: Number(process.env.QUALITY_LANGUAGE_BONUS || 1000000),
-        // 1 = language outranks resolution (720p hun over 1080p eng)
-        languageFirst: process.env.QUALITY_LANGUAGE_FIRST === "1",
+        resolutions: list(settingText("QUALITY_RESOLUTIONS", DEFAULT_RESOLUTIONS)),
+        excludeKeywords: list(settingText("QUALITY_EXCLUDE", DEFAULT_EXCLUDES)),
+        minSeeders: settingNumber("QUALITY_MIN_SEEDERS", 1),
+        maxSizeGb: settingNumber("QUALITY_MAX_SIZE_GB", 0),
+        maxPackSizeGb: settingNumber("QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB", 5),
+        minSizeMovie: parseSizeTable(settingText("QUALITY_MIN_SIZE_MOVIE", DEFAULT_MIN_SIZE_MOVIE)),
+        minSizeEpisode: parseSizeTable(settingText("QUALITY_MIN_SIZE_EPISODE", DEFAULT_MIN_SIZE_EPISODE)),
+        preferredCodecs: list(settingText("QUALITY_PREFERRED_CODECS", DEFAULT_PREFERRED_CODECS)),
+        codecBonus: settingNumber("QUALITY_CODEC_BONUS", 500),
+        preferredLanguages: list(settingText("QUALITY_PREFERRED_LANGUAGES", DEFAULT_PREFERRED_LANGUAGES)),
+        excludeLanguages: list(settingText("QUALITY_EXCLUDE_LANGUAGES", DEFAULT_EXCLUDE_LANGUAGES)),
+        defaultLanguage: settingText("QUALITY_DEFAULT_LANGUAGE", DEFAULT_LANGUAGE).toLowerCase(),
+        languageBonus: settingNumber("QUALITY_LANGUAGE_BONUS", 1000000),
+        languageFirst: settingFlag("QUALITY_LANGUAGE_FIRST", false),
         // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
-        indexerPriority: (process.env.INDEXER_PRIORITY || "").split(",").map(v => v.trim()).filter(Boolean).length > 0
-            ? (process.env.INDEXER_PRIORITY as string).split(",").map(v => v.trim()).filter(Boolean)
-            : getIndexerIds(),
-        indexerBonus: Number(process.env.INDEXER_PRIORITY_BONUS || 100000)
+        indexerPriority: priority.length > 0 ? priority : getIndexerIds(),
+        indexerBonus: settingNumber("INDEXER_PRIORITY_BONUS", 100000)
     };
 };
 

@@ -1,5 +1,6 @@
 import { BlockReason } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
+import { settingNumber } from "@/lib/settings";
 
 /**
  * Releases that were grabbed once and had to be thrown away, so a later search does
@@ -17,7 +18,7 @@ import { prisma } from "@/lib/prisma";
 
 // 0 = a stall is never forgiven either. A BAD_PAYLOAD never expires regardless: the
 // content of a torrent does not improve with time.
-const TTL_DAYS = Number(process.env.BLOCKED_RELEASE_TTL_DAYS || 30);
+const ttlDays = () => settingNumber("BLOCKED_RELEASE_TTL_DAYS", 30);
 
 // long enough that a scan round does not re-query per release, short enough that a
 // block written by one request is seen by the next
@@ -35,11 +36,13 @@ globalForBlocklist.blocklist = cache;
  * those forget themselves. Something that was not the release at all never becomes it.
  */
 const expiryFor = (reason: BlockReason) => {
-    if (reason === BlockReason.BAD_PAYLOAD || TTL_DAYS <= 0) {
+    const days = ttlDays();
+
+    if (reason === BlockReason.BAD_PAYLOAD || days <= 0) {
         return null;
     }
 
-    return new Date(Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000);
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 };
 
 /**

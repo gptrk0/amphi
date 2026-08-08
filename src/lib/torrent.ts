@@ -2,6 +2,7 @@ import axios, { AxiosRequestConfig } from "axios";
 
 import { IndexerResult } from "@/lib/indexer";
 import { TorrentFile } from "@/lib/payload";
+import { settingText } from "@/lib/settings";
 
 export type TorrentStatus = {
     hash: string;
@@ -18,7 +19,7 @@ export type TorrentStatus = {
     seeds: number;
 };
 
-const CATEGORY = process.env.TORRENT_CATEGORY || "aioseerr";
+const category = () => settingText("TORRENT_CATEGORY", "aioseerr");
 
 export const MANUAL_TAG = "aioseerr-manual";
 
@@ -29,7 +30,7 @@ export const seasonTag = (watchlistId: number, seasonNumber: number) => `aioseer
 const COMPLETE_STATES = [ "uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP", "forcedUP", "checkingUP" ];
 const FAILED_STATES = [ "error", "missingFiles" ];
 
-const baseUrl = () => (process.env.TORRENT_URL || "").replace(/\/+$/, "");
+const baseUrl = () => settingText("TORRENT_URL").replace(/\/+$/, "");
 
 // qBittorrent 5.x answers 204 to /auth/login when the client is whitelisted, which
 // the @robertklep/qbittorrent client treats as an error — hence this minimal client.
@@ -66,8 +67,8 @@ const login = async () => {
     const res = await axios.post(
         `${ baseUrl() }/api/v2/auth/login`,
         new URLSearchParams({
-            username: process.env.TORRENT_USER || "",
-            password: process.env.TORRENT_PASS || ""
+            username: settingText("TORRENT_USER"),
+            password: settingText("TORRENT_PASS")
         }),
         {
             headers: {
@@ -130,21 +131,25 @@ export const getClientVersion = async (): Promise<string> => {
     return String(await request("/api/v2/app/version"));
 };
 
-let categoryChecked = false;
+// the name, not a yes/no: the category is a setting now, and a changed one has to be
+// created in the client too
+let checkedCategory: string | null = null;
 
 const ensureCategory = async () => {
-    if (categoryChecked) {
+    const wanted = category();
+
+    if (checkedCategory === wanted) {
         return;
     }
 
     try {
         const categories = await request("/api/v2/torrents/categories");
 
-        if (! categories || ! categories[CATEGORY]) {
-            await request("/api/v2/torrents/createCategory", form({ category: CATEGORY, savePath: "" }));
+        if (! categories || ! categories[wanted]) {
+            await request("/api/v2/torrents/createCategory", form({ category: wanted, savePath: "" }));
         }
 
-        categoryChecked = true;
+        checkedCategory = wanted;
 
     } catch(err) {
         console.error(err);
@@ -153,7 +158,7 @@ const ensureCategory = async () => {
 
 export const listManagedTorrents = async (): Promise<TorrentStatus[]> => {
     try {
-        const list = await request("/api/v2/torrents/info", { params: { category: CATEGORY } });
+        const list = await request("/api/v2/torrents/info", { params: { category: category() } });
 
         return Array.isArray(list) ? list.map(toStatus) : [];
 
@@ -213,7 +218,7 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
 
     await request("/api/v2/torrents/add", form({
         urls: release.link,
-        category: CATEGORY,
+        category: category(),
         tags: tag,
         ...(savePath ? { savepath: savePath } : {})
     }));

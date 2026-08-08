@@ -20,6 +20,18 @@ enum WatchStatus {
   FAILED
 }
 
+/// A setting edited from the admin page. One row per overridden key, and only for the
+/// ones that were actually changed: everything else falls through to the env, so the
+/// table stays a list of deliberate decisions rather than a copy of the whole config.
+///
+/// The value is text whatever the setting is — the registry in `settings.ts` knows how
+/// to read it, and it is the same string an env variable would have carried.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 enum BlockReason {
   STALLED
   BAD_PAYLOAD

@@ -10,6 +10,7 @@ import {
     StartedDownload
 } from "@/lib/grab";
 import { parseResolution } from "@/lib/release";
+import { settingNumber } from "@/lib/settings";
 import { toContentType, getWatchlistItemByTmdbId } from "@/lib/watchlist";
 import { DownloadPreview, GrabChoice, GrabOption, MissingSeason } from "@/types/download";
 
@@ -61,7 +62,7 @@ type StoredPlan = {
 
 // A search costs tens of seconds, so the plan behind a dialog is kept instead of
 // being made again when the choice comes back. It only has to outlive the dialog.
-const TTL_MS = Number(process.env.DOWNLOAD_PLAN_TTL_MINUTES || 15) * 60 * 1000;
+const ttlMs = () => settingNumber("DOWNLOAD_PLAN_TTL_MINUTES", 15) * 60 * 1000;
 const MAX_PLANS = 20;
 
 const globalForPlans = global as unknown as { downloadPlans: Map<string, StoredPlan> };
@@ -70,7 +71,7 @@ globalForPlans.downloadPlans = plans;
 
 const remember = (plan: StoredPlan) => {
     for (const [ id, stored ] of plans) {
-        if (stored.createdAt + TTL_MS < Date.now()) {
+        if (stored.createdAt + ttlMs() < Date.now()) {
             plans.delete(id);
         }
     }
@@ -89,7 +90,7 @@ export const getStoredPlan = (id: string) => {
         return null;
     }
 
-    return plan.createdAt + TTL_MS < Date.now() ? null : plan;
+    return plan.createdAt + ttlMs() < Date.now() ? null : plan;
 };
 
 const toOption = (release: IndexerResult): GrabOption => {

@@ -58,6 +58,16 @@ const menus: {
                 url: "/library"
             }
         ]
+    },
+    {
+        title: "ADMIN",
+        url: "#",
+        items: [
+            {
+                title: "Settings",
+                url: "/settings"
+            }
+        ]
     }
 ];
 

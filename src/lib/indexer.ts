@@ -1,6 +1,8 @@
 import axios from "axios";
 import { XMLParser } from "fast-xml-parser";
 
+import { settingList, settingNumber, settingText } from "@/lib/settings";
+
 export type IndexerCaps = {
     search: string[];
     movie: string[];
@@ -37,7 +39,7 @@ export type SeasonQuery = {
     season: number;
 };
 
-const CAPS_TTL_MS = Number(process.env.INDEXER_CAPS_TTL_MINUTES || 360) * 60 * 1000;
+const capsTtlMs = () => settingNumber("INDEXER_CAPS_TTL_MINUTES", 360) * 60 * 1000;
 
 const EMPTY_CAPS: IndexerCaps = { search: [], movie: [], tv: [] };
 
@@ -55,10 +57,9 @@ globalForIndexer.indexerCaps = capsCache;
  * capabilities, which makes imdbid support impossible to tell apart.
  */
 export const getIndexerIds = (): string[] => {
-    return (process.env.INDEXER_IDS || "all")
-        .split(",")
-        .map(v => v.trim())
-        .filter(Boolean);
+    const ids = settingList("INDEXER_IDS");
+
+    return ids.length > 0 ? ids : [ "all" ];
 };
 
 type TorznabResponse = {
@@ -68,9 +69,9 @@ type TorznabResponse = {
 
 const request = async (indexerId: string, params: Record<string, string | number>): Promise<TorznabResponse> => {
     try {
-        const res = await axios.get(`${ process.env.INDEXER_URL }/api/v2.0/indexers/${ indexerId }/results/torznab/api`, {
+        const res = await axios.get(`${ settingText("INDEXER_URL") }/api/v2.0/indexers/${ indexerId }/results/torznab/api`, {
             params: {
-                apikey: process.env.INDEXER_API_KEY,
+                apikey: settingText("INDEXER_API_KEY"),
                 ...params
             },
             validateStatus: () => true
@@ -134,7 +135,7 @@ export const getCaps = async (indexerId: string): Promise<IndexerCaps> => {
         tv: supportedParams(searching["tv-search"])
     };
 
-    capsCache.set(indexerId, { value: caps, expiresAt: Date.now() + CAPS_TTL_MS });
+    capsCache.set(indexerId, { value: caps, expiresAt: Date.now() + capsTtlMs() });
 
     return caps;
 };

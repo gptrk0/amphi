@@ -48,7 +48,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-08: három tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` — az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
+**2026-08-08: négy tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` és a `Setting`. Utóbbi kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — a többi az env-ből jön; ld. a lenti „Settings oldal" alfejezetet. A `BlockedRelease` pedig az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
 
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
 
@@ -337,7 +337,7 @@ Amit ebből átvettem:
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
 
 ### Fázis 8 — Későbbi, opcionális
-- [ ] Settings UI (indexer/torrent/TMDB/minőségi profil DB-ből szerkeszthetően, ne csak `.env`) — ide tartozik az indexer-prioritás és a minőségi profil felületről állítása is.
+- [x] **Settings UI** (2026-08-08) — `/settings`, 45 beállítás kilenc csoportban, DB-ből felülírva. Lásd a lenti „Settings oldal" alfejezetet.
 - [x] **Telegram-értesítések** (2026-08-08) — ld. a lenti „Telegram-értesítések" alfejezetet. Böngésző push és Discord webhook továbbra is nyitott; a [notify.ts](src/lib/notify.ts) egy csatornát ismer, egy másik hozzávétele új `notify` implementációt jelent, nem átépítést.
 - [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
@@ -590,6 +590,39 @@ A dátumszűrő ugyanezen az adaton: egy **erőltetett** scan most `0` epizódot
 
 **Megoldva 2026-08-08-án:** a feketelista **tábla lett** (`BlockedRelease`), tehát egy szerver-újraindítás után ugyanaz a hamis release már nem kap új esélyt. Ld. a lenti „A feketelista tábla lett" alfejezetet. A **már `DOWNLOADED`** unitok tartalmát a sync szándékosan nem nézi újra (különben minden könyvtárbeli torrent fájllistája lekérésre kerülne minden körben, és egy rossznak ítélt film unitja a „letöltéskor levett” `monitored` miatt némán kiesne a keresésből).
 
+#### Settings oldal (2026-08-08-i kérés) ✅
+
+Kérés: „env-ből átvinni néhány dolgot UI-ról szerkeszthetőnek, egy settings oldal alá, ahol admin beállítások lesznek; mindent vigyél be UI-ra, amit lehet és érdemes."
+
+**Felmérés.** A kód **52 env-változót** olvasott, ebből **19 modul-szintű konstans** — azok import-időben olvasnak, tehát egy UI-ból mentett érték csak újraindítás után hatott volna. Mindegyik függvénnyé lett (`STALL_MS` → `stallMs()`, `CATEGORY` → `category()`, `TMDB_LANGUAGE` → `language()`, …). **45 beállítás** került a felületre kilenc csoportban: TMDB, Indexers, Torrent client, Quality, Language, Scanner, Content check, Notifications, Download dialog.
+
+**Ami szándékosan nem került fel:** `DATABASE_*` és `APP_*` (ezek kellenek ahhoz, hogy a táblát egyáltalán elérjük — tyúk-tojás), és a **`SCAN_DISABLED`**: egy vészfék nem lehet ott, ahonnan az app kibeszélheti magát belőle.
+
+**A rétegezés.** `Setting` sor nyer, az env az, amire visszaesik. **Semmit nem másolunk a táblába induláskor**: sor csak arra a kulcsra jön létre, amit valaki tudatosan átállított, tehát a tábla döntések listája, és a `.env` mindenre továbbra is működik. Ez az, ami békíti a 2026-08-08-i „ne legyen kódba írt default" kérést a felületről szerkesztéssel: a default *még mindig* nem a kódban van, hanem az env-ben, a UI csak felülírja.
+
+- **Egy mező kiürítése = a felülírás törlése**, vagyis visszatérés ahhoz, amit az env mond. Ugyanaz a gesztus, nem kettő. A `RotateCcw` gomb ugyanezt teszi egy kattintással.
+- **A sor mutatja, honnan jön** az érvényes érték: `saved here` / `from .env` / `not set`. Enélkül a legrosszabb hibalehetőség az lett volna, hogy átírod a `.env`-et és nem történik semmi, mert a DB-ben ül egy régi felülírás.
+
+**Miért szinkron az olvasás.** A `getQualityProfile()` és társai pontozó ciklusokban futnak, ott nem lehet `await` értékenként — ugyanaz a helyzet, mint a feketelistánál. A tábla `Map`-be kerül, abból olvasunk szinkronban; a `loadSettings()` induláskor és minden scan-kör elején tölt, mentés után pedig azonnal frissül. **Hideg cache soha nem hibás, csak elavult**: beolvasott sor nélkül minden kulcs az env-re esik vissza, azaz arra, amit az app e fájl előtt tett.
+
+**Titkok.** A `TMDB_API_KEY`, `INDEXER_API_KEY`, `TORRENT_PASS` és `TELEGRAM_BOT_TOKEN` szerkeszthető, de **soha nem jön vissza a böngészőbe**: az API csak azt küldi, hogy be van-e állítva, a mező pedig cserélni tud, olvasni nem. Az üres érték egy titoknál nem törlés (különben egy mentés minden titkot kinullázna), ahhoz külön `DELETE` kell. **Nyitva marad:** az app-nak nincs bejelentkezése (Fázis 8), tehát aki eléri a hálózaton, az *átírni* továbbra is át tudja ezeket — az olvashatatlanság ezt nem pótolja, csak a legrosszabbat zárja ki.
+
+**Az intervallum is élő.** A `setInterval` befagyasztotta volna a boot-kori értéket, ezért a scan- és sync-kör önmagát újraütemező `setTimeout`-ra váltott, ami minden körben újraolvassa az intervallumot.
+
+**Egy hiba, amit a refaktor okozott volna:** a `torrent.ts` `categoryChecked` flagje igen/nemet tárolt, tehát egy UI-ból átírt kategóriát már nem hozott volna létre a kliensben. Most a nevet tárolja.
+
+**Mérés** (a futó appon, API-n keresztül):
+
+```
+QUALITY_RESOLUTIONS  elotte:  source=env       value=1080p,720p,2160p
+mentes ("720p,1080p")     ->  source=database  value=720p,1080p
+TORRENT_CATEGORY mentes   ->  source=database  value=aioseerr-test
+SCAN_DRY_RUN=1 mentes     ->  POST /api/scan valasza: dryRun=true   (ujrainditas nelkul)
+DELETE mindharomra        ->  source=env / unset, dryRun=false
+```
+
+Titok-körforgás: `TORRENT_PASS` mentése után `source=database`, `value=""`, `isSet=true`; **üres értékkel PUT → `changed:0`** (nem törli); explicit `DELETE` után vissza `env`-re — utána a qBittorrent-kapcsolat sértetlen (`v5.2.2`, 2 torrent). A két közben lefuttatott scan-kör **semmit nem indított**: mind a négy Silo-rész `PENDING`, torrent nélkül, a dátum-visszatartás dry-run nélkül is fogott.
+
 #### Telegram-értesítések (2026-08-08-i kérés) ✅
 
 Az app lényege, hogy akkor is dolgozik, amikor senki nem figyeli — eddig viszont csak úgy lehetett megtudni, hogy valami elkészült, ha benyitottál az oldalra. [notify.ts](src/lib/notify.ts), Telegram Bot API `sendMessage`-en.
@@ -794,6 +827,8 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
 | [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
+| [src/lib/settings.ts](src/lib/settings.ts) | a 45 admin beállítás registryje + a `Setting` tábla és az env rétegezése, szinkron olvasással |
+| [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: csoportok, forrás-badge, felülírás törlése |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
@@ -824,4 +859,7 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | `PATCH /api/watchlist` | `{ tmdbId, type, monitored, seasonNumber?, episodes? }` — évad vagy egyes epizódok be/ki; felveszi a sort, ha kell, és törli, ha kiürül (`result: null`) |
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
-| `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot és a megjelenési dátumokat is figyelmen kívül hagyja |
+| `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
+| `GET /api/settings` | a 45 admin beállítás csoportokkal, érvényes értékkel és forrással (`database` / `env` / `unset`); titok értéke sosem jön vissza |
+| `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni; üres érték törli a felülírást, üres titok viszont nem változtat semmit |
+| `DELETE /api/settings?key=` | egy felülírás törlése, vagyis vissza az env-re — titoknál ez az egyetlen mód a törlésre |

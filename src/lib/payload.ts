@@ -15,6 +15,8 @@
  *   emptying the list you would want back later.
  */
 
+import { settingFlag, settingList } from "@/lib/settings";
+
 export type TorrentFile = { name: string, size: number };
 
 export type PayloadProfile = {
@@ -30,19 +32,16 @@ const ACCEPT_ALL = "*";
 const RAR_PART = /^r\d{2}$/;
 
 // the deletion is a real one, but a payload like this is not worth keeping
-export const PAYLOAD_DELETE_FILES = process.env.PAYLOAD_DELETE_FILES !== "0";
+export const payloadDeleteFiles = () => settingFlag("PAYLOAD_DELETE_FILES", true);
 
-// a leading dot is the natural way to write these in an env file, and harmless here
-const list = (value: string | undefined) => (value || "")
-    .split(",")
-    .map(v => v.trim().toLowerCase().replace(/^\.+/, ""))
-    .filter(Boolean);
+// a leading dot is the natural way to write these, in an env file or in a form field
+const clean = (values: string[]) => values.map(v => v.toLowerCase().replace(/^\.+/, "")).filter(Boolean);
 
 export const getPayloadProfile = (): PayloadProfile => {
     return {
-        video: list(process.env.PAYLOAD_VIDEO_EXTENSIONS),
-        archive: list(process.env.PAYLOAD_ARCHIVE_EXTENSIONS),
-        executable: list(process.env.PAYLOAD_EXECUTABLE_EXTENSIONS)
+        video: clean(settingList("PAYLOAD_VIDEO_EXTENSIONS")),
+        archive: clean(settingList("PAYLOAD_ARCHIVE_EXTENSIONS")),
+        executable: clean(settingList("PAYLOAD_EXECUTABLE_EXTENSIONS"))
     };
 };
 
