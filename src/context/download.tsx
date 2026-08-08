@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 
@@ -148,8 +148,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         }
     }, [ target, preview, picks, refresh, search, watchTheRest ]);
 
+    // the dialog's own state lives here, so without this every keystroke of a search
+    // in progress would re-render the page behind it
+    const value = useMemo(() => ({ startDownload }), [ startDownload ]);
+
     return (
-        <DownloadContext.Provider value={{ startDownload }}>
+        <DownloadContext.Provider value={value}>
             { children }
 
             <ReleasePicker

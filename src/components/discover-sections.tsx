@@ -11,11 +11,14 @@ import { Section } from "@/lib/sections";
 import { Media } from "@/types/media";
 
 export function DiscoverSections({ view }: { view: string }) {
-    const { entries } = useWatchlist();
+    const { revision } = useWatchlist();
     const [ hero, setHero ] = useState<Media | null>(null);
     const [ sections, setSections ] = useState<Section[]>();
 
-    // the library rows are built from the watchlist, so a change anywhere reloads them
+    // the library rows are built from the watchlist, so a change anywhere reloads
+    // them. `revision` counts actual changes: keying this on the list itself meant
+    // the watchlist arriving after mount looked like one, and the whole page was
+    // built twice on every visit.
     useEffect(() => {
         let cancelled = false;
 
@@ -37,7 +40,7 @@ export function DiscoverSections({ view }: { view: string }) {
             });
 
         return () => { cancelled = true; };
-    }, [ view, entries.length ]);
+    }, [ view, revision ]);
 
     return (
         <>
