@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getSections, isSectionView } from "@/lib/sections";
+import { isTmdbConfigured } from "@/lib/media";
+import { loadSettings } from "@/lib/settings";
 
 export async function GET(req: NextRequest) {
     const view = req.nextUrl.searchParams.get("view") || "home";
@@ -10,5 +12,9 @@ export async function GET(req: NextRequest) {
 
     const page = await getSections(view);
 
-    return Response.json({ success: true, ...page });
+    await loadSettings();
+
+    // with no api key every row comes back empty, and an empty page looks like a broken
+    // one — so the reason travels with it
+    return Response.json({ success: true, ...page, setup: { tmdb: isTmdbConfigured() } });
 }

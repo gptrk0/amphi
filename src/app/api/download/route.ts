@@ -2,7 +2,29 @@ import { NextRequest } from "next/server";
 
 import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
+import { isIndexerConfigured } from "@/lib/indexer";
+import { isClientConfigured } from "@/lib/torrent";
+import { loadSettings, NotConfiguredError } from "@/lib/settings";
 import { MissingSeason } from "@/types/download";
+
+/**
+ * Asked before anything is promised. A download needs both an indexer to find a release
+ * and a client to hand it to, and saying which one is missing is the difference between
+ * a setup step and a bug.
+ */
+const missingService = async () => {
+    await loadSettings();
+
+    if (! isIndexerConfigured()) {
+        return new NotConfiguredError("An indexer", "Indexers").message;
+    }
+
+    if (! isClientConfigured()) {
+        return new NotConfiguredError("The torrent client", "Torrent client").message;
+    }
+
+    return null;
+};
 
 const toPicks = (value: unknown): Record<string, string> => {
     if (typeof value !== "object" || value === null) {
@@ -27,6 +49,12 @@ const toPicks = (value: unknown): Record<string, string> => {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
+
+        const notConfigured = await missingService();
+
+        if (notConfigured) {
+            return Response.json({ success: false, message: notConfigured }, { status: 400 });
+        }
 
         const planId = typeof body?.planId === "string" ? body.planId : null;
 
@@ -122,6 +150,12 @@ export async function POST(req: NextRequest) {
 
     } catch(err) {
         console.error(err);
+
+        // a setting that was cleared between the check above and the grab, or a path that
+        // does not check: still the user's answer, not a server error
+        if (err instanceof NotConfiguredError) {
+            return Response.json({ success: false, message: err.message }, { status: 400 });
+        }
 
         return Response.json({ success: false, message: "Failed to start the download!" }, { status: 500 });
     }

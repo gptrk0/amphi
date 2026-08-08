@@ -67,8 +67,18 @@ type TorznabResponse = {
     error?: { code: number, description: string };
 };
 
+/**
+ * Not a throw: the scanner searches in a loop and an unconfigured indexer must not abort
+ * a whole round. The api routes ask this before they promise the user anything.
+ */
+export const isIndexerConfigured = () => !! settingText("INDEXER_URL");
+
 const request = async (indexerId: string, params: Record<string, string | number>): Promise<TorznabResponse> => {
     await loadSettings();
+
+    if (! isIndexerConfigured()) {
+        return { error: { code: 0, description: "no indexer url is configured" } };
+    }
 
     try {
         const res = await axios.get(`${ settingText("INDEXER_URL") }/api/v2.0/indexers/${ indexerId }/results/torznab/api`, {

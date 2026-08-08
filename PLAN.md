@@ -658,6 +658,30 @@ TORRENT_PASS="" (titok)               ->  changed:0, a jelszo megmarad
 
 Az env kiürítése után újraindítva: `[scheduler] started, scanning every 15 minutes` + `telegram notifications are on` (a token már csak a DB-ben van), `/` 200, `/details/tv/125988` 200 „Silo"-val, `POST /api/scan` `dryRun:false`, `getClientVersion()` `v5.2.2` 2 torrenttel — tehát TMDB, Jackett, qBittorrent és a Telegram mind a táblából konfigurálódik. A `.env` 8 sorra fogyott (`APP_*`, `DATABASE_*`, `SCAN_DISABLED`, `COMPOSE_*`).
 
+#### Mit tesz egy friss install (2026-08-08-i kérdés) ✅
+
+Kérdés: „ha egy felhasználó első alkalommal akarja elindítani, működni fog? nem fog hibát dobni hiányzó beállítás nélkül? mi lesz, ha letöltene egy filmet, de még nincs torrent/indexer?"
+
+**Mérés, nem tipp.** Külön adatbázison (`aioseerr_fresh`), a te configod érintése nélkül: `prisma migrate deploy` mind a 7 migrációt lefuttatta üresen, aztán egy script végigjárta azokat a kódutakat, amiket egy első látogató érint. A tábla ilyenkor **0 sor, 38 default, 12 unset**.
+
+| amit egy friss install tesz | előtte | most |
+|---|---|---|
+| indulás, migrációk, scheduler | lefut, nem dob | változatlan, plusz a scheduler **kimondja**, mi nincs beállítva (TMDB / indexer / kliens / tartalom-ellenőrzés) |
+| főoldal TMDB-kulcs nélkül | 0 sor, **örökre pörgő hero-skeleton**, és 12 teljes axios-dump a logban | „Add a TMDB API key to get started" panel a `/settings#tmdb` linkkel, a logban 12 **egysoros** `[tmdb] /tv/popular: 401 — the api key is missing or wrong (Settings / TMDB)` |
+| adatlap | `null` → `notFound()` → 404 | változatlan (kártya nélkül el sem érhető) |
+| keresés indexer nélkül | 0 találat, ami hazugság: nem is keresett | a letöltés-ablak **400-at** kap: „An indexer is not configured — fill it in under Settings / Indexers." |
+| letöltés kliens nélkül | `TypeError: "/api/v2/app/version" cannot be parsed as a URL` → 500 „Failed to start the download!" | `NotConfiguredError` → **400**: „The torrent client is not configured — fill it in under Settings / Torrent client." |
+| percenkénti kliens-olvasás | percenként egy hibás kör | a `syncDownloadsOnce` kilép, ha nincs kliens — a figyelmeztetés egyszer, induláskor jön |
+| egy scan-kör | `runScan()` végigment | változatlan |
+
+A válasz tehát: **elindul és nem omlik össze**, de eddig *úgy* nem működött, hogy közben nem mondta meg, miért. A három javítás pontosan ezt zárja: a `NotConfiguredError` ([settings.ts](src/lib/settings.ts)) saját típus, hogy egy api route 400-at és okot adhasson 500 helyett — friss installon ez a normális állapot, nem hiba. A `isTmdbConfigured()` / `isIndexerConfigured()` / `isClientConfigured()` ugyanabba a mintába illeszkedik, mint a már meglévő `isNotifyConfigured()` és `isPayloadCheckConfigured()`.
+
+Egy döntés az indexernél: az `isIndexerConfigured()` **nem dob**, mert a scanner ciklusban keres, és egy beállítatlan indexer nem szakíthat meg egy egész kört — a route-ok kérdezik meg előre. A kliensnél viszont dob, mert oda csak egyetlen ponton lehet eljutni.
+
+**Egy éles incidens, ugyanebből a körből.** Miközben ezt írtam, a `/settings`-en valaki rákattintott a Jackett API-kulcs melletti visszaállítás gombra (`DELETE /api/settings?key=INDEXER_API_KEY`, a log 2118. sora). Onnantól minden indexer-keresés `Invalid API Key`-jel jött vissza, a letöltés-ablak 5 helyett 0 találatot adott. Visszaállítás: a **konténer környezete még az eredeti**, mert a `docker restart` nem olvas újra `env_file`-t — így a `scripts/import-env-settings.ts` újrafuttatva visszatette a kulcsot, anélkül hogy az értéket bárki kiírta volna. Utána `getCaps("ncore")` rendben, egy próbakeresés 116 release-t adott, a letöltés-ablak megint 5 opciót.
+
+Ez viszont az én hibám volt a felületen, és javítva is van: **defaulttal bíró kulcsnál** a visszaállítás ártalmatlan (`RotateCcw`, kérdés nélkül), **default nélkülinél** — api kulcs, jelszó, URL, chat id — nincs mire visszaesni és nincs mivel visszavonni, ezért `Trash2` ikont kapott, `text-destructive` színnel, és **rákérdez**, mielőtt törölne. Az env eltűnésével ez a gomb lett a legélesebb kés a lapon.
+
 **Összehasonlítás: a Jellyseerr/Overseerr ugyanezt fájlban tartja** — `config/settings.json`, egy induláskor beolvasott, memóriában tartott singletonnal, a defaultokkal a kódban; env-ből ott is csak a bootstrap jön (port, config könyvtár, DB, loglevel). Ugyanaz a szerkezet, más tároló. Egy különbség szándékos: a `settings.json`-be a *teljes* objektum kiíródik, tehát utólag nem látszik, mi volt döntés és mi default — nálunk csak a döntések kapnak sort, ezért tud a felület `edited` / `default` badge-et mutatni. A DB mellett szól még, hogy a Postgres amúgy is kötelező dependencia, és a beállítások a DB-mentéssel együtt utaznak; ellene, hogy egy elrontott `DATABASE_URL` mellett a settings sem érhető el (a `settings.json` ilyenkor is olvasható lenne).
 
 #### Telegram-értesítések (2026-08-08-i kérés) ✅

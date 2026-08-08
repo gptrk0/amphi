@@ -14,6 +14,33 @@ import { loadSettings, settingNumber, settingText } from "@/lib/settings";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const apiKey = () => settingText("TMDB_API_KEY");
+
+/** Nothing on the discover pages can work without this one, so it is worth asking. */
+export const isTmdbConfigured = () => !! apiKey();
+
+/**
+ * A missing api key means every row of the home page fails at once, and dumping seven
+ * axios errors reads as a broken app rather than an unconfigured one.
+ */
+const logTmdbFailure = (err: unknown) => {
+    if (! axios.isAxiosError(err)) {
+        console.error("[tmdb]", err);
+
+        return;
+    }
+
+    const path = (err.config?.url || "").replace(TMDB_BASE_URL, "");
+    const status = err.response?.status;
+
+    if (status === 401) {
+        console.error(`[tmdb] ${ path }: 401 — the api key is missing or wrong (Settings / TMDB)`);
+
+        return;
+    }
+
+    console.error(`[tmdb] ${ path }: ${ status ?? err.code ?? "failed" } ${ err.message }`);
+};
+
 const language = () => settingText("TMDB_LANGUAGE");
 
 // certifications and streaming services are per country, and the language already
@@ -106,7 +133,7 @@ export async function fetchMediaMetadata(type: string, id: number): Promise<Medi
         };
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return null;
@@ -147,7 +174,7 @@ export async function searchMedia(query: string, page: number): Promise<MediaPag
         };
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return { results: [], page, totalPages: 0 };
@@ -209,7 +236,7 @@ export async function fetchDiscoverPage({ type, category, page, genre }: Discove
         return { results, page: res.data.page || page, totalPages: res.data.total_pages || 0 };
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return { results: [], page, totalPages: 0 };
@@ -240,7 +267,7 @@ export async function fetchGenres(type: string): Promise<MediaGenre[]> {
         return (res.data.genres || []).map((v: any) => ({ id: v.id, name: v.name }));
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return [];
@@ -259,7 +286,7 @@ export async function fetchImdbId(type: string, id: number): Promise<string | nu
         return res.data?.imdb_id || null;
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return null;
@@ -437,7 +464,7 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
         };
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return null;
@@ -499,7 +526,7 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
         return seasons.sort((a, b) => a.season_number - b.season_number);
 
     } catch(err) {
-        console.error(err);
+        logTmdbFailure(err);
     }
 
     return [];

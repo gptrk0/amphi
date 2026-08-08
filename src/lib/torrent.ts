@@ -2,7 +2,7 @@ import axios, { AxiosRequestConfig } from "axios";
 
 import { IndexerResult } from "@/lib/indexer";
 import { TorrentFile } from "@/lib/payload";
-import { loadSettings, settingText } from "@/lib/settings";
+import { loadSettings, NotConfiguredError, settingText } from "@/lib/settings";
 
 export type TorrentStatus = {
     hash: string;
@@ -36,8 +36,16 @@ const baseUrl = () => settingText("TORRENT_URL").replace(/\/+$/, "");
 // the @robertklep/qbittorrent client treats as an error — hence this minimal client.
 const globalForTorrent = global as unknown as { qbitSid: string | null };
 
+export const isClientConfigured = () => !! baseUrl();
+
 const request = async (path: string, config: AxiosRequestConfig = {}, retryOnAuthError = true): Promise<any> => {
     await loadSettings();
+
+    // without a url axios would fail on `"/api/v2/app/version" cannot be parsed as a URL`,
+    // which tells a first time user nothing about what to do
+    if (! isClientConfigured()) {
+        throw new NotConfiguredError("The torrent client", "Torrent client");
+    }
 
     const res = await axios.request({
         url: `${ baseUrl() }${ path }`,

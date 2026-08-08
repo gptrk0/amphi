@@ -25,6 +25,19 @@ import { prisma } from "@/lib/prisma";
  * served, and again on the way into every outward call and every scan round.
  */
 
+/**
+ * Thrown when something is asked of a service nobody has configured yet. Worth its own
+ * type so an api route can answer with the reason and a 400 instead of a 500: on a fresh
+ * install this is the normal case, not a failure.
+ */
+export class NotConfiguredError extends Error {
+    constructor(what: string, group: string) {
+        super(`${ what } is not configured — fill it in under Settings / ${ group }.`);
+
+        this.name = "NotConfiguredError";
+    }
+}
+
 export type SettingType = "string" | "number" | "boolean" | "list" | "table";
 
 export type SettingDef = {

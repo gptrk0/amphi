@@ -8,10 +8,13 @@
  *   git diff --cached | docker exec -i aioseerr_app bun scripts/secret-scan.ts
  */
 
+import { readFileSync } from "node:fs";
+
 import { prisma } from "../src/lib/prisma";
 import { SETTINGS } from "../src/lib/settings";
 
-const diff = await Bun.stdin.text();
+// fd 0, so the diff can be piped in without ever being written to disk
+const diff = readFileSync(0, "utf8");
 
 if (diff.trim() === "") {
     console.log("nothing on stdin — did you forget to pipe a diff in?");

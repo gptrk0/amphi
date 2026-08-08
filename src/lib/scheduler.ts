@@ -1,13 +1,14 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
-import { getMediaMetadata, getTvSeasons } from "@/lib/media";
+import { getMediaMetadata, getTvSeasons, isTmdbConfigured } from "@/lib/media";
+import { isIndexerConfigured } from "@/lib/indexer";
 import { normalizeTitle } from "@/lib/release";
 import { BlockReason, blockRelease } from "@/lib/blocklist";
 import { forgetStall, stallDeleteFiles, stallMinutes, trackStall } from "@/lib/stall";
 import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/lib/payload";
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
-import { getTorrentFiles, getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
+import { getTorrentFiles, getTorrentStatus, isClientConfigured, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { isNotifyConfigured, notify } from "@/lib/notify";
 import {
     ensureMovieUnit,
@@ -483,6 +484,12 @@ export const syncDownloadsOnce = async (preloaded?: TorrentStatus[]) => {
         return false;
     }
 
+    // reading the client back once a minute with no client to read is not an error worth
+    // logging sixty times an hour — `startScheduler` says it once instead
+    if (! isClientConfigured()) {
+        return false;
+    }
+
     globalForScheduler.syncRunning = true;
 
     try {
@@ -546,6 +553,20 @@ export const startScheduler = async () => {
 
     // a list can be empty, and a check that cannot reject anything must not look like
     // it is guarding something
+    // a fresh install has none of these, and a scanner that searches nothing every
+    // fifteen minutes looks like it is working
+    if (! isTmdbConfigured()) {
+        log("TMDB is not configured: nothing can be listed or searched until the api key is in (Settings / TMDB)");
+    }
+
+    if (! isIndexerConfigured()) {
+        log("no indexer is configured: every search comes back empty (Settings / Indexers)");
+    }
+
+    if (! isClientConfigured()) {
+        log("the torrent client is not configured: nothing can be downloaded (Settings / Torrent client)");
+    }
+
     if (! isPayloadCheckConfigured()) {
         log("payload check is OFF: fill in the extension lists under Settings / Content check");
     }

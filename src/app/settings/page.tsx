@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, RotateCcw, Save } from "lucide-react";
+import { Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -118,6 +118,13 @@ export default function Page() {
 
     /** Deleting the row, which is the same thing as going back to the default. */
     const reset = async (item: SettingItem) => {
+        // for a key with a default this is harmless. For one without — an api key, a
+        // password, a url — there is nothing to fall back to and nothing to undo it with,
+        // so a misclick would cost the value itself. That happened once already.
+        if (! item.hasDefault && ! window.confirm(`Clear ${ item.label }? It has no default to fall back on, so you will have to type it in again.`)) {
+            return;
+        }
+
         try {
             const res = await axios.delete("/api/settings", { params: { key: item.key } });
 
@@ -253,10 +260,10 @@ export default function Page() {
                                             className="cursor-pointer"
                                             title={item.hasDefault
                                                 ? `Back to the default${ item.default ? `: ${ item.default }` : "" }`
-                                                : "Clear it"}
+                                                : `Clear ${ item.label } — there is no default to fall back on`}
                                             onClick={() => reset(item)}
                                         >
-                                            <RotateCcw />
+                                            { item.hasDefault ? <RotateCcw /> : <Trash2 className="text-destructive" /> }
                                         </Button>}
                                     </div>
                                 </div>
