@@ -2,7 +2,7 @@ import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../pri
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { removeTorrent, TorrentStatus } from "@/lib/torrent";
-import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchStatus } from "@/types/watchlist";
+import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchlistStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
     units: {
@@ -60,10 +60,32 @@ const trackedUnits = (item: WatchlistRow) => {
 };
 
 /**
+ * Units that are still to be obtained. What is left once these run out is either on
+ * disk or was given up on.
+ */
+const outstandingUnits = (units: UnitRow[]) => units.filter(unit => unit.status === PrismaWatchStatus.PENDING);
+
+// an unknown date does not hold anything back — the scanner searches those
+const airsLater = (airDate: Date | null) => !! airDate && airDate.getTime() > Date.now();
+
+/**
+ * The earliest date something still wanted is waiting for, which is what makes
+ * `UPCOMING` explainable instead of just "nothing is happening".
+ */
+const nextAirDate = (units: UnitRow[]): string | null => {
+    const dates = outstandingUnits(units)
+        .map(unit => unit.airDate)
+        .filter((date): date is Date => airsLater(date))
+        .map(date => date.getTime());
+
+    return dates.length > 0 ? new Date(Math.min(...dates)).toISOString() : null;
+};
+
+/**
  * No item has a status column of its own — it is as far along as its units. A movie
  * has exactly one, so this returns that unit's status unchanged.
  */
-export const deriveStatus = (item: WatchlistRow): WatchStatus => {
+export const deriveStatus = (item: WatchlistRow): WatchlistStatus => {
     const units = trackedUnits(item);
 
     if (units.length === 0) {
@@ -86,6 +108,15 @@ export const deriveStatus = (item: WatchlistRow): WatchStatus => {
         return PrismaWatchStatus.FAILED;
     }
 
+    // Nothing is being looked for, and nothing can be: every part still wanted airs
+    // later. This also covers a show you are up to date on — the downloaded episodes
+    // are behind us, the next one is not out yet.
+    const outstanding = outstandingUnits(units);
+
+    if (outstanding.length > 0 && outstanding.every(unit => airsLater(unit.airDate))) {
+        return "UPCOMING";
+    }
+
     return PrismaWatchStatus.PENDING;
 };
 
@@ -97,6 +128,7 @@ export const toWatchlistEntry = (item: WatchlistRow): WatchlistEntry => {
         tmdbId: item.tmdbId,
         type: toMediaType(item.type),
         status: deriveStatus(item),
+        nextAirDate: nextAirDate(units),
         episodeCount: units.filter(unit => unit.episodeNumber !== null).length,
         downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length,
         monitored: item.units.some(unit => unit.monitored)

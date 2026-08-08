@@ -1,7 +1,7 @@
 import { getDiscoverPage } from "@/lib/media";
 import { getWatchlistWithMedia } from "@/lib/watchlist";
 import { Media } from "@/types/media";
-import { WatchStatus } from "@/types/watchlist";
+import { WatchlistStatus } from "@/types/watchlist";
 
 export type Section = {
     key: string;
@@ -72,7 +72,7 @@ const VIEWS: Record<string, { personal: boolean, sources: Source[] }> = {
 // The library rows go first, the same way Overseerr opens with the server's own
 // content: they never overlap the catalog rows, and they push what is already
 // in progress to the top.
-const PERSONAL: { key: string, title: string, description: string, href: string, statuses: WatchStatus[] }[] = [
+const PERSONAL: { key: string, title: string, description: string, href: string, statuses: WatchlistStatus[] }[] = [
     {
         key: "downloading",
         title: "Downloading now",
@@ -92,7 +92,7 @@ const PERSONAL: { key: string, title: string, description: string, href: string,
         title: "On your watchlist",
         description: "Waiting for a release to show up.",
         href: "/watchlist",
-        statuses: [ "PENDING", "SEARCHING", "FAILED" ]
+        statuses: [ "PENDING", "UPCOMING", "SEARCHING", "FAILED" ]
     }
 ];
 

@@ -22,12 +22,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useWatchlist } from "@/context/watchlist";
-import { WatchlistItem, WatchStatus } from "@/types/watchlist";
+import { WatchlistItem, WatchlistStatus } from "@/types/watchlist";
 
 type Props = {
     title: string;
     description: string;
-    onlyStatus?: WatchStatus;
+    onlyStatus?: WatchlistStatus;
     emptyText: string;
 };
 
@@ -42,12 +42,12 @@ type Column = {
 
 const POLL_MS = 5000;
 
-const STATUS_FILTERS: { label: string, value: WatchStatus | "ALL" }[] = [
+const STATUS_FILTERS: { label: string, value: WatchlistStatus | "ALL" }[] = [
     { label: "All", value: "ALL" },
     { label: "Watchlisted", value: "PENDING" },
+    { label: "Not out yet", value: "UPCOMING" },
     { label: "Waiting for release", value: "SEARCHING" },
-    { label: "Downloading", value: "DOWNLOADING" },
-    { label: "Downloaded", value: "DOWNLOADED" }
+    { label: "Downloading", value: "DOWNLOADING" }
 ];
 
 const ago = (value: string | null) => {
@@ -86,6 +86,22 @@ const remaining = (seconds: number | null) => {
     return seconds < 3600 ? `${ Math.round(seconds / 60) }m left` : `${ Math.round(seconds / 3600) }h left`;
 };
 
+/**
+ * Why an item is sitting there doing nothing: it is not out yet. Without the date the
+ * row shows "never checked" and reads like a scanner that gave up.
+ */
+const airText = (value: string | null) => {
+    if (! value) {
+        return "no date yet";
+    }
+
+    const date = new Date(value);
+    const days = Math.ceil((date.getTime() - Date.now()) / 86400000);
+    const text = date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+    return days > 0 ? `out ${ text }, in ${ days } day${ days === 1 ? "" : "s" }` : `out ${ text }`;
+};
+
 const progressText = (item: WatchlistItem) => {
     if (item.type === "tv") {
         return `${ item.downloadedCount }/${ item.episodeCount || "?" } episodes`;
@@ -107,7 +123,7 @@ const progressText = (item: WatchlistItem) => {
 export function WatchlistTable({ title, description, onlyStatus, emptyText }: Props) {
     const { entries, remove, destroy } = useWatchlist();
     const [ items, setItems ] = useState<WatchlistItem[]>();
-    const [ status, setStatus ] = useState<WatchStatus | "ALL">("ALL");
+    const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
     const [ deleting, setDeleting ] = useState<WatchlistItem | null>(null);
@@ -143,9 +159,9 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
     };
 
     /**
-     * Unlike the scheduled round this one ignores the backoff and the release
-     * dates — the point of pressing it is to ask right now, even for something
-     * that is not out yet.
+     * Unlike the scheduled round this one ignores the backoff, so nothing has to
+     * wait for its next slot. The release dates still hold: asking for something
+     * that is not out yet only finds fakes.
      */
     const scan = () => {
         setScanning(true);
@@ -231,6 +247,10 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                 <div className="min-w-[7rem]">
                     <div>{ progressText(item) }</div>
 
+                    {item.status === "UPCOMING" && (
+                        <div className="text-xs text-muted-foreground">{ airText(item.nextAirDate) }</div>
+                    )}
+
                     {item.download && <>
                         <div className="my-1 h-1 w-24 overflow-hidden rounded-full bg-muted">
                             <div
@@ -302,9 +322,11 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
 
     const visible = (items || [])
         .filter(item => ! onlyStatus || item.status === onlyStatus)
-        // something downloaded that is no longer watched belongs under Downloaded
-        // only — it is not waiting for anything any more
-        .filter(item => onlyStatus || item.monitored || item.status !== "DOWNLOADED")
+        // what is on disk belongs to the library, and nothing else: a finished
+        // download is not waiting for anything, so it leaves this list the moment it
+        // lands rather than when someone remembers to stop watching it. A show comes
+        // back on its own as soon as a new episode is due.
+        .filter(item => onlyStatus || item.status !== "DOWNLOADED")
         .filter(item => status === "ALL" || item.status === status);
 
     const column = columns.find(v => v.key === sort.key);
@@ -331,7 +353,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     className="shrink-0 cursor-pointer"
                     onClick={scan}
                     disabled={isScanning}
-                    title="Check every watched item now, even the ones that are not out yet"
+                    title="Check everything you watch that is already out, without waiting for its next slot"
                 >
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
                     <RefreshCw className={classNames({ "hidden": isScanning })} />

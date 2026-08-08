@@ -11,6 +11,9 @@ type Props = {
 // like something was in progress right now
 const labels: Record<string, { text: string, variant: "default" | "secondary" | "destructive" | "outline" }> = {
     PENDING:     { text: "Watchlisted",         variant: "secondary" },
+    // not the same as SEARCHING: this one has not been looked for at all, because it
+    // does not exist yet
+    UPCOMING:    { text: "Not out yet",         variant: "outline" },
     SEARCHING:   { text: "Waiting for release", variant: "secondary" },
     DOWNLOADING: { text: "Downloading",         variant: "default" },
     DOWNLOADED:  { text: "Available",           variant: "default" },

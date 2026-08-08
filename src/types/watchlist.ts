@@ -3,12 +3,23 @@ import { Media } from "@/types/media";
 // Mirrors the Prisma WatchStatus enum so client components don't import the generated client.
 export type WatchStatus = "PENDING" | "SEARCHING" | "DOWNLOADING" | "DOWNLOADED" | "FAILED";
 
+/**
+ * The status of a whole item, which is derived and never stored — so it can say one
+ * thing the units cannot. `UPCOMING` is "nothing to look for yet": every part still
+ * wanted airs in the future, and the scanner deliberately leaves those alone. Without
+ * it such an item read as plain `PENDING`, and the table's "never checked" looked like
+ * a broken scanner rather than the hold back it is.
+ */
+export type WatchlistStatus = WatchStatus | "UPCOMING";
+
 // One row of `GET /api/watchlist?slim=1` — built without any TMDB call.
 export type WatchlistEntry = {
     id: number;
     tmdbId: number;
     type: "movie" | "tv";
-    status: WatchStatus;
+    status: WatchlistStatus;
+    // when the next part still wanted airs, null once nothing is waiting on a date
+    nextAirDate: string | null;
     episodeCount: number;
     downloadedCount: number;
     // being watched and being on disk are separate: something downloaded stays

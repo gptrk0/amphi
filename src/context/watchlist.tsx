@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 
@@ -9,6 +9,9 @@ import { WatchlistEntry } from "@/types/watchlist";
 type WatchlistContextValue = {
     entries: WatchlistEntry[];
     isLoading: boolean;
+    // bumped by each of the actions below, so a view can reload on a real change
+    // instead of guessing one from the list itself
+    revision: number;
     getEntry: (type: string, tmdbId: number) => WatchlistEntry | undefined;
     add: (type: string, tmdbId: number, name?: string, seasons?: number[]) => Promise<void>;
     remove: (type: string, tmdbId: number, name?: string) => Promise<void>;
@@ -21,6 +24,7 @@ const noop = async () => {};
 export const WatchlistContext = createContext<WatchlistContextValue>({
     entries: [],
     isLoading: false,
+    revision: 0,
     getEntry: () => undefined,
     add: noop,
     remove: noop,
@@ -33,6 +37,9 @@ export const useWatchlist = () => useContext(WatchlistContext);
 export function WatchlistProvider({ children }: { children: React.ReactNode }) {
     const [ entries, setEntries ] = useState<WatchlistEntry[]>([]);
     const [ isLoading, setLoading ] = useState(true);
+    const [ revision, setRevision ] = useState(0);
+
+    const touch = useCallback(() => setRevision(prev => prev + 1), []);
 
     const refresh = useCallback(async () => {
         try {
@@ -52,9 +59,14 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
         refresh();
     }, [ refresh ])
 
-    const getEntry = useCallback((type: string, tmdbId: number) => {
-        return entries.find(v => v.type === type && v.tmdbId === tmdbId);
+    // a grid holds well over a hundred cards, each asking for its own entry
+    const byKey = useMemo(() => {
+        return new Map(entries.map(entry => [ `${ entry.type }:${ entry.tmdbId }`, entry ]));
     }, [ entries ]);
+
+    const getEntry = useCallback((type: string, tmdbId: number) => {
+        return byKey.get(`${ type }:${ tmdbId }`);
+    }, [ byKey ]);
 
     const add = useCallback(async (type: string, tmdbId: number, name?: string, seasons?: number[]) => {
         try {
@@ -68,6 +80,7 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
                     tmdbId: item.tmdbId,
                     type: item.type,
                     status: item.status,
+                    nextAirDate: item.nextAirDate,
                     episodeCount: item.episodeCount,
                     downloadedCount: item.downloadedCount,
                     monitored: item.monitored
@@ -75,13 +88,14 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
             ]);
 
             toast(res.data.message || `${ name || "Media" } added to your watchlist!`);
+            touch();
 
         } catch(err) {
             console.error(err);
 
             toast(`Could not add ${ name || "media" } to your watchlist.`);
         }
-    }, []);
+    }, [ touch ]);
 
     /**
      * Stop watching, which is not the same as deleting: anything already downloaded
@@ -108,8 +122,9 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
 
         } finally {
             await refresh();
+            touch();
         }
-    }, [ entries, refresh ]);
+    }, [ entries, refresh, touch ]);
 
     /**
      * Delete for good: the torrent goes from the client too, and with `deleteFiles`
@@ -132,11 +147,19 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
 
         } finally {
             await refresh();
+            touch();
         }
-    }, [ refresh ]);
+    }, [ refresh, touch ]);
+
+    // a fresh object here would re-render every consumer on every render of this
+    // provider, and a media grid is over a hundred of them
+    const value = useMemo(
+        () => ({ entries, isLoading, revision, getEntry, add, remove, destroy, refresh }),
+        [ entries, isLoading, revision, getEntry, add, remove, destroy, refresh ]
+    );
 
     return (
-        <WatchlistContext.Provider value={{ entries, isLoading, getEntry, add, remove, destroy, refresh }}>
+        <WatchlistContext.Provider value={value}>
             { children }
         </WatchlistContext.Provider>
     );
