@@ -347,7 +347,10 @@ Amit ebből átvettem:
   - Következmény: a konténer a dev szerver élettartamáig él. Ha a dev szerver kilép, a konténer is leáll (`docker compose up -d aioseerr_app` hozza vissza) — cserébe egy néma, nem futó szerver nem maradhat észrevétlen.
   - A `[ $APP_ENV == … ]` idézőjelbe került: beállítatlan `APP_ENV` mellett a script eddig szintaktikai hibára futott volna.
   - Az `entrypoint.sh` a Dockerfile-ba van másolva, tehát a módosítása **image-újraépítést igényel**: `docker compose up -d --build aioseerr_app`.
-  - Nyitva marad: a dev ág nem futtat `bun install`-t és `prisma generate`-et (a prod ág igen), tehát egy friss klón nem indulna magától — az első indítás előtt ezeket kézzel kell lefuttatni.
+- [x] **Egy friss klón magától felállna** (2026-08-08) — eddig nem: a dev ág nem futtatott `bun install`-t és `prisma generate`-et, **`prisma migrate deploy`-t pedig egyik ág sem**, tehát egy klón üres adatbázissal indult volna. Ez addig maradt észrevétlen, amíg a szerver az első kérésig nem nyúlt a DB-hez; a napló bevezetése óta viszont a boot **első művelete** egy DB-írás, tehát ez minden indulást elvitt volna. Most mindkét ág ugyanazt a `prepare()`-t futtatja: `bun install` → `prisma generate` → `migrate deploy` (soha nem `migrate dev`: az kérdez és resetelhet), és ha a migrációk 30 próbálkozás után sem mennek fel, **a konténer kiáll** — egy 500-akat válaszoló szerver rosszabb, mint egy konténer, ami megmondja, miért állt le.
+  - A DB-re való várakozás nem a scriptben csúszik: a compose-ban a `aioseerr_db` kapott `pg_isready` **healthcheck**et, az app pedig `depends_on: condition: service_healthy`-t. A `prepare()` újrapróbálkozása ezen túl a tartalék.
+  - Mellékhaszon: a `prisma generate` minden indulásnál lefut, tehát egy séma-változás után **elég újraindítani** — nem lehet többé régi Prisma klienssel futó szervert kapni.
+  - **Mérve egy valódi friss telepítéssel**: `git clone` egy scratch könyvtárba (112 fájl, se `node_modules`, se `prisma/generated`, se `.env`), külön compose-projekt saját volume-mal és üres adatbázissal. A `fresh_db` egészségesre váltott, az app utána indult, mind a 8 migráció felment, és a dev szerver **~120 másodperc alatt** kiszolgált. A `/`, a `/settings` és a `/log` 200, a `/api/discover/sections` `setup: {"tmdb":false}`-t adott (tehát a főoldal a „add meg a TMDB kulcsot" táblát rajzolja, nem örök skeletont), az 52 beállítás mind a defaultján állt, és a naplóban ott volt a négy `WARN`, ami megmondja, mi hiányzik — plusz **egy** TMDB-figyelmeztetés a hét helyett, ahogy az összecsukás ígérte. A teszt-stack utána `down -v`-vel törölve.
 - [x] **Git repo** — `git init -b main`, első commit 76 fájllal (8094 sor). A `.gitignore` javítva: a generált Prisma kliens `prisma/generated` alatt van, de a `.gitignore` a `/src/generated/prisma` halott útvonalat zárta ki, így 4,9 MB generált kód került volna be. Bekerült még a `/.claude/settings.local.json` és a `/.verify-*.ts` is.
   - Commit előtt ellenőrizve: a `.env`, `node_modules`, `.next`, `prisma/generated` egyike sincs staged-elve, és a `.env` egyetlen valós értéke (TMDB / Jackett / qBittorrent / DB) sem fordul elő a commitolt 76 fájl egyikében sem.
   - **Remote nincs** és push sem történt — az a te döntésed. Előtte érdemes újra lefuttatni ugyanezt az ellenőrzést.
@@ -439,7 +442,7 @@ A második futás már nem csinál semmit (idempotens), és a kör alatt egyetle
 
 **#14 (The Devil Wears Prada 2):** a kategóriára nem szűrő ellenőrzés is `existsInClient=false`-t adott, a fájl pedig nincs meg a lemezen — a torrent tényleg félbemaradt. A sor helyesen esett vissza `PENDING`-be; a scanner újra fog keresni rá, amint a dry-run kikapcsol.
 
-**Ami ebből nyitva maradt:** a sync csak akkor fut, ha fut a Next dev szerver, azt pedig kézzel kell indítani (lásd az `entrypoint.sh` tételt a Fázis 7-ben). Ez most a legfontosabb következménye ennek a hibának.
+**Ami ebből következett:** a sync csak akkor fut, ha fut a Next dev szerver — ezért lett az `entrypoint.sh` fő processze maga a dev szerver (2026-08-07), és ezért futtatja az indulás a telepítést, a klienst és a migrációkat is (2026-08-08). Lásd a két `entrypoint.sh`-tételt a Fázis 7-ben.
 
 #### Közös `WatchlistUnit` tábla (2026-08-07-i kérés) ✅
 
@@ -900,9 +903,10 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 **Állapot (2026-08-08):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Ami maradt: **seedelés/utómunka**, auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
 
 ### Amit legközelebb kézzel meg kell tenni
-1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
-2. **Dry run ki** a Settings / Scanner tabon, amikor a **scanner** is indíthat letöltéseket. A kézi letöltés (a kiadásválasztó ablakon keresztül) ettől függetlenül mindig valódi — 2026-08-08-án az *Obsession* így jött le, végig helyesen. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
-3. **A watchlist 2026-08-08-án üres** (0 `Watchlist` és 0 `WatchlistUnit` sor) — vagyis a dry-run kikapcsolása önmagában semmit nem indítana el, csak azt, amit ezután felveszel.
+1. **Git remote és push** — 2026-08-08 estéjén 43 commit van, mind egyetlen gépen. Ez a legnagyobb kockázat a listán, és nem kód: el kell dönteni, hova. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre.
+2. **Indítás**: `docker compose up -d` — a konténer magától felteszi a függőségeket, generálja a Prisma klienst, felviszi a migrációkat, majd elindítja a dev szervert (és vele a schedulert az `instrumentation.ts`-ből). Ez a sor jelzi, hogy megvan: `[scheduler] started, scanning every 15 minutes, reading the client back every 1` — ugyanez a `/log` oldalon is ott van. `entrypoint.sh` módosítása után `--build` kell.
+3. **A dry run ki van** (Settings / Scanner), tehát a scanner valódi letöltéseket indíthat. A kézi letöltés ettől függetlenül mindig valódi volt — 2026-08-08-án az *Obsession* így jött le. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
+4. **A watchlisten két elem van** (2026-08-08, 21:00): egy `UPCOMING` sorozat és egy `DOWNLOADED` film. Egy scan-kör tehát ma nem keres semmit — az `UPCOMING` epizódjait a megjelenési dátum tartja vissza, és ez így helyes.
 
 ---
 
@@ -936,7 +940,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
 # a kimenet mentése ide: prisma/migrations/<YYYYMMDDHHMMSS>_<nev>/migration.sql, majd deploy + generate
 ```
 
-**`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
+**`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még nem is ismeri az új modellt). 2026-08-08 óta viszont **elég a `docker restart aioseerr_app`**: az `entrypoint.sh` minden induláskor generál és migrál, tehát a fenti két lépést nem kell külön kiadni — csak akkor, ha a szervert nem akarod újraindítani.
 
 **Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind az 52, a csoportjával, a típusával és a súgójával együtt. A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
 

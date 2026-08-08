@@ -12,6 +12,12 @@ services:
             - ../.env
         volumes:
             - ..:/home/bun/app
+        # the entrypoint applies the migrations before it starts the server, and it can
+        # only do that once the database answers. It retries either way — this is what
+        # keeps the usual start quiet.
+        depends_on:
+            aioseerr_db:
+                condition: service_healthy
 
     aioseerr_db:
         container_name: aioseerr_db
@@ -22,6 +28,13 @@ services:
             POSTGRES_DB: ${DATABASE_NAME}
         volumes:
             - postgres-data:/var/lib/postgresql/data
+        healthcheck:
+            # the container is up long before postgres is listening, and on a first run it
+            # restarts itself once while it creates the cluster
+            test: [ "CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}" ]
+            interval: 5s
+            timeout: 5s
+            retries: 12
 
 volumes:
     postgres-data:
