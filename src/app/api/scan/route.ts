@@ -3,7 +3,8 @@ import { runScan } from "@/lib/scheduler";
 export async function POST(req: Request) {
     try {
         // `force` is the button on the watchlist: check everything monitored now,
-        // backoff and release dates ignored. no body means a plain scheduled round.
+        // ignoring the backoff. release dates are never ignored. no body means a
+        // plain scheduled round.
         const body = await req.json().catch(() => null);
         const force = body?.force === true;
 

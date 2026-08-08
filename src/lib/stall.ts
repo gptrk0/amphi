@@ -79,9 +79,10 @@ export const forgetStall = (hash: string) => {
 };
 
 /**
- * The release that stalled is remembered by its name, so the search that follows
- * does not pick the same dead torrent again. qBittorrent names a torrent after the
- * release it came from, which is what makes this match.
+ * A release that had to be thrown away is remembered by its name, so the search that
+ * follows does not pick it again — whether it stalled or turned out not to be the
+ * release at all (see `payload.ts`). qBittorrent names a torrent after the release it
+ * came from, which is what makes this match.
  */
 export const blockTitle = (normalized: string) => {
     if (normalized) {

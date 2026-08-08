@@ -202,7 +202,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
 
 - [x] Gomb a részletnézeten. **2026-08-05-i átalakítás után egyetlen `Download` gomb** (ld. 2. pont): filmnél azonnali letöltés vagy watchlist-kérdés, sorozatnál évad-kijelölés checkboxokkal.
 - [x] Sorozatnál évad-szintű lista a részletnézeten. Az évad-`Switch`-ek (kézi monitorozás-váltás) helyére **checkbox-os kijelölés** került; a monitorozás a hiányzó tartalomra adott „Add to watchlist" válaszból következik, kézzel egyelőre nem állítható a felületről (a `PATCH /api/watchlist/:id/seasons/:n` API megvan hozzá).
-- [x] Állapot-badge-ek: `Watchlisten` / `Keresés...` / `Letöltés` / `Elérhető` / `Nem található` ([watchlist-badge.tsx](src/components/watchlist-badge.tsx)); sorozatnál `Letöltve X/Y`. A százalékos „Letöltés 42%" a Fázis 2-es qBittorrent-syncre vár.
+- [x] Állapot-badge-ek: `Watchlisted` / `Not out yet` / `Waiting for release` / `Downloading` / `Available` / `Not found` ([watchlist-badge.tsx](src/components/watchlist-badge.tsx)); sorozatnál `X/Y`. A `Not out yet` (`UPCOMING`) 2026-08-08-án került be, lásd a lenti alfejezetet. A százalékos „Letöltés 42%" a Fázis 2-es qBittorrent-syncre vár.
 - [x] `MediaCard` jelezze a watchlist-állapotot a discover/trending rácsban is.
 - [x] A `ContextMenu` kitöltése a MediaCardon: jobb klikk → Watchlistre/Watchlistről le, és **filmnél** „Download now" (nem elérhető film esetén a toast ad egy „Add to watchlist" gombot). Sorozatnál a rácsból nincs gyors-letöltés, mert évad-kijelölés kell — ott a részletnézetre kell menni.
 - [x] Sidebar "LIBRARY" szekció valódi tartalommal: `/watchlist` és `/watchlist/downloaded`.
@@ -210,7 +210,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
 Ami elkészült / döntések:
 - **`GET /api/watchlist?slim=1`** — TMDB-dúsítás nélküli lista (`id, tmdbId, type, status, episodeCount, downloadedCount`). Erre épül a kliens „rajta van-e már?" kérdése, hogy a rács ne indítson metaadat-lekérést.
 - **`WatchlistProvider`** ([src/context/watchlist.tsx](src/context/watchlist.tsx)) — egyszer lekéri a slim listát, `getEntry(type, tmdbId)` / `add` / `remove` optimista frissítéssel és toasttal. A layoutban van bekötve, tehát a rács és a részletnézet ugyanazt az állapotot látja.
-- **Származtatott státusz** ([src/lib/watchlist.ts](src/lib/watchlist.ts) `deriveStatus`): nincs „elem állapota" oszlop, a listákon megjelenő státusz a unitokból jön (bármelyik letöltés alatt → `DOWNLOADING`, mind kész → `DOWNLOADED`, mind hibás → `FAILED`). A `trackedUnits` a monitorozott évadok unitjait **és** minden nem-`PENDING` unitot számolja, hogy egy azonnali (monitorozás nélküli) letöltés is `DOWNLOADING`-nak látszódjon. A film egyetlen unitja mindig benne van, így ugyanez a szabály filmre is a saját állapotát adja vissza.
+- **Származtatott státusz** ([src/lib/watchlist.ts](src/lib/watchlist.ts) `deriveStatus`): nincs „elem állapota" oszlop, a listákon megjelenő státusz a unitokból jön (bármelyik letöltés alatt → `DOWNLOADING`, mind kész → `DOWNLOADED`, mind hibás → `FAILED`, minden még megszerzendő rész csak jövőben jelenik meg → `UPCOMING`). A `trackedUnits` a monitorozott évadok unitjait **és** minden nem-`PENDING` unitot számolja, hogy egy azonnali (monitorozás nélküli) letöltés is `DOWNLOADING`-nak látszódjon. A film egyetlen unitja mindig benne van, így ugyanez a szabály filmre is a saját állapotát adja vissza.
 - `/api/details` tv-nél visszaadja az évadlistát is (cache-elt `getTvSeasons`), így a részletnézeten watchlistre tétel **előtt** is látszanak az évadok — a togglék csak felvétel után aktívak.
 - `Switch` komponens hozzáadva (`@radix-ui/react-switch` + [src/components/ui/switch.tsx](src/components/ui/switch.tsx)).
 - A részletnézet tartalma `absolute`-ból normál folyamba került, különben a hosszú évadlistával nem lehetett scrollozni (a backdrop maradt absolute alatta).
@@ -282,13 +282,14 @@ Amit ebből átvettem:
   - Ellenőrizve eldobható adatokon: `E01`-hez saját release, `E02–E06`-hoz az `S01E01-E06` → korábban 2 torrent (a range + még egyszer az E01), most **1 torrent, E01–E06**. Csak `E02–E03`-at kérve is az egész range-et foglalja le, tehát a maradék négy epizódra nem indul második letöltés. Az `S01-S03` pack a 2. és 3. évad unitjait is megjelölte, a már letöltött `S02E01`-et kihagyva.
 - [x] **Pack méret-plafon** (2026-08-07) — `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB=5`, alapból bekapcsolva, a `QUALITY_MAX_SIZE_GB`-tól függetlenül (az 0, tehát eddig egyáltalán nem volt felső korlát). A kettő közül a szigorúbb érvényesül. Azért kellett, mert az új pack-szabállyal egy teljesen megjelent, még el nem kezdett évadnál alapból a pack nyer.
   - Mérés a Ted Lasso S1-en (54 találat, 10 rész, 50GB-os plafon): a plafon **2 release-t utasít el** (a legnagyobb 54,8GB), de a **választást nem változtatja meg** — az 1080p-s 12,5GB-os pack egyébként is nyer. Vagyis ez biztosíték, nem napi hatás.
+- [x] **Hamis tartalom letöltés közben** (2026-08-08) — a release nevére épülő védelem elvi határa, hogy a nevet a hamisítvány pontosan lekopírozhatja. A `syncDownloads` ezért a fájllistát is megnézi (`payload.ts`), és a megjelenési dátumot már egyetlen hívó sem kerülheti meg. Részletek és mérés: lásd a lenti „Meg nem jelent rész letöltése" alfejezetet.
 - [x] **Stall-kezelés** (2026-08-08). Eddig csak az `error`/`missingFiles` állapot és az eltűnt torrent számított hibának — egy órákig 0 B/s-en álló letöltés a végtelenségig `DOWNLOADING` maradt, és mivel a unit már nem `PENDING`, a scanner sem kereste újra. Ez volt az utolsó mód, ahogy egy elem némán elveszhetett.
   - **Mikor számít elakadtnak** ([src/lib/stall.ts](src/lib/stall.ts)): a torrent nem kész és nem hibás, **és** a qBittorrent szerint `stalledDL` vagy `metaDL` (magnet, aminek sosem jött meg a metaadata), vagy 0 a letöltési sebessége — **és** a `progress` a teljes `STALL_MINUTES` (default 60) alatt egyszer sem mozdult. Bármilyen haladás nullázza az órát, tehát egy lassú letöltés soha nem esik áldozatul.
   - **Mi történik**: a torrent a fájljaival együtt törlődik (`STALL_DELETE_FILES=1`, egy félkész fájl nem érték), a release neve **feketelistára** kerül, a unitok `PENDING`-re állnak `lastCheckedAt: null`-lal (tehát azonnal esedékesek) és eggyel több próbálkozással.
-  - **A feketelista** a `rateRelease`-ben szűr (`stalled once already`), normalizált release-név alapján — a qBittorrent a release nevén nevezi el a torrentet, ezért ez összeér. Memóriában él, a folyamat élettartamára: egy újraindítás után egy dead release újra kipróbálható, ami elfogadható ár azért, hogy ne kelljen hozzá tábla.
+  - **A feketelista** a `rateRelease`-ben szűr (`already tried and dropped` — 2026-08-08 óta a hamis tartalmú torrentek is ide kerülnek, ezért lett általánosabb a szöveg), normalizált release-név alapján — a qBittorrent a release nevén nevezi el a torrentet, ezért ez összeér. Memóriában él, a folyamat élettartamára: egy újraindítás után egy dead release újra kipróbálható, ami elfogadható ár azért, hogy ne kelljen hozzá tábla.
   - **Az óra is memóriában van** (hash → `{ progress, since }`), így nincs migráció; egy újraindítás annyit jelent, hogy a számláló újraindul, ami egyórás küszöbnél nem számít.
   - **Dry-runban csak logol**: a torrent-törlés valódi, fájlokat érintő művelet, azt a dry-run szándéka szerint nem szabad megtennie.
-  - Ellenőrizve: 61 perc mozdulatlanság után elakadtnak jelöl, közben 0.30 → 0.31 haladásra újraindítja az órát; a **`stalledUP`** (kész torrent, akinek nincs kihez seedelnie — a te két torrented pontosan ilyen) két óra után sem elakadt; feketelistázás után ugyanaz a release `picked=false`, `reason="stalled once already"`.
+  - Ellenőrizve: 61 perc mozdulatlanság után elakadtnak jelöl, közben 0.30 → 0.31 haladásra újraindítja az órát; a **`stalledUP`** (kész torrent, akinek nincs kihez seedelnie — a te két torrented pontosan ilyen) két óra után sem elakadt; feketelistázás után ugyanaz a release `picked=false`, `reason="already tried and dropped"`.
 
 ### Fázis 7 — Robusztusság / üzemeltetés
 - [x] A scanner retry/backoff-ja megvan (`searchAttempts`, `lastCheckedAt`), az indexer-hívások hibái nem dobnak, csak logolnak és üres listát adnak, a torznab `error` válasz (pl. `203`) fallbackot indít.
@@ -312,6 +313,7 @@ Amit ebből átvettem:
 - [x] **CRLF sorvégek** — `.gitattributes` (`* text=auto eol=lf`), 2026-08-07.
 - [x] **Lint** (2026-08-08) — 78 találatról nullára. A többsége gépies volt (`prefer-const`), egy valódi elgépelés is kijött: a `tooltip.tsx`-ben egy magányos `1` állt utasításként a provider után. A keresősáv debounce-effektje mostantól a `navigate`-re hivatkozik (`useCallback`), nem megy el mellette. A maradék 35 `any` mind a három külső formátumot olvasó fájlban volt (TMDB, torznab, qBittorrent) — ott a szabály fájl-szinten kikapcsolva, indoklással az `eslint.config.mjs`-ben; máshol továbbra is hiba.
 - [x] **Letöltési mappák** (2026-08-08) — `TORRENT_MOVIE_PATH` és `TORRENT_SERIES_PATH`; ha üresek, minden marad a kategória saját könyvtárában (a régi viselkedés). A qBittorrent `add` hívás `savepath` mezőjét használja, a kategória nem változik, tehát a sync és a `listManagedTorrents` szűrése érintetlen.
+- [x] **Kattintás → adatlap várakozása** (2026-08-08) — `loading.tsx` boundary, szerver oldalon renderelt adatlap, a dupla sections-kérés és a provider-újrarenderelések megszüntetése. Mérésekkel: lásd a lenti „Kattintás → adatlap" alfejezetet.
 - [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
 
 ### Fázis 8 — Későbbi, opcionális
@@ -456,7 +458,9 @@ Megvalósítás: [src/components/watchlist-table.tsx](src/components/watchlist-t
 - A DTO-ba bekerült a `lastCheckedAt` (a unitok közül a legfrissebb) és a `searchAttempts` (a legnagyobb).
 - **Nincs „mikor készült el" oszlop**: azt sehol nem tároljuk, és az `updatedAt` a `Watchlist` soron nem mozdul, amikor egy unit állapota változik. Ha kell, egy `completedAt` oszlop lenne rá a válasz.
 
-**`Scan now` gomb (2026-08-07-i kérés) ✅** — a `/watchlist` fejlécében (a `/downloaded`-en nincs, ott értelmetlen). A `POST /api/scan` `{ force: true }`-szal megy, ami **mindkét visszatartást kikapcsolja**: a növekvő backoffot és a megjelenési dátum szerinti szűrést is. A `monitored` és a státusz-feltétel megmarad — a gomb „nézd meg most, amit figyelek", nem „nézz meg mindent".
+**`Scan now` gomb (2026-08-07-i kérés) ✅** — a `/watchlist` fejlécében (a `/downloaded`-en nincs, ott értelmetlen). A `POST /api/scan` `{ force: true }`-szal megy, ami **a növekvő backoffot kapcsolja ki**, hogy semmi ne várja ki a saját következő időpontját. A `monitored` és a státusz-feltétel megmarad — a gomb „nézd meg most, amit figyelek", nem „nézz meg mindent".
+
+> **2026-08-08-i javítás:** eredetileg a `force` a **megjelenési dátum szerinti szűrést is** kikapcsolta („kérdezze meg most, akkor is, ami még nem jelent meg"). Ez a döntés visszavonva — pontosan ez engedett be egy kártevőt, lásd a lenti „Meg nem jelent rész letöltése" alfejezetet. A dátumot **semmilyen hívó nem hagyhatja figyelmen kívül.**
 
 - A `force` a `planSeasonGrab`-ig lemegy, tehát a még nem sugárzott epizódokra is elindul a keresés. Az `aired` mező viszont **továbbra is a TMDB szerinti valóságot mondja**, csak a keresés kényszerített — így a pack-döntés (`shouldUsePack`, `allAired`) nem torzul el egy kézi scan miatt.
 - A gomb dry-runban is használható, a toast ilyenkor kiírja, hogy valójában nem indult letöltés.
@@ -506,6 +510,145 @@ Kérés: az adatlap mutasson meg mindent, ami TMDB-ről megkapható és érdemes
 
 Kérésre a `Downloaded` oldalból **`Library`** lett (`/library`), és ott a haladás-oszlop helyére a státusz került: minden sor kész, a haladása semmit nem mond. Mobilon a kártyák ~30%-kal kisebbek (sorokban 250 → 175 px, rácsban 2 → 3 oszlop).
 
+#### Meg nem jelent rész letöltése, és egy `.scr` a torrentben (2026-08-08-i bejelentés) ✅
+
+Bejelentés: „Silo 3. évad 7–10. részt watchlistre raktam, elvileg egyik sem jelent még meg, viszont a 7. részt letöltötte, és rossz is, valami `.scr` fájlt töltött le."
+
+**Amit a napló és a kliens mutatott:**
+
+```
+[scheduler] manual scan: every monitored item, backoff and release dates ignored
+[scheduler] show 125988 S3 E7: grabbing Silo S03E07 MULTI 1080p WEB H264 HiggsBoson
+```
+
+A torrent egyetlen fájlja: `Silo S03E07 MULTI 1080p WEB H264-HiggsBoson.scr`, **1,2 GB** — Windows screensaver-futtatható, hihető epizód-méretre felfújva. Az S3E7 `airDate`-je **2026-08-13**, tehát a rész 5 nap múlva jelenik meg.
+
+**Miért ment át minden meglévő védelmen:** a release *neve* hibátlan volt — a cím egyezik, az `S03E07` egyezik, `1080p`, létező group. A cím-ellenőrzés, az év-ellenőrzés, a felbontás-küszöb és a méret-küszöb mind jogosan engedte át. A `scr` **benne van** a kizáró kulcsszavakban (`DEFAULT_EXCLUDES`), de a `.scr` nem a release nevében volt, hanem a torrenten *belüli* fájlban — a névre nézve semmi nem látszott. Egyetlen jel volt: a rész még nem jelent meg.
+
+**A gyökérok:** a `Scan now` gomb `{ force: true }`-ja a 2026-08-07-i döntés szerint a megjelenési dátum szerinti visszatartást is kikapcsolta. Az időzített kör soha nem tette volna meg — a `scanEpisodes` szűrője `airDate <= most`. Vagyis nem a scanner hibázott, hanem az a szabály, ami a kézi gombnak megengedte, hogy átnyúljon a dátumon.
+
+**Javítás, két rétegben:**
+
+| réteg | mi lett |
+|---|---|
+| **Dátum, kivétel nélkül** | A `force` mostantól **csak a backoffot** kapcsolja ki. Az `airDate` szűrő a `scanMovies`-ban és a `scanEpisodes`-ben mindig érvényes, és a `planSeasonGrab` `force` opciója (ami az `aired` ellenőrzést kerülte meg) **megszűnt** — nem hívó dönti el, hanem nincs rá lehetőség. Egy még meg nem jelent tartalomra illeszkedő release definíció szerint hamis, és a neve tetszőlegesen jó lehet: ez az egyetlen ellenőrzés, ami elkapja. |
+| **A hasznos tartalom ellenőrzése** ([payload.ts](src/lib/payload.ts)) | Az indexer csak nevet ad, a torrent tartalma viszont lebuktatja a hamisítványt. A `syncDownloads` **még letöltés közben**, a „kész" megállapítása *előtt* megnézi a fájllistát (`getTorrentFiles`). Rossznak számít, ha **a legnagyobb fájl futtatható**, vagy ha **egyetlen videófájl sincs benne**. Ilyenkor a torrent a fájljaival törlődik (`PAYLOAD_DELETE_FILES=1`), a release neve a stall-feketelistára kerül, a unitok `PENDING`-re állnak azonnali esedékességgel. Dry-runban csak logol. A három kiterjesztés-lista **kizárólag env-ből** jön (`PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS`) — lásd alább. |
+
+**A listák csak env-ből jönnek** (2026-08-08-i kérés, nincs kódba írt tartalék). Ennek két következménye van, és mindkettő szándékos:
+- **Beállítatlan lista = az a szabály ki van kapcsolva.** Az üres listát *nem* értelmezi „semmi nem videó"-ként, mert az minden torrentet törölne — egy hiányzó konfiguráció nem bizonyíték arra, hogy a letöltés rossz. A `startScheduler` ezért kiírja, ha a védelem nem él: `payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on` — egy néma, nem működő biztosíték rosszabb, mint a semmi.
+- **`*` = minden elfogadott**, vagyis az a lista semmit nem utasít el. Így egy szabály kikapcsolható anélkül, hogy a listát ki kellene ürítened (és később visszaírnod). A `PAYLOAD_EXECUTABLE_EXTENSIONS=*` tehát *nem* azt jelenti, hogy minden futtathatónak számít — hanem hogy ez a szabály nem szól bele.
+- Mivel nincs default, a három sor bekerült a **`.env`-edbe** is (eddig ott csak az alapértéktől eltérő beállítások voltak) — enélkül az ellenőrzés nem futott volna.
+- A `.r00`–`.r99` nem külön lista: a `rar` bejegyzést követi az archív listában, tehát ha kiveszed a `rar`-t, a többrészes archívum sem számít annak.
+
+**Csak biztos esetben avatkozik be** — a vakriasztás itt drágább lenne, mint egy átcsúszó hamisítvány:
+- **Archívumos scene-release** (`.rar` + `.r00`…) nem tartalmaz videókiterjesztést, de nem is megítélhető → átmegy.
+- **Magnet, aminek még nincs metaadata** → üres fájllista → nem ítél, azt a stall-óra kezeli.
+- A qBittorrent **`.!qB` végű, félkész fájljait** és a `.pad/` kitöltő bejegyzéseit levágja/kihagyja.
+- A „kis igazi sample + nagy kártevő" trükk miatt a **legnagyobb** fájl dönt, nem az, hogy van-e valahol egy videó.
+
+**Mérés a valódi adatokon** (a kliensben lévő három torrent + szintetikus esetek):
+
+```
+=== real torrents in the client
+  BAD Silo S03E07 MULTI 1080p WEB H264-HiggsBoson | its largest file is a .scr
+  ok  Obsession.2025.1080p.BluRay.DDP7.1.Atmos.x264.HUN-FULCRUM
+  ok  Mortal.Kombat.II.2026.1080p.MA.WEBRip.DDP5.1.Atmos.x264.HUN-FULCRUM
+
+  BAD the actual fake        its largest file is a .scr
+  BAD sample + malware       its largest file is a .exe
+  BAD nfo and subs only      there is no video file in it
+  BAD apk padded             its largest file is a .apk
+  ok  plain episode / season pack / rar scene release / still downloading (.!qB)
+  ok  metadata not in yet / padding plus video / iso release
+```
+
+A dátumszűrő ugyanezen az adaton: egy **erőltetett** scan most `0` epizódot vesz elő, a dátumot figyelmen kívül hagyva `3`-at vett volna (S3E8 `2026-08-20`, S3E9 `2026-08-27`, S3E10 `2026-09-03`).
+
+**Takarítás:** a kártevő torrent a fájljával együtt törölve a qBittorrentből, az S3E7 unit vissza `PENDING`-re (`hash=null`, `searchAttempts=1`). Mind a négy rész figyelt marad, és egyiket sem keresi a scanner a saját megjelenési dátuma előtt.
+
+**Nyitva marad:** a feketelista memóriában él (a PLAN korábbi döntése szerint, tábla helyett), tehát egy szerver-újraindítás után ugyanaz a hamis release újra kipróbálható. A dátum-védelem miatt viszont ez csak a megjelenés után fordulhat elő, és akkor a tartalom-ellenőrzés letöltés közben megint kiveszi, plusz egy próbálkozást számol — vagyis a kör önmagát javítja, csak nem első próbálkozásra. A **már `DOWNLOADED`** unitok tartalmát a sync szándékosan nem nézi újra (különben minden könyvtárbeli torrent fájllistája lekérésre kerülne minden körben, és egy rossznak ítélt film unitja a „letöltéskor levett” `monitored` miatt némán kiesne a keresésből).
+
+#### „Nem írja, hogy megjelenésre várnak" (2026-08-08-i bejelentés) ✅
+
+Bejelentés: a Silo 47 perce felkerült a watchlistre, de „még egyszer sem lett ellenőrizve" — és a felület ezt nem magyarázta meg.
+
+**A viselkedés helyes volt:** mind a négy rész (S3E7–E10) `2026-08-13` és `2026-09-03` között jelenik meg, tehát a `scanEpisodes` mindet visszatartja. A `lastCheckedAt = never` ennek a *következménye*: a scanner meg sem nézi a meg nem jelent részt, így nincs mit feljegyeznie. Élesben ellenőrizve: egy erőltetett kör lefutott (`manual scan: every monitored item that is out, backoff ignored`) és 0 elemet vett elő, a unitokhoz nem írt semmit.
+
+**A hiba a megjelenítésben volt.** Az elem `PENDING`-nek számított, tehát `Watchlisted` badge-et kapott, mellette `Last checked: never` és `Attempts: —` — ez pontosan úgy néz ki, mint egy nem működő scanner. A `Waiting for release` felirat pedig már foglalt volt a `SEARCHING`-re, ami **mást jelent**: azt, hogy kerestünk és nem találtunk semmi használhatót.
+
+Ezért bekerült egy **új, származtatott állapot**: `UPCOMING` („nincs még mit keresni"). Nem DB-érték és nem is kell hozzá migráció — a `WatchStatus` (tárolt, unit-szintű) marad az öt eredeti, és mellé jött a `WatchlistStatus = WatchStatus | "UPCOMING"` az **elem**-szintű, mindig számolt státuszra. Az epizód-sorok továbbra is a szűkebb típust hordozzák, tehát a `season-picker` nem kap egy sosem előforduló kulcsot.
+
+**Mikor `UPCOMING`:** ha egy elemnek nincs se letöltés alatti, se keresett unitja, és **minden még megszerzendő (`PENDING`) unitja jövőbeli `airDate`-tel bír**. Ismeretlen dátum nem számít jövőbelinek — az kereshető, tehát `PENDING` marad. A DTO-ba bekerült a `nextAirDate` is (a legkorábbi dátum, amire még várunk), különben az állapot nem lenne megmagyarázható.
+
+Amit ez a szabály mellékesen megjavít: **egy sorozat, amivel utol vagy érve**, eddig `Watchlisted`-nek látszott (a letöltött részek mögötte, a következő még nincs kész) — most `Not out yet`, a következő rész dátumával.
+
+| ág | eredmény |
+|---|---|
+| minden rész még csak jövőben jelenik meg (a Silo esete) | `UPCOMING`, next=2026-08-13 |
+| utol vagy érve, a következő még nem jelent meg | `UPCOMING`, next=2026-08-13 |
+| egy rész megjelent és még nem kerestünk rá | `PENDING` (esedékes, nem „upcoming") |
+| egy részre kerestünk és nem találtunk | `SEARCHING` nyer |
+| még be nem mutatott film | `UPCOMING` |
+| bemutatott film, keresésre vár | `PENDING`, next=– |
+| film ismeretlen dátummal | `PENDING`, next=– |
+| bármi letöltés alatt | `DOWNLOADING` nyer |
+
+Felületen: `Not out yet` badge (a kártyákon is), a `/watchlist` haladás-oszlopában alatta halványan `out 13 Aug, in 5 days`, és egy új `Not out yet` szűrő-chip. A főoldal `On your watchlist` sora is számolja az `UPCOMING`-ot, különben egy ilyen elem eltűnt volna onnan.
+
+#### „Ami letöltött, az lekerül a watchlistről" (2026-08-08-i kérés) ✅
+
+Eddig egy elkészült letöltés a watchliston maradt, amíg valaki kézzel rá nem nyomott a `Stop watching`-ra — pont az a lépés, amire a felhasználónak semmi oka nincs. Mostantól **a sikeres letöltés maga viszi le a listáról**, két, egymást kiegészítő szabállyal:
+
+| hol | mi történik |
+|---|---|
+| `syncDownloads`, `isComplete` ág ([scheduler.ts](src/lib/scheduler.ts)) | **filmnél** a `monitored` is `false`-ra vált a `DOWNLOADED`-del együtt. Egy filmnél nincs mit tovább figyelni, tehát a flag onnantól hazugság lenne. |
+| a watchlist-tábla szűrője ([watchlist-table.tsx](src/components/watchlist-table.tsx)) | a `/watchlist` **állapot alapján** szűr (`status !== "DOWNLOADED"`), nem a `monitored` alapján. Így egy teljesen letöltött **sorozat** is lekerül, pedig a figyelése megmarad. |
+
+Miért nem elég az egyik:
+- Csak a `monitored` törlése **sorozatnál nem járható**: az epizód-unit `monitored` flagje az egyetlen nyoma annak, hogy az évadot kértük, és az `inheritedMonitored` ebből dönt egy később bejelentett epizódról/évadról. Ha a letöltött epizódokról letörölnénk, egy végig letöltött, futó sorozat **csendben abbahagyná az új évad követését** — épp az a működés esne ki, amiért az app létezik. (Az „ami letöltött, azt kértük" heurisztika sem jó pótlék: a *kézi* letöltés is `DOWNLOADED`-et hagy, és azt a PLAN korábbi döntése szerint kifejezetten nem szabad monitorozásnak érteni.)
+- Csak a szűrő átírása **filmnél félmunka**: a `monitored` maradna `true`, tehát a kártyán ott lenne a könyvjelző, az adatlapon a `Stop watching`, és a `MediaCard` menüje „Stop watching"-ot ajánlana valamire, ami már megvan.
+
+Következmények, amiket végigvettem:
+- **A scanner nem tölti le újra**: `scanMovies` / `scanEpisodes` `monitored: true` **és** `PENDING`/`SEARCHING` státuszt kér — egy `DOWNLOADED` unit már a státusza miatt is kiesik.
+- **A sor nem törlődik**: a `pruneWatchlistItem` minden `DOWNLOADING`/`DOWNLOADED` unitot megőrzendőnek vesz, tehát a film a `Library`-ban marad.
+- **A `deriveStatus` nem változik**: a `trackedUnits` a nem-`PENDING` unitokat is számolja, tehát egy monitorozás nélküli, letöltött unit továbbra is `DOWNLOADED`-et ad.
+- **A főoldal személyes sorai** (`Ready to watch`, `On your watchlist`) eddig is státusz alapján válogattak, nem `monitored` alapján — ott nem kellett hozzányúlni.
+- **A kliensből eltűnt kész torrent** útja változatlan: `forgetUnits` + `pruneWatchlistItem`, a sor kiürülve törlődik, újra letöltés nincs.
+- A `/watchlist` **`Downloaded` szűrő-chipje törölve** — az új szabály mellett sosem adhat találatot.
+
+**Ellenőrzés** eldobható sorokon (fake tmdb id 9000000x, utána törölve; a valódi adatokhoz nem nyúlt):
+
+```
+MOVIE
+  downloading   : status=DOWNLOADING monitored=true  | /watchlist=true  /library=false
+  downloaded    : status=DOWNLOADED  monitored=false | /watchlist=false /library=true
+  prune keeps the row: true
+SHOW (1 of 2 aired episodes)
+  E1 downloaded : status=PENDING    monitored=true  | /watchlist=true  /library=false
+  both done     : status=DOWNLOADED monitored=true  | /watchlist=false /library=true
+  episode monitored flags kept: [{"episodeNumber":1,"monitored":true},{"episodeNumber":2,"monitored":true}]
+```
+
+Plusz a „kész torrent eltűnt a kliensből" ág egy már monitorozás nélküli filmen: a sor **törlődik**, unit nem marad.
+
+#### Kattintás → adatlap: a várakozás okai (2026-08-08-i bejelentés) ✅
+
+Bejelentés: „a kártyákra kattintva hosszú várakozás van, mire elkezd betölteni az adatlap". **Mérve a futó dev szerveren**, és a szerver nem volt lassú: az adatlap RSC-válasza melegen **50 ms**, a `/api/details` 175 ms (hidegen 560), 24 poszter a `/_next/image`-en 6 párhuzamos szálon 1,1 s. Ami lassú volt, az a kattintás és az **első pixel** közti szakasz:
+
+- **Nem volt `loading.tsx`** az adatlap route-ján. Loading boundary nélkül az App Router navigációja *blokkoló*: a kattintás után semmi nem történik, amíg a szerver le nem rendereli az oldalt — dev-ben ehhez jött a route első fordítása (**+780–1200 ms**). Ugyanezért volt használhatatlan a `<Link>` prefetch is: a Link csak a legközelebbi boundary-ig melegíti a route-ot, és ha nincs boundary, nincs mit prefetchelni.
+- **Az adatlap teljesen kliens oldali volt.** A sorrend így nézett ki: route-chunkok letöltése (**475 KB** csak erre a route-ra, dev) → skeleton → `/api/details` → `/api/watchlist/:id` → tartalom. Négy egymásra épülő várakozás, mielőtt bármi látszik.
+- **Dupla kérések.** A `DiscoverSections` effektje az `entries.length`-től függött, így a watchlist megérkezésével **még egyszer** lekérte a teljes sections-választ (~1,3 s szerveroldali munka feleslegesen, minden főoldal-látogatásnál).
+
+Amit ez alapján átírtam:
+- [x] **`loading.tsx` az adatlapra** — a kattintás azonnal skeletont ad, és ezzel a kártyák linkjei prefetchelhetővé válnak (prodban; dev-ben a Next nem prefetchel).
+- [x] **Az adatlap szerver komponens lett**: a [page.tsx](src/app/details/[type]/[id]/page.tsx) `getMediaDetails` + `getTvSeasons`-t hív (ugyanazt a TTL-es cache-t, amit a régi API route), és a kész adatot adja át a [details-view.tsx](src/components/details-view.tsx)-nek. A tartalom így **az első válaszban benne van** — ellenőrizve: a `/details/movie/550` HTML-jében ott a cím, a `/details/tv/108978`-ban az évadok és az epizódszámok. A `/api/watchlist/:id` (epizódonkénti pipák) maradt kliens oldalon, de már nem tart vissza semmit.
+- [x] **`GET /api/details` törölve** — az adatlap volt az egyetlen hívója.
+- [x] **A dupla sections-kérés megszűnt**: a `WatchlistContext` kapott egy `revision` számlálót, amit csak a valódi műveletek (`add` / `remove` / `destroy`) növelnek, és a `DiscoverSections` erre figyel a lista tartalma helyett.
+- [x] **Provider-értékek memoizálva** (`useMemo`) mindkét contextben. Eddig minden renderben új objektum került a `value`-ba, tehát a provider bármelyik állapotváltozása újrarenderelte az **összes** fogyasztót — egy főoldalon 122 `MediaCard`-ot. A `DownloadProvider` ilyen szempontból a legrosszabb volt: a kiadásválasztó ablak saját `isLoading`/`preview`/`picks` állapota a mögötte lévő egész oldalt újrarenderelte, miközben az indexer-keresés futott. A `getEntry` egyúttal lineáris keresésből `Map`-lookup lett.
+- [x] `images.domains` → `images.remotePatterns` (a Next minden kérésnél kiírta a deprecation figyelmeztetést).
+
+**Ára / ami nyitva marad:** a `loading.tsx` streaming boundary-t csinál, tehát a válasz feje (200) már elment, mire a TMDB-lekérés kiderítené, hogy nincs ilyen id — az ismeretlen `/details/movie/999999999` és `/details/person/550` **helyesen a 404-es oldalt rajzolja ki, de HTTP 200-as státusszal**. Böngészőből ez nem látszik, a felhasználó a 404-es lapot kapja (eddig egy örök skeletont kapott, tehát ez így is javulás); ha a státuszkód is fontos lesz, a boundary és a 404 közül kell választani.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -517,7 +660,7 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 ### Amit legközelebb kézzel meg kell tenni
 1. **A Next dev szervert el kell indítani a konténerben** — a scheduler csak azzal együtt indul (`instrumentation.ts`). Ez a sor jelzi, hogy jó: `[scheduler] started, scanning every 15 minutes, reading the client back every 1`. Amíg ez nem fut, semmilyen háttérkör nincs.
 2. **`SCAN_DRY_RUN=0`** a `.env`-ben, amikor a **scanner** is indíthat letöltéseket. A kézi letöltés (a kiadásválasztó ablakon keresztül) ettől függetlenül mindig valódi — 2026-08-08-án az *Obsession* így jött le, végig helyesen. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
-3. **A watchliston egyetlen sor van**: Obsession (`DOWNLOADED`) — vagyis a dry-run kikapcsolása önmagában semmit nem indítana el, csak azt, amit ezután felveszel.
+3. **A watchlist 2026-08-08-án üres** (0 `Watchlist` és 0 `WatchlistUnit` sor) — vagyis a dry-run kikapcsolása önmagában semmit nem indítana el, csak azt, amit ezután felveszel.
 
 ---
 
@@ -545,7 +688,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`.
+Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy).
 
 A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta), ha a `.env`-ben bent maradtak, figyelmen kívül maradnak.
 
@@ -565,6 +708,7 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája és az elakadt release-ek feketelistája |
+| [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
 | [src/context/download.tsx](src/context/download.tsx) | a kiadásválasztó ablak állapota, minden letöltés ezen megy keresztül |
@@ -576,6 +720,8 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/components/media-grid.tsx](src/components/media-grid.tsx) | lapozó rács végtelen scrollal (genre-szűrt discover) |
 | [src/components/media-hero.tsx](src/components/media-hero.tsx) | billboard a lap tetején: backdrop + Download / Watchlist / Details |
 | [src/components/discover-sections.tsx](src/components/discover-sections.tsx) | hero + sorok kirajzolása, mindhárom discover nézethez |
+| [src/app/details/[type]/[id]/page.tsx](src/app/details/[type]/[id]/page.tsx) | az adatlap **szerver** komponense: TMDB-adat lekérése (cache-en át), `notFound()` ismeretlen típusra/id-ra |
+| [src/components/details-view.tsx](src/components/details-view.tsx) | az adatlap kliens fele: pipák, letöltés, trailer, watchlist-állapot |
 
 ### API végpontok
 
@@ -584,7 +730,6 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | `GET /api/discover?type&category&genre&page` | TMDB discover: trending / popular / top_rated / upcoming / now_playing / airing_today / on_the_air, vagy genre-szűrt lista |
 | `GET /api/discover/sections?view` | a főoldal / `/movies` / `/series` kész sorai, sorok között dedupálva, hero-val |
 | `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
-| `GET /api/details?type&id` | a teljes adatlap egy hívásban (`details`: stáb, szereplők, trailer, korhatár, ajánlások, hasonlók, pénzügyek) + tv-nél évad- és epizódlista |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
 | `GET /api/watchlist` | dúsított lista (TMDB metaadattal) |
 | `GET /api/watchlist?slim=1` | csak azonosítók + állapot, TMDB-hívás nélkül |

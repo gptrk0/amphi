@@ -1,6 +1,7 @@
 import axios, { AxiosRequestConfig } from "axios";
 
 import { IndexerResult } from "@/lib/indexer";
+import { TorrentFile } from "@/lib/payload";
 
 export type TorrentStatus = {
     hash: string;
@@ -173,6 +174,26 @@ export const getTorrentStatus = async (hash: string): Promise<TorrentStatus | nu
         console.error(err);
 
         return null;
+    }
+};
+
+/**
+ * What is inside the torrent. Empty until the metadata arrives, which for a magnet
+ * can take a while — an empty list means "not known yet", not "nothing in it".
+ */
+export const getTorrentFiles = async (hash: string): Promise<TorrentFile[]> => {
+    try {
+        const files = await request("/api/v2/torrents/files", { params: { hash } });
+
+        return (Array.isArray(files) ? files : []).map((file: any) => ({
+            name: String(file.name || ""),
+            size: Number(file.size || 0)
+        }));
+
+    } catch(err) {
+        console.error(err);
+
+        return [];
     }
 };
 

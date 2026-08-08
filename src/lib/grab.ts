@@ -135,7 +135,7 @@ const mapLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Prom
 export const planSeasonGrab = async (
     tmdbId: number,
     seasonNumber: number,
-    options: { episodeNumbers?: number[], force?: boolean } = {}
+    options: { episodeNumbers?: number[] } = {}
 ): Promise<SeasonPlan | null> => {
     const metadata = await getMediaMetadata("tv", tmdbId);
     const seasons = await getTvSeasons(tmdbId);
@@ -161,9 +161,11 @@ export const planSeasonGrab = async (
         const episodeNumber = episode.episode_number;
         const aired = !! episode.air_date && new Date(episode.air_date).getTime() <= now;
 
-        // `aired` keeps saying what TMDB says — only the search is forced, so the
-        // pack rules below still reason about the real state of the season
-        if (! aired && ! options.force) {
+        // An episode that has not aired is never searched for, by any caller. A
+        // release that exists before the episode does cannot be the episode — this
+        // is the one check a faked release name cannot get past, and skipping it is
+        // how a 1.2 GB `.scr` got in as Silo S03E07 on 2026-08-08.
+        if (! aired) {
             return { episodeNumber, aired, release: null, candidates: [], filtered: 0 };
         }
 

@@ -420,9 +420,10 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
         return { release, reason: "no download link" };
     }
 
-    // it was already downloaded once and stood still until it was given up on
+    // it was grabbed once already and had to be thrown away: it either stood still
+    // until it was given up on, or what came down was not the release at all
     if (isTitleBlocked(normalizeTitle(release.title))) {
-        return { release, reason: "stalled once already" };
+        return { release, reason: "already tried and dropped" };
     }
 
     if (release.seeders < profile.minSeeders) {

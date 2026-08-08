@@ -4,7 +4,8 @@ import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, pla
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { normalizeTitle } from "@/lib/release";
 import { blockTitle, forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
-import { getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
+import { inspectPayload, isPayloadCheckConfigured, PAYLOAD_DELETE_FILES } from "@/lib/payload";
+import { getTorrentFiles, getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import {
     ensureMovieUnit,
     forgetUnits,
@@ -154,10 +155,55 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             continue;
         }
 
+        // Before anything is called finished: the name was all the indexer offered,
+        // and a fake copies it exactly. This is the first look at what is actually
+        // in there, and it runs while the download is still going, so a bad one is
+        // dropped instead of being handed over as available.
+        const payload = inspectPayload(await getTorrentFiles(hash));
+
+        if (payload.bad) {
+            syncLog(`${ unitLabel(running) }: ${ payload.reason } (${ torrent.name }), not the release it claims to be — dropping it`);
+
+            if (isDryRun()) {
+                log("a bad payload is left alone in dry-run, the torrent stays");
+
+                continue;
+            }
+
+            blockTitle(normalizeTitle(torrent.name));
+
+            await removeTorrent(hash, PAYLOAD_DELETE_FILES);
+            forgetStall(hash);
+
+            await prisma.watchlistUnit.updateMany({
+                where,
+                data: {
+                    status: WatchStatus.PENDING,
+                    torrentHash: null,
+                    searchAttempts: { increment: 1 },
+                    lastCheckedAt: null
+                }
+            });
+
+            continue;
+        }
+
         if (torrent.isComplete) {
             syncLog(`${ unitLabel(running) }: downloaded (${ torrent.name })`);
 
-            await prisma.watchlistUnit.updateMany({ where, data: { status: WatchStatus.DOWNLOADED } });
+            // A finished film is off the watchlist the moment it lands — there is
+            // never anything left to watch for. An episode keeps the flag: it is the
+            // only record that its season was wanted, and `inheritedMonitored` reads
+            // it to decide whether a later episode or season is followed.
+            const isMovie = running.every(unit => unit.seasonNumber === null);
+
+            await prisma.watchlistUnit.updateMany({
+                where,
+                data: {
+                    status: WatchStatus.DOWNLOADED,
+                    ...(isMovie ? { monitored: false } : {})
+                }
+            });
 
         } else if (torrent.isFailed) {
             syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`);
@@ -199,7 +245,13 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
 /**
  * `force` is the manual scan from the watchlist: look at everything monitored right
- * now, whether or not its backoff has elapsed and whether or not it is out yet.
+ * now, whether or not its backoff has elapsed.
+ *
+ * It does *not* reach past the release dates, and nothing else may either. Something
+ * that is not out yet cannot be on a tracker, so a release that matches it is a fake
+ * by definition — and its name can be a perfect copy of the real one, which is how a
+ * padded `.scr` was grabbed as an unaired Silo episode on 2026-08-08. The date is the
+ * only check that catches that, so it is not optional.
  */
 export type ScanOptions = { force?: boolean };
 
@@ -209,12 +261,10 @@ export const scanMovies = async (options: ScanOptions = {}) => {
             watchlist: { type: ContentType.MOVIE },
             monitored: true,
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
-            ...(options.force ? {} : {
-                // a film that is not out yet cannot be on a tracker; episodes are
-                // held back by the same airDate, just in scanEpisodes
-                AND: [ { OR: [ { airDate: null }, { airDate: { lte: new Date() } } ] } ],
-                ...dueFilter()
-            })
+            // an unknown date does not hold a film back, a future one does. Episodes
+            // are held back by the same airDate, just in scanEpisodes
+            AND: [ { OR: [ { airDate: null }, { airDate: { lte: new Date() } } ] } ],
+            ...(options.force ? {} : dueFilter())
         },
         include: { watchlist: true }
     });
@@ -264,10 +314,10 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
             status: { in: [ WatchStatus.PENDING, WatchStatus.SEARCHING ] },
             seasonNumber: { not: null },
             monitored: true,
-            ...(options.force ? {} : {
-                airDate: { not: null, lte: new Date() },
-                ...dueFilter()
-            })
+            // an episode with no date at all is not searched for either: a show's
+            // unaired episodes are exactly what fake releases are named after
+            airDate: { not: null, lte: new Date() },
+            ...(options.force ? {} : dueFilter())
         },
         include: { watchlist: true }
     });
@@ -296,7 +346,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
     for (const { watchlistId, tmdbId, seasonNumber, units } of groups.values()) {
         const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
 
-        const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers, force: options.force });
+        const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
 
         if (! plan) {
             continue;
@@ -406,7 +456,7 @@ export const runScan = async (options: ScanOptions = {}) => {
     globalForScheduler.schedulerRunning = true;
 
     if (options.force) {
-        log("manual scan: every monitored item, backoff and release dates ignored");
+        log("manual scan: every monitored item that is out, backoff ignored");
     }
 
     try {
@@ -433,6 +483,12 @@ export const startScheduler = () => {
     globalForScheduler.schedulerStarted = true;
 
     log(`started, scanning every ${ SCAN_INTERVAL_MS / 60000 } minutes, reading the client back every ${ SYNC_INTERVAL_MS / 60000 }`);
+
+    // the lists come from the env only, so an empty one is a real possibility — and a
+    // check that cannot reject anything must not look like it is guarding something
+    if (! isPayloadCheckConfigured()) {
+        log("payload check is OFF: set PAYLOAD_EXECUTABLE_EXTENSIONS / PAYLOAD_VIDEO_EXTENSIONS to turn it on");
+    }
 
     setTimeout(() => void runScan(), START_DELAY_MS);
     setInterval(() => void runScan(), SCAN_INTERVAL_MS);
