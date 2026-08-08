@@ -11,21 +11,16 @@ export const stallMinutes = () => Math.round(STALL_MS / 60000);
 type StallEntry = { progress: number, since: number };
 
 /**
- * How long a torrent has been standing still, and which releases turned out to be
- * dead. Both live in memory on purpose: a restart only means the clock starts over,
- * which at an hour long threshold changes nothing, and it saves a migration for a
- * value that is meaningless the moment the process ends.
+ * How long a torrent has been standing still. This one stays in memory: a restart
+ * only means the clock starts over, which at an hour long threshold changes nothing,
+ * and it saves a migration for a value that is meaningless the moment the process
+ * ends. The blocklist it used to keep company is a table now — see `blocklist.ts`,
+ * where a restart forgetting things was a real problem.
  */
-const globalForStall = global as unknown as {
-    stallClock: Map<string, StallEntry>,
-    stalledTitles: Set<string>
-};
+const globalForStall = global as unknown as { stallClock: Map<string, StallEntry> };
 
 const clock = globalForStall.stallClock || new Map<string, StallEntry>();
 globalForStall.stallClock = clock;
-
-const stalledTitles = globalForStall.stalledTitles || new Set<string>();
-globalForStall.stalledTitles = stalledTitles;
 
 /**
  * qBittorrent's own verdict comes first: `stalledDL` is "downloading, but nothing
@@ -68,28 +63,6 @@ export const trackStall = (torrent: TorrentStatus, now = Date.now()): boolean =>
     return now - known.since >= STALL_MS;
 };
 
-export const stalledFor = (hash: string, now = Date.now()) => {
-    const known = clock.get(hash.toLowerCase());
-
-    return known ? Math.round((now - known.since) / 60000) : 0;
-};
-
 export const forgetStall = (hash: string) => {
     clock.delete(hash.toLowerCase());
 };
-
-/**
- * A release that had to be thrown away is remembered by its name, so the search that
- * follows does not pick it again — whether it stalled or turned out not to be the
- * release at all (see `payload.ts`). qBittorrent names a torrent after the release it
- * came from, which is what makes this match.
- */
-export const blockTitle = (normalized: string) => {
-    if (normalized) {
-        stalledTitles.add(normalized);
-    }
-};
-
-export const isTitleBlocked = (normalized: string) => stalledTitles.has(normalized);
-
-export const clearBlockedTitles = () => stalledTitles.clear();

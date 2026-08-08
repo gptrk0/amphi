@@ -20,6 +20,31 @@ enum WatchStatus {
   FAILED
 }
 
+enum BlockReason {
+  STALLED
+  BAD_PAYLOAD
+}
+
+/// A release that was grabbed once and had to be thrown away. Kept by its normalized
+/// name, which is what qBittorrent names the torrent after — that is what lets a later
+/// search recognise it.
+///
+/// This used to live in memory for the lifetime of the process, which meant every
+/// restart handed the same fake release another chance. A stall can be bad luck
+/// though — no seeders that evening — so those expire; a payload that was not the
+/// release at all never becomes one, and those have no expiry.
+model BlockedRelease {
+  id        Int         @id @default(autoincrement())
+  title     String      @unique
+  reason    BlockReason
+  // what was actually wrong, kept for the log and for a later "why not this one?" view
+  detail    String?
+  blockedAt DateTime    @default(now())
+  expiresAt DateTime?
+
+  @@index([expiresAt])
+}
+
 // Identity only — titles and images always come from TMDB, everything else lives on
 // the units.
 model Watchlist {

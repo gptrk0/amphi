@@ -48,6 +48,8 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
+**2026-08-08: három tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease` — az egyetlen tábla, ami nem a watchlistről szól. Nincs relációja semmivel, a kulcsa a normalizált release-név; részletek a lenti „A feketelista tábla lett" alfejezetben, a séma pedig itt, a `WatchlistUnit` után.
+
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
 
 Az évad így már nem tárolt entitás, hanem a unitok `seasonNumber` mezőjéből olvasható ki. Egy évad akkor „figyelt", ha a unitjai azok; az évad-szintű kapcsoló egy `updateMany`. Amit ez elvesz: **egy olyan évadhoz, aminek a TMDB-n még egy epizódja sincs, nem tárolható monitorozási beállítás** (a Severance S3 pont ilyen) — nincs mihez kötni. Amint megjelenik az első epizódja, az `inheritedMonitored` szabálya dönt.
@@ -101,6 +103,24 @@ model WatchlistUnit {
 
   @@unique([watchlistId, seasonNumber, episodeNumber])
   @@index([status])
+}
+
+enum BlockReason {
+  STALLED
+  BAD_PAYLOAD
+}
+
+// egy release, amit egyszer már lehúztunk és el kellett dobni. A kulcs a normalizált
+// release-név, mert a qBittorrent a release nevén nevezi el a torrentet.
+model BlockedRelease {
+  id        Int         @id @default(autoincrement())
+  title     String      @unique
+  reason    BlockReason
+  detail    String?
+  blockedAt DateTime    @default(now())
+  expiresAt DateTime?   // null = soha nem jár le
+
+  @@index([expiresAt])
 }
 ```
 
@@ -286,7 +306,7 @@ Amit ebből átvettem:
 - [x] **Stall-kezelés** (2026-08-08). Eddig csak az `error`/`missingFiles` állapot és az eltűnt torrent számított hibának — egy órákig 0 B/s-en álló letöltés a végtelenségig `DOWNLOADING` maradt, és mivel a unit már nem `PENDING`, a scanner sem kereste újra. Ez volt az utolsó mód, ahogy egy elem némán elveszhetett.
   - **Mikor számít elakadtnak** ([src/lib/stall.ts](src/lib/stall.ts)): a torrent nem kész és nem hibás, **és** a qBittorrent szerint `stalledDL` vagy `metaDL` (magnet, aminek sosem jött meg a metaadata), vagy 0 a letöltési sebessége — **és** a `progress` a teljes `STALL_MINUTES` (default 60) alatt egyszer sem mozdult. Bármilyen haladás nullázza az órát, tehát egy lassú letöltés soha nem esik áldozatul.
   - **Mi történik**: a torrent a fájljaival együtt törlődik (`STALL_DELETE_FILES=1`, egy félkész fájl nem érték), a release neve **feketelistára** kerül, a unitok `PENDING`-re állnak `lastCheckedAt: null`-lal (tehát azonnal esedékesek) és eggyel több próbálkozással.
-  - **A feketelista** a `rateRelease`-ben szűr (`already tried and dropped` — 2026-08-08 óta a hamis tartalmú torrentek is ide kerülnek, ezért lett általánosabb a szöveg), normalizált release-név alapján — a qBittorrent a release nevén nevezi el a torrentet, ezért ez összeér. Memóriában él, a folyamat élettartamára: egy újraindítás után egy dead release újra kipróbálható, ami elfogadható ár azért, hogy ne kelljen hozzá tábla.
+  - **A feketelista** a `rateRelease`-ben szűr (`already tried and dropped` — 2026-08-08 óta a hamis tartalmú torrentek is ide kerülnek, ezért lett általánosabb a szöveg), normalizált release-név alapján — a qBittorrent a release nevén nevezi el a torrentet, ezért ez összeér. **2026-08-08 óta tábla** (`BlockedRelease`, ld. a 3. pontot), nem memória: a korábbi „elfogadható ár, hogy ne kelljen tábla" döntés a `.scr`-es incidens napján megbukott.
   - **Az óra is memóriában van** (hash → `{ progress, since }`), így nincs migráció; egy újraindítás annyit jelent, hogy a számláló újraindul, ami egyórás küszöbnél nem számít.
   - **Dry-runban csak logol**: a torrent-törlés valódi, fájlokat érintő művelet, azt a dry-run szándéka szerint nem szabad megtennie.
   - Ellenőrizve: 61 perc mozdulatlanság után elakadtnak jelöl, közben 0.30 → 0.31 haladásra újraindítja az órát; a **`stalledUP`** (kész torrent, akinek nincs kihez seedelnie — a te két torrented pontosan ilyen) két óra után sem elakadt; feketelistázás után ugyanaz a release `picked=false`, `reason="already tried and dropped"`.
@@ -406,6 +426,8 @@ A táblázatos nézet első fele: előbb a séma egységesítése, hogy a nézet
 2. `20260807190000_drop_watchlist_season` — a `WatchlistSeason` is megszűnt, a `monitored` és a `seasonNumber` átkerült a unitokra. Így **két tábla maradt: `Watchlist` és `WatchlistUnit`.**
 
 Mindkét migráció kézzel írt, nem a `prisma migrate dev` generálta: a generált változat előbb dobta volna el az oszlopokat, mint hogy az adat átkerül — az elsőnél a Mortal Kombat II `DOWNLOADED` állapotával együtt, a másodiknál az évadok `monitored` értékével együtt. Így mindkettő a régi oszlop eldobása **előtt** másol.
+
+A harmadik tábla később, önállóan jött: `20260808100000_blocked_releases` — tisztán additív (`CREATE TYPE` + `CREATE TABLE` + két index), semmit nem dob el, ezért ott a generált diff változtatás nélkül használható volt.
 
 Érintett fájlok: [prisma/schema.prisma](prisma/schema.prisma), [src/lib/watchlist.ts](src/lib/watchlist.ts), [src/lib/scheduler.ts](src/lib/scheduler.ts), [src/lib/grab.ts](src/lib/grab.ts). A `markMovieDownloading` + `markEpisodesDownloading` egyetlen `markUnitsDownloading(unitIds, hash)`-re, a `getSeasonEpisodes` `getSeasonUnits`-ra cserélődött. **A DTO (`WatchlistEntry` / `WatchlistItem`) szándékosan változatlan**, így a UI-hoz egyáltalán nem kellett hozzányúlni — azt majd a táblázatos nézet alakítja át, egy külön lépésben.
 
@@ -566,7 +588,31 @@ A dátumszűrő ugyanezen az adaton: egy **erőltetett** scan most `0` epizódot
 
 **Takarítás:** a kártevő torrent a fájljával együtt törölve a qBittorrentből, az S3E7 unit vissza `PENDING`-re (`hash=null`, `searchAttempts=1`). Mind a négy rész figyelt marad, és egyiket sem keresi a scanner a saját megjelenési dátuma előtt.
 
-**Nyitva marad:** a feketelista memóriában él (a PLAN korábbi döntése szerint, tábla helyett), tehát egy szerver-újraindítás után ugyanaz a hamis release újra kipróbálható. A dátum-védelem miatt viszont ez csak a megjelenés után fordulhat elő, és akkor a tartalom-ellenőrzés letöltés közben megint kiveszi, plusz egy próbálkozást számol — vagyis a kör önmagát javítja, csak nem első próbálkozásra. A **már `DOWNLOADED`** unitok tartalmát a sync szándékosan nem nézi újra (különben minden könyvtárbeli torrent fájllistája lekérésre kerülne minden körben, és egy rossznak ítélt film unitja a „letöltéskor levett” `monitored` miatt némán kiesne a keresésből).
+**Megoldva 2026-08-08-án:** a feketelista **tábla lett** (`BlockedRelease`), tehát egy szerver-újraindítás után ugyanaz a hamis release már nem kap új esélyt. Ld. a lenti „A feketelista tábla lett" alfejezetet. A **már `DOWNLOADED`** unitok tartalmát a sync szándékosan nem nézi újra (különben minden könyvtárbeli torrent fájllistája lekérésre kerülne minden körben, és egy rossznak ítélt film unitja a „letöltéskor levett” `monitored` miatt némán kiesne a keresésből).
+
+#### A feketelista tábla lett (2026-08-08) ✅
+
+A `.scr`-es incidens után ez volt a legkonkrétabb nyitott pont: az eldobott release-ek neve **memóriában** élt, a folyamat élettartamára. Minden dev-szerver újraindítás új esélyt adott ugyanannak a hamisítványnak — és aznap ez nem elméleti volt.
+
+Most `BlockedRelease` tábla (`20260808100000_blocked_releases`, tisztán additív migráció, semmit nem dob el), és a logika saját modulba került: [blocklist.ts](src/lib/blocklist.ts). A [stall.ts](src/lib/stall.ts) így visszaszűkült arra, ami tényleg csak memóriába való — az elakadás órájára.
+
+**Két lejárati szabály**, mert a két ok nem egyenrangú:
+- `STALLED` → `BLOCKED_RELEASE_TTL_DAYS` (default 30 nap) múlva újra kipróbálható. Egy este nem volt seeder — ez nem tesz egy release-t örökre halottá. `0` = ezt se felejtse el.
+- `BAD_PAYLOAD` → **soha nem jár le**. Egy torrent tartalma nem javul az idővel.
+
+**A lejárt sort nem kell takarítani**: a lekérdezés `expiresAt IS NULL OR expiresAt > now()`, tehát egyszerűen nem olvassa vissza.
+
+**Az olvasás szándékosan szinkron maradt.** A `rateRelease` egy szoros ciklusban több száz jelöltet pontoz, ott nem lehet `await` soronként. Ezért a tábla egy `Set`-be kerül, amit a két keresési belépési pont (`planMovieGrab`, `planSeasonGrab`) tölt fel — ezeken megy át a scanner és a kézi kiadásválasztó is —, 60 másodperces cache-sel. DB-hiba nem állítja meg a keresést, csak logol: a legrosszabb eset az, hogy egy ismert rossz release még egy esélyt kap.
+
+**Ellenőrzés.** Először magam mértem félre: a `global.blocklist` felülírása nem hat a modul már elkapott `cache` referenciájára, tehát az a „cold cache" próba nem bizonyított semmit. Az újraindítás-túlélést **két külön processz** mutatja meg:
+
+```
+process A: wrote the block
+process B, fresh memory, before reading the table: false
+process B, after reading the table:                true
+```
+
+A többi, ugyanezen a futáson: `BAD_PAYLOAD` sor `expires=never`, `STALLED` sor `expires=2026-09-07`; a `rateRelease` a blokkolt névre `already tried and dropped`-ot ad; a lejáratott `STALLED` sor **nem** blokkol többé, a `BAD_PAYLOAD` igen.
 
 #### „Nem írja, hogy megjelenésre várnak" (2026-08-08-i bejelentés) ✅
 
@@ -688,7 +734,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma generate
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még a törölt kolumnákat kérdezi le).
 
-Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy).
+Env-változók, amiket a kód használ a `.env`-ből: `TMDB_API_KEY`, `TMDB_LANGUAGE` (opcionális, default `en-US`), `TMDB_CACHE_TTL_MINUTES` (opcionális, default 720), `DISCOVER_CACHE_TTL_MINUTES` (opcionális, default 60), `DATABASE_URL`, `INDEXER_URL`, `INDEXER_API_KEY`, `INDEXER_IDS` (default `all`, most `ncore,limetorrents,thepiratebay` — a sorrend a prioritás), `INDEXER_PRIORITY`, `INDEXER_PRIORITY_BONUS`, `INDEXER_CAPS_TTL_MINUTES` (opcionális, default 360), `EPISODE_SEARCH_CONCURRENCY` (default 3), `QUALITY_RESOLUTIONS`, `QUALITY_PREFERRED_CODECS`, `QUALITY_CODEC_BONUS`, `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB`, `QUALITY_MIN_SIZE_MOVIE`, `QUALITY_MIN_SIZE_EPISODE`, `QUALITY_PREFERRED_LANGUAGES` (default `hun,eng`), `QUALITY_EXCLUDE_LANGUAGES`, `QUALITY_DEFAULT_LANGUAGE` (default `eng`), `QUALITY_LANGUAGE_BONUS` (default 1000000), `QUALITY_LANGUAGE_FIRST` (`1` = nyelv a felbontás előtt), `QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB` (default 5), `TORRENT_URL`, `TORRENT_USER`, `TORRENT_PASS`, `TORRENT_CATEGORY` (default `aioseerr`), `TORRENT_MOVIE_PATH`, `TORRENT_SERIES_PATH` (opcionális save path-ok, üresen a kategória dönt), `TMDB_REGION` (opcionális, a korhatár országa), `WATCHLIST_SCAN_INTERVAL_MINUTES`, `DOWNLOAD_SYNC_INTERVAL_MINUTES` (default 1), `SEARCH_BACKOFF_MINUTES`, `SEARCH_MAX_BACKOFF_HOURS` (default 24), `DOWNLOAD_OPTION_COUNT` (default 5), `DOWNLOAD_PLAN_TTL_MINUTES` (default 15), `SCAN_DRY_RUN`, `SCAN_DISABLED`, `STALL_MINUTES` (default 60), `STALL_DELETE_FILES` (default `1`), `PAYLOAD_DELETE_FILES` (default `1` — a hamis tartalmú torrent fájljai is törlődnek), `PAYLOAD_VIDEO_EXTENSIONS`, `PAYLOAD_ARCHIVE_EXTENSIONS`, `PAYLOAD_EXECUTABLE_EXTENSIONS` (a tartalom-ellenőrzés három listája, vesszős; vezető pont és kisbetű/nagybetű mindegy), `BLOCKED_RELEASE_TTL_DAYS` (default 30 — ennyi idő után kap új esélyt egy elakadás miatt eldobott release; `0` = soha; a hamis tartalmú mindig végleges).
 
 A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta), ha a `.env`-ben bent maradtak, figyelmen kívül maradnak.
 
@@ -707,7 +753,8 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 | [src/lib/grab.ts](src/lib/grab.ts) | keresés → pontozás → qBittorrent → DB lánc (`planMovieGrab`, `planSeasonGrab`, `planGrabs`, `execute*`) |
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
-| [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája és az elakadt release-ek feketelistája |
+| [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
+| [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |

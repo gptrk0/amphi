@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { normalizeTitle } from "@/lib/release";
-import { blockTitle, forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
+import { BlockReason, blockRelease } from "@/lib/blocklist";
+import { forgetStall, STALL_DELETE_FILES, stallMinutes, trackStall } from "@/lib/stall";
 import { inspectPayload, isPayloadCheckConfigured, PAYLOAD_DELETE_FILES } from "@/lib/payload";
 import { getTorrentFiles, getTorrentStatus, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import {
@@ -170,7 +171,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
                 continue;
             }
 
-            blockTitle(normalizeTitle(torrent.name));
+            await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
 
             await removeTorrent(hash, PAYLOAD_DELETE_FILES);
             forgetStall(hash);
@@ -225,7 +226,11 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
                 continue;
             }
 
-            blockTitle(normalizeTitle(torrent.name));
+            await blockRelease(
+                normalizeTitle(torrent.name),
+                BlockReason.STALLED,
+                `stood still at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes`
+            );
 
             await removeTorrent(hash, STALL_DELETE_FILES);
             forgetStall(hash);

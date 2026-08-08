@@ -1,4 +1,5 @@
 import { ContentType, WatchStatus } from "../../prisma/generated/client";
+import { refreshBlocklist } from "@/lib/blocklist";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
 import {
@@ -80,6 +81,9 @@ export type PlannedGrab = {
 };
 
 export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> => {
+    // scoring reads the blocklist synchronously, so it has to be in memory by then
+    await refreshBlocklist();
+
     const metadata = await getMediaMetadata("movie", tmdbId);
 
     if (! metadata) {
@@ -137,6 +141,8 @@ export const planSeasonGrab = async (
     seasonNumber: number,
     options: { episodeNumbers?: number[] } = {}
 ): Promise<SeasonPlan | null> => {
+    await refreshBlocklist();
+
     const metadata = await getMediaMetadata("tv", tmdbId);
     const seasons = await getTvSeasons(tmdbId);
     const season = seasons.find(v => v.season_number === seasonNumber);

@@ -1,7 +1,7 @@
 import PTT from "parse-torrent-title";
 
 import { getIndexerIds, IndexerResult } from "@/lib/indexer";
-import { isTitleBlocked } from "@/lib/stall";
+import { isReleaseBlocked } from "@/lib/blocklist";
 
 export type QualityProfile = {
     resolutions: string[];
@@ -422,7 +422,7 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
 
     // it was grabbed once already and had to be thrown away: it either stood still
     // until it was given up on, or what came down was not the release at all
-    if (isTitleBlocked(normalizeTitle(release.title))) {
+    if (isReleaseBlocked(normalizeTitle(release.title))) {
         return { release, reason: "already tried and dropped" };
     }
 
