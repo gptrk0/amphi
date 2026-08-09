@@ -51,6 +51,14 @@ FROM node:22-bookworm-slim AS migrator
 
 WORKDIR /migrator
 
+# the same openssl the runner has, and for the same reason: the engine is chosen at
+# install time by what is detectable here, and at run time by what is detectable there.
+# With the package on one side only, the two disagree — measured: the cli then tries to
+# download the other engine into a read only /app and the container never starts.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 # under a name npm will not read as its own manifest: with a package.json in the directory it
 # would install everything in it — next, react and all — next to the cli, which is how this
 # stage first came out 600 MB heavier than the app it serves
@@ -76,6 +84,13 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0
+
+# Prisma picks its engine by the openssl it finds, and without the package it cannot tell:
+# it warns and falls back to 1.1.x on an image that has 3.x. It happened to work, but a
+# guessed binary is not something a migration should depend on.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
 
 # the standalone output carries only what the server actually imports, node_modules included
 COPY --from=builder /app/.next/standalone ./

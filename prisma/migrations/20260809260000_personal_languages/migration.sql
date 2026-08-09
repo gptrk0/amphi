@@ -15,7 +15,11 @@ UPDATE "User" SET
     "preferredLanguages" = COALESCE((SELECT "value" FROM "Setting" WHERE "key" = 'QUALITY_PREFERRED_LANGUAGES'), "preferredLanguages"),
     "excludeLanguages"   = COALESCE((SELECT "value" FROM "Setting" WHERE "key" = 'QUALITY_EXCLUDE_LANGUAGES'), "excludeLanguages"),
     "defaultLanguage"    = COALESCE((SELECT "value" FROM "Setting" WHERE "key" = 'QUALITY_DEFAULT_LANGUAGE'), "defaultLanguage"),
-    "languageBonus"      = COALESCE((SELECT NULLIF("value", '')::INTEGER FROM "Setting" WHERE "key" = 'QUALITY_LANGUAGE_BONUS'), "languageBonus"),
+    -- guarded rather than cast: a value that is not a plain number would abort the whole
+    -- migration, and Prisma then marks it failed and refuses every later one until
+    -- somebody resolves it by hand. Measured: `1e6` in that row was enough to stop a
+    -- container from ever starting. Anything unreadable falls back to the default.
+    "languageBonus"      = COALESCE((SELECT CASE WHEN "value" ~ '^[0-9]+$' THEN "value"::INTEGER END FROM "Setting" WHERE "key" = 'QUALITY_LANGUAGE_BONUS'), "languageBonus"),
     "languageFirst"      = COALESCE((SELECT "value" IN ('1', 'true') FROM "Setting" WHERE "key" = 'QUALITY_LANGUAGE_FIRST'), "languageFirst");
 
 -- the settings page no longer offers these, and a row nothing reads is a row that will

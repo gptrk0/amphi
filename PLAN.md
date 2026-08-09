@@ -1202,6 +1202,13 @@ memória           app 97 MB, postgres 46 MB
 
 **A publikálás** [.github/workflows/image.yml](.github/workflows/image.yml): push `master`-re mozdítja a `latest`-et, egy `v1.2.3` tag pedig `1.2.3` és `1.2` tageket is kirak. `linux/amd64` + `linux/arm64` — az arm QEMU-val emulálva készül, ez a job lassú fele, és kivehető, ha nem kell.
 
+**Frissítés meglévő adatbázison — mérve, nem feltételezve (2026-08-09).** A kérdés az volt, hogy egy már használatban lévő install rendben migrálódik-e az új image-dzsel. Külön Postgresben előállítottam egy „régi" állapotot (séma a `20260809250000_user_webhook`-ig, két felhasználó, library sor, watchlist unit, és a nyelvi beállítások **nem a default értékekkel**: `ger,eng` / `ita,fre` / `ger` / `2500000` / `1`), majd ráindítottam az image-et. Eredmény: az egy hiányzó migráció felment, a konténer `healthy` lett, mindkét user megkapta a *korábbi install* értékeit (nem az oszlop-defaultot), az öt `Setting` sor eltűnt, a `TMDB_API_KEY` és a többi adat érintetlen, a régi library sor `language=""`-t kapott.
+
+Két hiba viszont csak így derült ki, mindkettő javítva:
+
+1. **Egy nem szám érték a `QUALITY_LANGUAGE_BONUS`-ban megölte a migrációt** (`1e6` → `22P02`), a Prisma pedig a migrációt *failed*-nek jelölte, ami onnantól **minden továbbit blokkol**, amíg valaki kézzel fel nem oldja (`P3018`) — vagyis a konténer soha többé nem indul el. A cast most őrzött (`CASE WHEN value ~ '^[0-9]+$'`), az olvashatatlan érték a defaultra esik vissza. Újramérve ugyanazzal az `1e6`-tal: a migráció lefut, a bónusz `1000000` lesz, minden más átjön.
+2. **A Prisma nem tudta megállapítani az openssl verziót** a futtató image-ben, és 1.1.x-re esett vissza. Az `openssl` csomag telepítése önmagában viszont **elrontotta**: a migrátor fázis még 1.1.x-hez töltötte le a motort, a futásidő már 3.0.x-et keresett, és az írásvédett `/app`-ba próbálta letölteni — a konténer el sem indult. A csomag ezért **mindkét** fázisba bekerült, így a kettő ugyanazt látja; a figyelmeztetés is eltűnt.
+
 **Ami nyitva marad.** A fájlok rendezése (átnevezés, hardlinkelt könyvtár) még nincs meg; amikor lesz, az app először fog fájlrendszert érinteni, és akkor a compose-ba kell egy médiakönyvtár mount **ugyanazon az útvonalon, ahol a qBittorrent látja** — enélkül a hardlink nem működik. Addig a konténernek nincs mit mountolni.
 
 ---
