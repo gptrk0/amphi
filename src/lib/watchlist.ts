@@ -1,8 +1,12 @@
-import { ContentType, Prisma, WatchStatus as PrismaWatchStatus } from "../../prisma/generated/client";
+import {
+    ContentType,
+    LibraryStatus as PrismaLibraryStatus,
+    Prisma,
+    WatchStatus as PrismaWatchStatus
+} from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { removeTorrent, TorrentStatus } from "@/lib/torrent";
-import { WatchlistDownload, WatchlistEntry, WatchlistItem, WatchlistSeasonItem, WatchlistStatus } from "@/types/watchlist";
+import { WatchlistEntry, WatchlistItem, WatchlistRowItem, WatchlistSeasonItem, WatchlistStatus } from "@/types/watchlist";
 
 export const watchlistInclude = {
     units: {
@@ -29,6 +33,9 @@ export const toMediaType = (type: ContentType): "movie" | "tv" => {
 
 export const getWatchlist = async () => {
     return await prisma.watchlist.findMany({
+        // a row with no units has nothing left to look for, which is all a watchlist
+        // row is. one can exist for a moment between a restore and its units
+        where: { units: { some: {} } },
         include: watchlistInclude,
         orderBy: { addedAt: "desc" }
     });
@@ -51,20 +58,6 @@ export const getWatchlistItemByTmdbId = async (tmdbId: number, type: ContentType
 type WatchlistRow = Awaited<ReturnType<typeof getWatchlist>>[number];
 type UnitRow = WatchlistRow["units"][number];
 
-/**
- * Monitored units plus anything already picked up: an instant download leaves its
- * season unmonitored, and those episodes still have to show their state.
- */
-const trackedUnits = (item: WatchlistRow) => {
-    return item.units.filter(unit => unit.monitored || unit.status !== PrismaWatchStatus.PENDING);
-};
-
-/**
- * Units that are still to be obtained. What is left once these run out is either on
- * disk or was given up on.
- */
-const outstandingUnits = (units: UnitRow[]) => units.filter(unit => unit.status === PrismaWatchStatus.PENDING);
-
 // an unknown date does not hold anything back — the scanner searches those
 const airsLater = (airDate: Date | null) => !! airDate && airDate.getTime() > Date.now();
 
@@ -73,7 +66,7 @@ const airsLater = (airDate: Date | null) => !! airDate && airDate.getTime() > Da
  * `UPCOMING` explainable instead of just "nothing is happening".
  */
 const nextAirDate = (units: UnitRow[]): string | null => {
-    const dates = outstandingUnits(units)
+    const dates = units
         .map(unit => unit.airDate)
         .filter((date): date is Date => airsLater(date))
         .map(date => date.getTime());
@@ -82,165 +75,261 @@ const nextAirDate = (units: UnitRow[]): string | null => {
 };
 
 /**
- * No item has a status column of its own — it is as far along as its units. A movie
- * has exactly one, so this returns that unit's status unchanged.
+ * A watchlist row only holds what is still to be found, so its status can only say
+ * how the looking is going. Anything obtained is a library row and shows up in the
+ * merged entry below.
  */
 export const deriveStatus = (item: WatchlistRow): WatchlistStatus => {
-    const units = trackedUnits(item);
+    const units = item.units;
 
     if (units.length === 0) {
         return PrismaWatchStatus.PENDING;
-    }
-
-    if (units.every(u => u.status === PrismaWatchStatus.DOWNLOADED)) {
-        return PrismaWatchStatus.DOWNLOADED;
-    }
-
-    if (units.some(u => u.status === PrismaWatchStatus.DOWNLOADING)) {
-        return PrismaWatchStatus.DOWNLOADING;
     }
 
     if (units.some(u => u.status === PrismaWatchStatus.SEARCHING)) {
         return PrismaWatchStatus.SEARCHING;
     }
 
-    if (units.every(u => u.status === PrismaWatchStatus.FAILED)) {
-        return PrismaWatchStatus.FAILED;
-    }
-
-    // Nothing is being looked for, and nothing can be: every part still wanted airs
-    // later. This also covers a show you are up to date on — the downloaded episodes
-    // are behind us, the next one is not out yet.
-    const outstanding = outstandingUnits(units);
-
-    if (outstanding.length > 0 && outstanding.every(unit => airsLater(unit.airDate))) {
+    // nothing is being looked for, and nothing can be: every part still wanted airs
+    // later, and the scanner deliberately leaves those alone
+    if (units.every(unit => airsLater(unit.airDate))) {
         return "UPCOMING";
     }
 
     return PrismaWatchStatus.PENDING;
 };
 
-export const toWatchlistEntry = (item: WatchlistRow): WatchlistEntry => {
-    const units = trackedUnits(item);
+/**
+ * What the library knows about a title. Two tables answer one question — "where is
+ * this?" — and the badge on a poster has to say it in one word.
+ */
+type LibraryState = { items: number, downloading: number, held: number, available: number };
 
-    return {
-        id: item.id,
-        tmdbId: item.tmdbId,
-        type: toMediaType(item.type),
-        status: deriveStatus(item),
-        nextAirDate: nextAirDate(units),
-        episodeCount: units.filter(unit => unit.episodeNumber !== null).length,
-        downloadedCount: units.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length,
-        monitored: item.units.some(unit => unit.monitored)
-    };
-};
+const EMPTY_STATE: LibraryState = { items: 0, downloading: 0, held: 0, available: 0 };
 
-export const getWatchlistSlim = async (): Promise<WatchlistEntry[]> => {
-    const items = await getWatchlist();
+const key = (type: ContentType, tmdbId: number) => `${ toMediaType(type) }:${ tmdbId }`;
 
-    return items.map(toWatchlistEntry);
+const libraryState = async (): Promise<Map<string, LibraryState>> => {
+    const items = await prisma.libraryItem.findMany({
+        where: { removedAt: null },
+        include: { episodes: { select: { id: true } } }
+    });
+
+    const map = new Map<string, LibraryState>();
+
+    for (const item of items) {
+        const seen = map.get(key(item.type, item.tmdbId)) || { ...EMPTY_STATE };
+        const available = item.status === PrismaLibraryStatus.AVAILABLE;
+
+        map.set(key(item.type, item.tmdbId), {
+            // a film is one item and no episodes, so counting rows is the only way
+            // to ask "is there anything of this at all"
+            items: seen.items + 1,
+            downloading: seen.downloading + (available ? 0 : 1),
+            held: seen.held + item.episodes.length,
+            available: seen.available + (available ? item.episodes.length : 0)
+        });
+    }
+
+    return map;
 };
 
 /**
- * Seasons are not stored, they are read back from the units that carry the number.
+ * The state of a title as a poster has to show it: being looked for, on its way, or
+ * on disk. A show can be all three at once — two episodes downloaded, one
+ * downloading, four still waiting for their air date — and then the most active
+ * thing wins, because that is the one that is about to change.
  */
-const toSeasons = (units: UnitRow[], withEpisodes: boolean): WatchlistSeasonItem[] => {
-    const grouped = new Map<number, UnitRow[]>();
+export const toWatchlistEntry = (item: WatchlistRow | null, state: LibraryState, id: string): WatchlistEntry => {
+    const [ type, tmdbId ] = id.split(":");
+    const units = item ? item.units : [];
+
+    const status: WatchlistStatus = state.downloading > 0
+        ? PrismaWatchStatus.DOWNLOADING
+        : item
+            ? deriveStatus(item)
+            : PrismaWatchStatus.DOWNLOADED;
+
+    return {
+        id: item ? item.id : null,
+        tmdbId: item ? item.tmdbId : Number(tmdbId),
+        type: item ? toMediaType(item.type) : type as "movie" | "tv",
+        status,
+        nextAirDate: nextAirDate(units),
+        episodeCount: units.filter(unit => unit.episodeNumber !== null).length + state.held,
+        downloadedCount: state.available,
+        monitored: units.some(unit => unit.monitored)
+    };
+};
+
+/**
+ * Every title the app has an opinion about, from both tables: what it is watching
+ * and what it has. A poster asks this once and never asks the database again.
+ */
+export const getWatchlistSlim = async (): Promise<WatchlistEntry[]> => {
+    const items = await getWatchlist();
+    const state = await libraryState();
+
+    const entries = items.map(item => toWatchlistEntry(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE, key(item.type, item.tmdbId)));
+    const watched = new Set(items.map(item => key(item.type, item.tmdbId)));
+
+    // in the library and nowhere else: a finished download has no watchlist row left
+    for (const [ id, value ] of state) {
+        if (! watched.has(id)) {
+            entries.push(toWatchlistEntry(null, value, id));
+        }
+    }
+
+    return entries;
+};
+
+/**
+ * Where every episode of a title is, as far as the library knows. A season with no
+ * units left is still a season on the details page, so this is what draws it.
+ */
+const libraryEpisodes = async (tmdbId: number) => {
+    const rows = await prisma.libraryEpisode.findMany({
+        where: { item: { tmdbId, removedAt: null } },
+        select: { seasonNumber: true, episodeNumber: true, item: { select: { status: true } } }
+    });
+
+    const map = new Map<string, PrismaWatchStatus>();
+
+    for (const row of rows) {
+        map.set(`${ row.seasonNumber }:${ row.episodeNumber }`, row.item.status === PrismaLibraryStatus.AVAILABLE
+            ? PrismaWatchStatus.DOWNLOADED
+            : PrismaWatchStatus.DOWNLOADING);
+    }
+
+    return map;
+};
+
+/**
+ * Seasons are not stored, they are read back from the numbers on the units — and
+ * now also from the library, because an episode that has been obtained no longer
+ * has a unit at all.
+ */
+const toSeasons = (units: UnitRow[], held: Map<string, PrismaWatchStatus>, withEpisodes: boolean): WatchlistSeasonItem[] => {
+    const seasons = new Map<number, Map<number, { monitored: boolean, status: PrismaWatchStatus, airDate: Date | null }>>();
+
+    const put = (seasonNumber: number, episodeNumber: number, value: { monitored: boolean, status: PrismaWatchStatus, airDate: Date | null }) => {
+        const season = seasons.get(seasonNumber) || new Map();
+
+        season.set(episodeNumber, value);
+        seasons.set(seasonNumber, season);
+    };
 
     for (const unit of units) {
-        if (unit.seasonNumber === null) {
+        if (unit.seasonNumber === null || unit.episodeNumber === null) {
             continue;
         }
 
-        grouped.set(unit.seasonNumber, [ ...(grouped.get(unit.seasonNumber) || []), unit ]);
+        put(unit.seasonNumber, unit.episodeNumber, { monitored: unit.monitored, status: unit.status, airDate: unit.airDate });
     }
 
-    return [ ...grouped.entries() ]
+    for (const [ id, status ] of held) {
+        const [ seasonNumber, episodeNumber ] = id.split(":").map(Number);
+
+        // being had is not being watched: there is nothing left to look for
+        put(seasonNumber, episodeNumber, { monitored: false, status, airDate: null });
+    }
+
+    return [ ...seasons.entries() ]
         .sort(([ a ], [ b ]) => a - b)
-        .map(([ seasonNumber, seasonUnits ]) => ({
-            seasonNumber,
-            monitored: seasonUnits.some(unit => unit.monitored),
-            episodeCount: seasonUnits.length,
-            downloadedCount: seasonUnits.filter(unit => unit.status === PrismaWatchStatus.DOWNLOADED).length,
-            ...(withEpisodes ? {
-                episodes: seasonUnits
-                    .filter(unit => unit.episodeNumber !== null)
-                    .map(unit => ({
-                        episodeNumber: unit.episodeNumber as number,
-                        monitored: unit.monitored,
-                        status: unit.status,
-                        airDate: unit.airDate ? unit.airDate.toISOString() : null
+        .map(([ seasonNumber, episodes ]) => {
+            const list = [ ...episodes.entries() ].sort(([ a ], [ b ]) => a - b);
+
+            return {
+                seasonNumber,
+                monitored: list.some(([ , episode ]) => episode.monitored),
+                episodeCount: list.length,
+                downloadedCount: list.filter(([ , episode ]) => episode.status === PrismaWatchStatus.DOWNLOADED).length,
+                ...(withEpisodes ? {
+                    episodes: list.map(([ episodeNumber, episode ]) => ({
+                        episodeNumber,
+                        monitored: episode.monitored,
+                        status: episode.status,
+                        airDate: episode.airDate ? episode.airDate.toISOString() : null
                     }))
-            } : {})
-        }));
+                } : {})
+            };
+        });
 };
 
 /**
  * Adds TMDB metadata to a row. On a TMDB failure `media` is null and only the
- * download state is shown.
+ * watch state is shown.
  */
-export const withMedia = async (item: WatchlistRow, withEpisodes = false): Promise<WatchlistItem> => {
+export const withMedia = async (item: WatchlistRow, state: LibraryState, withEpisodes = false): Promise<WatchlistRowItem> => {
     const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
-    const units = trackedUnits(item);
+    const units = item.units;
     const checked = units.map(unit => unit.lastCheckedAt).filter((v): v is Date => !! v);
+    const held = await libraryEpisodes(item.tmdbId);
 
     return {
-        ...toWatchlistEntry(item),
+        ...toWatchlistEntry(item, state, key(item.type, item.tmdbId)),
+        // a row exists, so unlike the merged entry this one always has an id
+        id: item.id,
         media: metadata ? metadata.media : null,
         addedAt: item.addedAt.toISOString(),
         lastCheckedAt: checked.length > 0 ? new Date(Math.max(...checked.map(v => v.getTime()))).toISOString() : null,
         searchAttempts: units.reduce((max, unit) => Math.max(max, unit.searchAttempts), 0),
-        seasons: toSeasons(item.units, withEpisodes)
+        seasons: toSeasons(units, held, withEpisodes)
     };
 };
 
 /**
- * The live state of whatever the item is downloading. A season pack is one torrent
- * for many units, several single episodes are several torrents — hence the sums.
+ * The watchlist as a page shows it: what is still to be found. No torrent is read
+ * here any more — a download lives in the library from the moment it starts.
  */
-const toDownload = (units: UnitRow[], byHash: Map<string, TorrentStatus>): WatchlistDownload | null => {
-    const hashes = [ ...new Set(units
-        .filter(unit => unit.status === PrismaWatchStatus.DOWNLOADING && unit.torrentHash)
-        .map(unit => String(unit.torrentHash).toLowerCase())) ];
+export const getWatchlistWithMedia = async (): Promise<WatchlistRowItem[]> => {
+    const items = await getWatchlist();
+    const state = await libraryState();
 
-    const torrents = hashes.map(hash => byHash.get(hash)).filter((v): v is TorrentStatus => !! v);
+    return await Promise.all(items.map(item => withMedia(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE)));
+};
 
-    if (torrents.length === 0) {
+export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistRowItem | null> => {
+    const item = await getWatchlistItem(id);
+
+    if (! item) {
         return null;
     }
 
-    return {
-        name: torrents.length === 1 ? torrents[0].name : `${ torrents.length } torrents`,
-        state: torrents.length === 1 ? torrents[0].state : "downloading",
-        progress: torrents.reduce((sum, t) => sum + t.progress, 0) / torrents.length,
-        downloadSpeed: torrents.reduce((sum, t) => sum + t.downloadSpeed, 0),
-        // the slowest one decides when the item is done
-        eta: torrents.some(t => t.eta === null) ? null : Math.max(...torrents.map(t => t.eta as number)),
-        size: torrents.reduce((sum, t) => sum + t.size, 0)
-    };
+    const state = await libraryState();
+
+    return await withMedia(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE, true);
 };
 
 /**
- * With `torrents` the live qBittorrent state is joined onto the rows; the caller
- * fetches it once for the whole table and can hand the same list to the download
- * sync. Null means the client is not asked at all.
+ * Everything known about one title, from both tables — what the details page draws
+ * its ticks and per episode states from. A show whose every episode is downloaded
+ * has no watchlist row at all, and it still has to show as downloaded.
  */
-export const getWatchlistWithMedia = async (torrents: TorrentStatus[] | null = null): Promise<WatchlistItem[]> => {
-    const items = await getWatchlist();
-    const live = torrents !== null;
-    const byHash = new Map((torrents || []).map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
+export const getTitleState = async (type: ContentType, tmdbId: number): Promise<WatchlistItem | null> => {
+    const row = await getWatchlistItemByTmdbId(tmdbId, type);
+    const state = (await libraryState()).get(key(type, tmdbId)) || EMPTY_STATE;
 
-    return await Promise.all(items.map(async item => {
-        const dto = await withMedia(item);
+    if (row) {
+        return await withMedia(row, state, true);
+    }
 
-        return live ? { ...dto, download: toDownload(item.units, byHash) } : dto;
-    }));
-};
+    if (state.items === 0) {
+        return null;
+    }
 
-export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistItem | null> => {
-    const item = await getWatchlistItem(id);
+    const held = await libraryEpisodes(tmdbId);
 
-    return item ? await withMedia(item, true) : null;
+    const metadata = await getMediaMetadata(toMediaType(type), tmdbId);
+
+    return {
+        ...toWatchlistEntry(null, state, key(type, tmdbId)),
+        media: metadata ? metadata.media : null,
+        addedAt: new Date().toISOString(),
+        lastCheckedAt: null,
+        searchAttempts: 0,
+        seasons: toSeasons([], held, true)
+    };
 };
 
 export const toAirDate = (date: string | null | undefined) => date ? new Date(date) : null;
@@ -355,21 +444,39 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
     const item = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
     const units = await prisma.watchlistUnit.findMany({ where: { watchlistId, seasonNumber: { not: null } } });
 
-    const known = units.map(unit => unit.seasonNumber as number);
+    // An obtained episode has no unit, so the watermark below would slide back down
+    // and offer it again. The library remembers everything ever downloaded, deleted
+    // ones included, and that is exactly what "already offered" means here.
+    const obtained = await prisma.libraryEpisode.findMany({
+        where: { item: { tmdbId } },
+        select: { seasonNumber: true, episodeNumber: true, item: { select: { watched: true } } }
+    });
+
+    // and once a season's last unit is carried off by a download, the library is
+    // also the only thing that still knows the season was being watched
+    const watchedSeasons = new Set(obtained.filter(episode => episode.item.watched).map(episode => episode.seasonNumber));
+
+    const known = [ ...units.map(unit => unit.seasonNumber as number), ...obtained.map(episode => episode.seasonNumber) ];
     const latest = known.length > 0 ? Math.max(...known) : null;
 
     for (const season of seasons) {
         const own = units.filter(unit => unit.seasonNumber === season.season_number);
+        const had = obtained.filter(episode => episode.seasonNumber === season.season_number);
 
-        const watched = own.length > 0
-            ? own.some(unit => unit.monitored)
-            : !! item?.monitorNewSeasons && (latest === null || season.season_number > latest);
+        const watched = own.some(unit => unit.monitored)
+            || watchedSeasons.has(season.season_number)
+            || (!! item?.monitorNewSeasons && (latest === null || season.season_number > latest));
 
         // A watched season picks up what is announced above it, never what sits
         // below: with no rows for the unwanted, "not stored" and "declined" look the
         // same, and the episode number is what tells them apart. Watching a show from
         // its fourth episode on must not silently become watching all four.
-        const highest = own.length > 0 ? Math.max(...own.map(unit => unit.episodeNumber as number)) : null;
+        const seen = [
+            ...own.map(unit => unit.episodeNumber as number),
+            ...had.map(episode => episode.episodeNumber)
+        ];
+
+        const highest = seen.length > 0 ? Math.max(...seen) : null;
 
         for (const episode of season.episodes) {
             const stored = own.find(unit => unit.episodeNumber === episode.episode_number);
@@ -451,53 +558,15 @@ export const removeFromWatchlist = async (id: number) => {
 };
 
 /**
- * Not watched and not on disk. A forgotten unit is deliberately left as if it had
- * never been grabbed, so the scanner does not fetch it all over again.
- */
-const FORGOTTEN = {
-    monitored: false,
-    status: PrismaWatchStatus.PENDING,
-    torrentHash: null
-};
-
-/**
- * Stop watching. Nothing is removed from the torrent client, so an item that has
- * something downloaded survives this and stays listed under Downloaded — only one
- * with nothing to show for itself is pruned away.
+ * Stop watching: the watchlist is only what is still to be found, so nothing is
+ * left to keep the row for. What was already downloaded is a library row and is
+ * untouched by this — the torrent client is not asked anything either.
  */
 export const stopWatching = async (id: number) => {
     await prisma.watchlist.update({ where: { id }, data: { monitorNewSeasons: false } });
     await prisma.watchlistUnit.updateMany({ where: { watchlistId: id }, data: { monitored: false } });
 
     return await pruneWatchlistItem(id);
-};
-
-/**
- * Delete. The torrents go from the client too, with or without their files, and
- * every unit is forgotten so that nothing is downloaded a second time.
- */
-export const deleteItem = async (id: number, deleteFiles: boolean) => {
-    const units = await prisma.watchlistUnit.findMany({ where: { watchlistId: id, torrentHash: { not: null } } });
-
-    for (const hash of new Set(units.map(unit => String(unit.torrentHash)))) {
-        await removeTorrent(hash, deleteFiles);
-    }
-
-    await prisma.watchlistUnit.updateMany({ where: { watchlistId: id }, data: FORGOTTEN });
-
-    return await pruneWatchlistItem(id);
-};
-
-/**
- * The torrent of something already downloaded is no longer in the client, which
- * means it was watched and cleaned up — not a failure worth retrying.
- */
-export const forgetUnits = async (ids: number[]) => {
-    return await prisma.watchlistUnit.updateMany({ where: { id: { in: ids } }, data: FORGOTTEN });
-};
-
-export const getMovieUnit = async (watchlistId: number) => {
-    return await prisma.watchlistUnit.findFirst({ where: { watchlistId, seasonNumber: null } });
 };
 
 export const getSeasonUnits = async (watchlistId: number, seasonNumber: number) => {
@@ -508,42 +577,20 @@ export const getSeasonUnits = async (watchlistId: number, seasonNumber: number) 
 };
 
 /**
- * One call for both kinds: a movie hands in its single unit, a season pack hands in
- * every unit the one torrent covers.
- */
-export const markUnitsDownloading = async (unitIds: number[], torrentHash: string | null) => {
-    return await prisma.watchlistUnit.updateMany({
-        where: { id: { in: unitIds } },
-        data: {
-            status: PrismaWatchStatus.DOWNLOADING,
-            torrentHash,
-            searchAttempts: 0,
-            lastCheckedAt: new Date()
-        }
-    });
-};
-
-/** The only reason to keep a row for something that is not watched. */
-const HAD = [ PrismaWatchStatus.DOWNLOADING, PrismaWatchStatus.DOWNLOADED ];
-
-/**
- * Drops the units that are neither watched nor had. A search that came back empty
- * is bookkeeping, not a possession: once a unit is not watched any more, its
- * SEARCHING or FAILED state is about a search nobody asked for, and it must not
- * keep the row alive — otherwise the very scanning that a title needs while it
- * waits for a release is what pins it to the watchlist.
+ * A unit that is not watched has nothing left to say. A search that came back empty
+ * is bookkeeping, not a possession, and it must not keep the row alive — otherwise
+ * the very scanning that a title needs while it waits for a release is what pins it
+ * to the watchlist.
  */
 const dropIdleUnits = async (watchlistId: number) => {
-    return await prisma.watchlistUnit.deleteMany({
-        where: { watchlistId, monitored: false, status: { notIn: HAD } }
-    });
+    return await prisma.watchlistUnit.deleteMany({ where: { watchlistId, monitored: false } });
 };
 
 /**
- * A show nobody watches and nothing was downloaded from has no reason to sit on the
- * watchlist — unchecking the last episode has to take the row with it.
+ * A show nobody watches any more has no reason to sit on the watchlist — unchecking
+ * the last episode has to take the row with it.
  */
-export const pruneWatchlistItem = async (id: number): Promise<WatchlistItem | null> => {
+export const pruneWatchlistItem = async (id: number): Promise<WatchlistRowItem | null> => {
     await dropIdleUnits(id);
 
     const keep = await prisma.watchlistUnit.count({ where: { watchlistId: id } });
@@ -567,7 +614,7 @@ export const setMonitored = async (
     type: ContentType,
     monitored: boolean,
     target: { seasonNumber?: number, episodeNumbers?: number[] } = {}
-): Promise<WatchlistItem | null> => {
+): Promise<WatchlistRowItem | null> => {
     let row = await prisma.watchlist.findUnique({ where: { tmdbId_type: { tmdbId, type } } });
 
     if (! row) {

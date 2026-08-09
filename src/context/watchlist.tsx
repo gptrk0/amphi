@@ -15,7 +15,6 @@ type WatchlistContextValue = {
     getEntry: (type: string, tmdbId: number) => WatchlistEntry | undefined;
     add: (type: string, tmdbId: number, name?: string, seasons?: number[]) => Promise<void>;
     remove: (type: string, tmdbId: number, name?: string) => Promise<void>;
-    destroy: (id: number, deleteFiles: boolean, name?: string) => Promise<void>;
     refresh: () => Promise<void>;
 };
 
@@ -28,7 +27,6 @@ export const WatchlistContext = createContext<WatchlistContextValue>({
     getEntry: () => undefined,
     add: noop,
     remove: noop,
-    destroy: noop,
     refresh: noop
 });
 
@@ -98,13 +96,14 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
     }, [ touch ]);
 
     /**
-     * Stop watching, which is not the same as deleting: anything already downloaded
-     * keeps its row and stays listed under Downloaded, so the entry may survive.
+     * Stop watching, which is not the same as deleting: what is already downloaded
+     * is a library row and is not touched, so the entry may well survive as
+     * "available" once the watchlist side of it is gone.
      */
     const remove = useCallback(async (type: string, tmdbId: number, name?: string) => {
         const entry = entries.find(v => v.type === type && v.tmdbId === tmdbId);
 
-        if (! entry) {
+        if (! entry?.id) {
             return;
         }
 
@@ -126,36 +125,11 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
         }
     }, [ entries, refresh, touch ]);
 
-    /**
-     * Delete for good: the torrent goes from the client too, and with `deleteFiles`
-     * so do the files.
-     */
-    const destroy = useCallback(async (id: number, deleteFiles: boolean, name?: string) => {
-        setEntries(prev => prev.filter(v => v.id !== id));
-
-        try {
-            await axios.delete(`/api/watchlist/${ id }`, { params: { torrent: 1, files: deleteFiles ? 1 : 0 } });
-
-            toast(deleteFiles
-                ? `${ name || "Media" } and its files were deleted.`
-                : `${ name || "Media" } was removed, the files were kept.`);
-
-        } catch(err) {
-            console.error(err);
-
-            toast(`Could not delete ${ name || "media" }.`);
-
-        } finally {
-            await refresh();
-            touch();
-        }
-    }, [ refresh, touch ]);
-
     // a fresh object here would re-render every consumer on every render of this
     // provider, and a media grid is over a hundred of them
     const value = useMemo(
-        () => ({ entries, isLoading, revision, getEntry, add, remove, destroy, refresh }),
-        [ entries, isLoading, revision, getEntry, add, remove, destroy, refresh ]
+        () => ({ entries, isLoading, revision, getEntry, add, remove, refresh }),
+        [ entries, isLoading, revision, getEntry, add, remove, refresh ]
     );
 
     return (

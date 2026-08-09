@@ -5,31 +5,16 @@ import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle
-} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useWatchlist } from "@/context/watchlist";
 import { WatchlistItem, WatchlistStatus } from "@/types/watchlist";
-
-type Props = {
-    title: string;
-    description: string;
-    onlyStatus?: WatchlistStatus;
-    emptyText: string;
-};
 
 type Column = {
     key: string;
@@ -40,14 +25,11 @@ type Column = {
     className?: string;
 };
 
-const POLL_MS = 5000;
-
 const STATUS_FILTERS: { label: string, value: WatchlistStatus | "ALL" }[] = [
     { label: "All", value: "ALL" },
     { label: "Watchlisted", value: "PENDING" },
     { label: "Not out yet", value: "UPCOMING" },
-    { label: "Waiting for release", value: "SEARCHING" },
-    { label: "Downloading", value: "DOWNLOADING" }
+    { label: "Waiting for release", value: "SEARCHING" }
 ];
 
 const ago = (value: string | null) => {
@@ -70,29 +52,13 @@ const ago = (value: string | null) => {
     return hours < 48 ? `${ hours }h ago` : `${ Math.round(hours / 24) }d ago`;
 };
 
-const speed = (bytesPerSecond: number) => {
-    if (bytesPerSecond < 1024 * 1024) {
-        return `${ Math.round(bytesPerSecond / 1024) } kB/s`;
-    }
-
-    return `${ (bytesPerSecond / (1024 * 1024)).toFixed(1) } MB/s`;
-};
-
-const remaining = (seconds: number | null) => {
-    if (seconds === null) {
-        return "";
-    }
-
-    return seconds < 3600 ? `${ Math.round(seconds / 60) }m left` : `${ Math.round(seconds / 3600) }h left`;
-};
-
 /**
  * Why an item is sitting there doing nothing: it is not out yet. Without the date the
  * row shows "never checked" and reads like a scanner that gave up.
  */
 const airText = (value: string | null) => {
     if (! value) {
-        return "no date yet";
+        return "";
     }
 
     const date = new Date(value);
@@ -102,31 +68,16 @@ const airText = (value: string | null) => {
     return days > 0 ? `out ${ text }, in ${ days } day${ days === 1 ? "" : "s" }` : `out ${ text }`;
 };
 
-const progressText = (item: WatchlistItem) => {
-    if (item.type === "tv") {
-        return `${ item.downloadedCount }/${ item.episodeCount || "?" } episodes`;
-    }
-
-    if (item.status === "DOWNLOADED") {
-        return "complete";
-    }
-
-    // a film is one file: without this the line said "not yet" next to a running
-    // download that was reporting its own speed one row below
-    if (item.status === "DOWNLOADING") {
-        return item.download ? `${ Math.round(item.download.progress * 100) }%` : "downloading";
-    }
-
-    return "not yet";
-};
-
-export function WatchlistTable({ title, description, onlyStatus, emptyText }: Props) {
-    const { entries, remove, destroy } = useWatchlist();
+/**
+ * What is still to be found. A download is not here — the moment one starts, what
+ * it covers has nothing left to look for and moves to the library.
+ */
+export function WatchlistTable() {
+    const { entries, remove } = useWatchlist();
     const [ items, setItems ] = useState<WatchlistItem[]>();
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
-    const [ deleting, setDeleting ] = useState<WatchlistItem | null>(null);
     const request = useRef(0);
 
     /**
@@ -137,7 +88,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
     const load = () => {
         const ticket = ++request.current;
 
-        return axios.get("/api/watchlist", { params: { live: 1 } })
+        return axios.get("/api/watchlist")
             .then(res => {
                 if (ticket === request.current) {
                     setItems(res.data.result || []);
@@ -148,13 +99,6 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
 
     const stopWatching = async (item: WatchlistItem) => {
         await remove(item.type, item.tmdbId, item.media?.name || `TMDB #${ item.tmdbId }`);
-        await load();
-    };
-
-    const deleteItem = async (item: WatchlistItem, deleteFiles: boolean) => {
-        setDeleting(null);
-
-        await destroy(item.id, deleteFiles, item.media?.name);
         await load();
     };
 
@@ -183,24 +127,12 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
     };
 
     // a change in the shared list reloads the table. the whole state is the key, not
-    // the number of rows: stopping watching something that is downloaded keeps its
-    // row and only flips a flag, and that has to show up too
+    // the number of rows: a download takes rows off this list, and that has to show
     const signature = entries.map(entry => `${ entry.id }:${ entry.status }:${ entry.monitored }`).join(",");
 
     useEffect(() => {
         load();
     }, [ signature ])
-
-    // percentages only move while something is downloading, so the poll stops with it
-    useEffect(() => {
-        if (! items?.some(item => item.status === "DOWNLOADING")) {
-            return;
-        }
-
-        const timer = setInterval(load, POLL_MS);
-
-        return () => clearInterval(timer);
-    }, [ items ])
 
     const poster = (item: WatchlistItem) => {
         if (! item.media?.poster_img) {
@@ -237,80 +169,53 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             value: item => item.status,
             render: item => <WatchlistBadge entry={item} />
         },
-        // the library is what is on disk: every row there is downloaded, and how far
-        // along it once was says nothing
-        ...(onlyStatus ? [] : [ {
-            key: "progress",
-            label: "Progress",
-            value: (item: WatchlistItem) => item.download?.progress ?? (item.episodeCount > 0 ? item.downloadedCount / item.episodeCount : 0),
-            render: (item: WatchlistItem) => (
+        {
+            key: "wanted",
+            label: "Still wanted",
+            value: item => item.episodeCount,
+            render: item => (
                 <div className="min-w-[7rem]">
-                    <div>{ progressText(item) }</div>
+                    <div>{ item.type === "tv" ? `${ item.episodeCount - item.downloadedCount } episodes` : "the film" }</div>
 
-                    {item.status === "UPCOMING" && (
+                    {item.nextAirDate && (
                         <div className="text-xs text-muted-foreground">{ airText(item.nextAirDate) }</div>
                     )}
-
-                    {item.download && <>
-                        <div className="my-1 h-1 w-24 overflow-hidden rounded-full bg-muted">
-                            <div
-                                className="h-full bg-primary transition-[width]"
-                                style={{ width: `${ Math.round(item.download.progress * 100) }%` }}
-                            />
-                        </div>
-
-                        <div className="text-xs text-muted-foreground">
-                            { [
-                                // the percentage is already the line above on a film
-                                item.type === "tv" ? `${ Math.round(item.download.progress * 100) }%` : "",
-                                speed(item.download.downloadSpeed),
-                                item.download.eta !== null ? remaining(item.download.eta) : ""
-                            ].filter(Boolean).join(" · ") }
-                        </div>
-                    </>}
                 </div>
             )
-        } ]),
+        },
         {
             key: "addedAt",
             label: "Added",
             value: item => item.addedAt,
             render: item => <span className="text-muted-foreground">{ ago(item.addedAt) }</span>
         },
-        ...(onlyStatus ? [] : [ {
+        {
             key: "lastCheckedAt",
             label: "Last checked",
-            value: (item: WatchlistItem) => item.lastCheckedAt || "",
-            render: (item: WatchlistItem) => <span className="text-muted-foreground">{ ago(item.lastCheckedAt) }</span>
-        }, {
+            value: item => item.lastCheckedAt || "",
+            render: item => <span className="text-muted-foreground">{ ago(item.lastCheckedAt) }</span>
+        },
+        {
             key: "searchAttempts",
             label: "Attempts",
-            value: (item: WatchlistItem) => item.searchAttempts,
-            render: (item: WatchlistItem) => <span className="text-muted-foreground">{ item.searchAttempts || "—" }</span>
-        } ]),
+            value: item => item.searchAttempts,
+            render: item => <span className="text-muted-foreground">{ item.searchAttempts || "—" }</span>
+        },
         {
             key: "actions",
             label: "",
             className: "text-right",
-            render: item => (onlyStatus
-                ? <Button
+            render: item => (
+                <Button
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title="Delete — removes the torrent as well"
-                    onClick={() => setDeleting(item)}
-                >
-                    <Trash2 />
-                </Button>
-                : <Button
-                    variant="ghost"
-                    size="sm"
-                    className="cursor-pointer"
-                    title="Stop watching — keeps whatever is already downloaded"
+                    title="Stop watching — anything already downloaded stays in your library"
                     onClick={() => stopWatching(item)}
                 >
                     <BookmarkX />
-                </Button>)
+                </Button>
+            )
         }
     ];
 
@@ -320,15 +225,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
             : { key, direction: "asc" });
     };
 
-    const visible = (items || [])
-        .filter(item => ! onlyStatus || item.status === onlyStatus)
-        // what is on disk belongs to the library, and nothing else: a finished
-        // download is not waiting for anything, so it leaves this list the moment it
-        // lands rather than when someone remembers to stop watching it. A show comes
-        // back on its own as soon as a new episode is due.
-        .filter(item => onlyStatus || item.status !== "DOWNLOADED")
-        .filter(item => status === "ALL" || item.status === status);
-
+    const visible = (items || []).filter(item => status === "ALL" || item.status === status);
     const column = columns.find(v => v.key === sort.key);
 
     const sorted = column?.value
@@ -345,11 +242,13 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
         <div className="p-4">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">{ title }</h2>
-                    <p className="text-sm text-muted-foreground">{ description }</p>
+                    <h2 className="text-2xl font-semibold tracking-tight">Watchlist</h2>
+                    <p className="text-sm text-muted-foreground">
+                        What the app is looking for. As soon as a release turns up it is downloaded, and it moves to your library.
+                    </p>
                 </div>
 
-                {! onlyStatus && <Button
+                <Button
                     className="shrink-0 cursor-pointer"
                     onClick={scan}
                     disabled={isScanning}
@@ -358,12 +257,12 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
                     <RefreshCw className={classNames({ "hidden": isScanning })} />
                     Scan now
-                </Button>}
+                </Button>
             </div>
 
             <Separator className="my-5" />
 
-            {! onlyStatus && <div className="flex flex-wrap gap-2 pb-4">
+            <div className="flex flex-wrap gap-2 pb-4">
                 {STATUS_FILTERS.map(filter => (
                     <Button
                         key={filter.value}
@@ -375,13 +274,15 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                         { filter.label }
                     </Button>
                 ))}
-            </div>}
+            </div>
 
             {! items && <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
             </div>}
 
-            {items && sorted.length === 0 && <p className="text-sm text-muted-foreground">{ emptyText }</p>}
+            {items && sorted.length === 0 && <p className="text-sm text-muted-foreground">
+                Your watchlist is empty — add something from a details page or by right clicking a poster.
+            </p>}
 
             {items && sorted.length > 0 && <Table>
                 <TableHeader>
@@ -410,7 +311,7 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     {sorted.map(item => (
                         <TableRow key={item.id}>
                             {columns.map(col => (
-                                <TableCell key={col.key} className={classNames(col.className, { "py-1": true })}>
+                                <TableCell key={col.key} className={classNames(col.className, "py-1")}>
                                     { col.render(item) }
                                 </TableCell>
                             ))}
@@ -418,40 +319,6 @@ export function WatchlistTable({ title, description, onlyStatus, emptyText }: Pr
                     ))}
                 </TableBody>
             </Table>}
-
-            <Dialog open={deleting !== null} onOpenChange={(open) => { if (! open) { setDeleting(null); } }}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete { deleting?.media?.name || "this item" }?</DialogTitle>
-                        <DialogDescription>
-                            The torrent is removed from qBittorrent either way, and it will not be
-                            downloaded again. Do you want to keep the files on disk?
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <DialogFooter>
-                        <Button variant="outline" className="cursor-pointer" onClick={() => setDeleting(null)}>
-                            Cancel
-                        </Button>
-
-                        <Button
-                            variant="outline"
-                            className="cursor-pointer"
-                            onClick={() => deleteItem(deleting!, false)}
-                        >
-                            Keep the files
-                        </Button>
-
-                        <Button
-                            variant="destructive"
-                            className="cursor-pointer"
-                            onClick={() => deleteItem(deleting!, true)}
-                        >
-                            <Trash2 /> Delete the files too
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }

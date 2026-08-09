@@ -1,4 +1,4 @@
-import { ContentType, WatchStatus } from "../../prisma/generated/client";
+import { ContentType } from "../../prisma/generated/client";
 import { refreshBlocklist } from "@/lib/blocklist";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
@@ -11,15 +11,16 @@ import {
     selectSeasonRelease
 } from "@/lib/release";
 import { settingNumber, settingText } from "@/lib/settings";
-import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
+import { addRelease } from "@/lib/torrent";
 import {
-    addToWatchlist,
-    ensureEpisodeUnits,
-    ensureMovieUnit,
-    ensureSeasonUnits,
-    getSeasonUnits,
-    markUnitsDownloading
-} from "@/lib/watchlist";
+    GrabbedEpisode,
+    heldEpisodes,
+    libraryTag,
+    moveToLibrary,
+    restoreToWatchlist,
+    seasonStarted,
+    setTorrentHash
+} from "@/lib/library";
 
 /**
  * The runners up are kept next to the winner so a download can be offered as a
@@ -216,21 +217,27 @@ export const planSeasonGrab = async (
     };
 };
 
-// A download only needs a row to track the torrent by hash, so nothing is
-// monitored yet — monitoring starts when the user asks for the missing parts.
-const ensureWatchlistItem = (tmdbId: number, type: ContentType) => addToWatchlist(tmdbId, type, []);
-
+/**
+ * A film is one download and nothing else: the moment it starts there is nothing
+ * left to watch for, so it goes straight into the library and off the watchlist.
+ */
 export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): Promise<StartedDownload | null> => {
-    const item = await ensureWatchlistItem(tmdbId, ContentType.MOVIE);
+    const item = await moveToLibrary({
+        tmdbId,
+        type: ContentType.MOVIE,
+        releaseTitle: release.title,
+        episodes: []
+    });
 
-    if (! item) {
+    const hash = await addRelease(release, libraryTag(item.id), moviePath());
+
+    if (! hash) {
+        await restoreToWatchlist(item);
+
         return null;
     }
 
-    const unit = await ensureMovieUnit(item.id);
-    const hash = await addRelease(release, movieTag(item.id), moviePath());
-
-    await markUnitsDownloading([ unit.id ], hash);
+    await setTorrentHash(item.id, hash);
 
     return { label: "movie", title: release.title, hash, episodeNumbers: [] };
 };
@@ -300,8 +307,6 @@ export const planGrabs = (
     return result;
 };
 
-const GRABBABLE_STATUS: WatchStatus[] = [ WatchStatus.PENDING, WatchStatus.SEARCHING, WatchStatus.FAILED ];
-
 /**
  * A pack replaces the single episodes in two cases: an episode cannot be found on
  * its own, or a season that is fully out has not been started yet — then one
@@ -330,34 +335,30 @@ export const shouldUsePack = (plan: SeasonPlan, requested: number[], started: bo
  * never decide differently.
  */
 export const planSeasonGrabs = async (
-    watchlistId: number | null,
+    tmdbId: number,
     plan: SeasonPlan,
     options: { episodeNumbers?: number[], usePack?: boolean } = {}
 ) => {
-    const rows = watchlistId ? await getSeasonUnits(watchlistId, plan.seasonNumber) : [];
+    // What is already had or on its way is not searched for again. The watchlist no
+    // longer answers this — a download takes its units with it — so the library is
+    // the only record of what has been obtained.
+    const held = await heldEpisodes(tmdbId);
     const wanted = options.episodeNumbers;
 
-    const numbers = (list: typeof rows) => {
-        return list.map(row => row.episodeNumber).filter((v): v is number => v !== null);
-    };
-
-    // a show that is not on the watchlist yet has no rows, and then nothing has been
-    // grabbed before: the season itself is what can be taken. this is the preview of
-    // a first download, where creating the rows would be a side effect of looking
-    const grabbable = rows.length > 0
-        ? numbers(rows.filter(row => GRABBABLE_STATUS.includes(row.status)))
-        : plan.episodes.map(episode => episode.episodeNumber);
+    const grabbable = plan.episodes
+        .map(episode => episode.episodeNumber)
+        .filter(episodeNumber => ! held.has(`${ plan.seasonNumber }:${ episodeNumber }`));
 
     const requested = wanted ? grabbable.filter(episodeNumber => wanted.includes(episodeNumber)) : grabbable;
 
-    const started = rows.some(row => row.status === WatchStatus.DOWNLOADING || row.status === WatchStatus.DOWNLOADED);
+    const started = await seasonStarted(tmdbId, plan.seasonNumber);
     const usePack = options.usePack ?? shouldUsePack(plan, requested, started);
 
     // one pack torrent brings the whole season, so it claims every episode still to
     // get — not only the ones this round happened to ask for
     const eligible = usePack ? grabbable : requested;
 
-    return { rows, usePack, eligible, grabs: planGrabs(plan, eligible, usePack, grabbable) };
+    return { usePack, eligible, grabs: planGrabs(plan, eligible, usePack, grabbable) };
 };
 
 const seasonLabel = (seasonNumber: number) => `S${ String(seasonNumber).padStart(2, "0") }`;
@@ -375,60 +376,76 @@ const label = (seasonNumber: number, grab: PlannedGrab, packSeasons: number[]) =
 };
 
 /**
- * A pack can carry more than the season it was searched for. Everything it brings
- * is claimed by its hash, whether or not those seasons are watched — the files are
- * on disk either way, and a second torrent for them would be the same data again.
- *
- * Those seasons may have no rows at all, since only what is watched or had is
- * stored. This is the moment they become "had", so the rows are created here.
+ * Everything one grab brings. A pack can carry more than the season it was searched
+ * for, and it claims those seasons too, whether or not they are watched — the files
+ * are on disk either way, and a second torrent for them would be the same data
+ * again. What is already had is left out of the claim.
  */
-export const packUnitIds = async (watchlistId: number, tmdbId: number, plan: SeasonPlan, release: IndexerResult) => {
-    const seasons = parseNumbering(release.title).seasons.filter(v => v !== plan.seasonNumber);
-    const units = seasons.length > 0 ? await ensureSeasonUnits(watchlistId, tmdbId, seasons) : [];
+export const grabbedEpisodes = async (tmdbId: number, plan: SeasonPlan, grab: PlannedGrab): Promise<GrabbedEpisode[]> => {
+    const own = grab.episodeNumbers.map(episodeNumber => ({ seasonNumber: plan.seasonNumber, episodeNumber }));
 
-    return {
-        seasons: [ plan.seasonNumber, ...seasons ],
-        ids: units.filter(unit => GRABBABLE_STATUS.includes(unit.status)).map(unit => unit.id)
-    };
+    if (! grab.isPack) {
+        return own;
+    }
+
+    const extra = parseNumbering(grab.release.title).seasons.filter(v => v !== plan.seasonNumber);
+
+    if (extra.length === 0) {
+        return own;
+    }
+
+    const held = await heldEpisodes(tmdbId);
+    const seasons = await getTvSeasons(tmdbId);
+
+    const carried = seasons
+        .filter(season => extra.includes(season.season_number))
+        .flatMap(season => season.episodes.map(episode => ({
+            seasonNumber: season.season_number,
+            episodeNumber: episode.episode_number
+        })))
+        .filter(episode => ! held.has(`${ episode.seasonNumber }:${ episode.episodeNumber }`));
+
+    return [ ...own, ...carried ];
 };
 
 /**
- * Only episodes that are not already downloading or downloaded are grabbed.
+ * Only episodes that are not already downloading or on disk are grabbed. Each one
+ * becomes a library row before the torrent is added, so the row id can be the tag
+ * the hash is read back by — and the watchlist loses what it no longer has to find.
  */
 export const executeSeasonGrab = async (
     tmdbId: number,
     plan: SeasonPlan,
     options: { episodeNumbers?: number[], usePack?: boolean } = {}
 ): Promise<StartedDownload[]> => {
-    const item = await ensureWatchlistItem(tmdbId, ContentType.TV);
-
-    if (! item) {
-        return [];
-    }
-
-    const { grabs } = await planSeasonGrabs(item.id, plan, options);
+    const { grabs } = await planSeasonGrabs(tmdbId, plan, options);
     const started: StartedDownload[] = [];
 
     for (const grab of grabs) {
-        // the rows for these episodes may not exist yet — an episode is only stored
-        // once it is watched or had, and this download is what makes it the latter
-        const units = await ensureEpisodeUnits(item.id, tmdbId, plan.seasonNumber, grab.episodeNumbers);
-        const ids = units.map(unit => unit.id);
+        const episodes = await grabbedEpisodes(tmdbId, plan, grab);
 
-        const pack = grab.isPack
-            ? await packUnitIds(item.id, tmdbId, plan, grab.release)
-            : { seasons: [ plan.seasonNumber ], ids: [] };
+        const item = await moveToLibrary({
+            tmdbId,
+            type: ContentType.TV,
+            releaseTitle: grab.release.title,
+            episodes
+        });
 
-        const tag = grab.isPack
-            ? seasonTag(item.id, plan.seasonNumber)
-            : episodeTag(ids[0]);
+        const hash = await addRelease(grab.release, libraryTag(item.id), tvPath());
 
-        const hash = await addRelease(grab.release, tag, tvPath());
+        if (hash) {
+            await setTorrentHash(item.id, hash);
 
-        await markUnitsDownloading([ ...new Set([ ...ids, ...pack.ids ]) ], hash);
+        } else {
+            // the client never showed the torrent, so there is nothing to follow:
+            // put it back rather than leave a library row that will never finish
+            await restoreToWatchlist(item);
+
+            continue;
+        }
 
         started.push({
-            label: label(plan.seasonNumber, grab, pack.seasons),
+            label: label(plan.seasonNumber, grab, [ ...new Set(episodes.map(episode => episode.seasonNumber)) ]),
             title: grab.release.title,
             hash,
             episodeNumbers: grab.episodeNumbers

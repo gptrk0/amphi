@@ -48,6 +48,8 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
+**2026-08-09: hét tábla.** A watchlist és a library kettévált: ami letöltésre került, az a `LibraryItem` / `LibraryEpisode` párosban él, és a `WatchlistUnit` már csak azt jelenti, amit még meg kell találni. Ld. a lenti „A watchlist keres, a library birtokol" alfejezetet.
+
 **2026-08-08: öt tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease`, a `Setting` és a `LogEntry`. A `Setting` kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` és a `LogEntry` az a kettő, ami nem a watchlistről szól: egyiknek sincs relációja semmivel. A feketelista kulcsa a normalizált release-név (ld. „A feketelista tábla lett"), a `LogEntry` pedig maga a napló, amit a `/log` oldal mutat (ld. „Admin log oldal"). Mindhárom sémája itt van, a `WatchlistUnit` után.
 
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
@@ -369,7 +371,8 @@ Amit ebből átvettem:
 - [x] **Lint** (2026-08-08) — 78 találatról nullára. A többsége gépies volt (`prefer-const`), egy valódi elgépelés is kijött: a `tooltip.tsx`-ben egy magányos `1` állt utasításként a provider után. A keresősáv debounce-effektje mostantól a `navigate`-re hivatkozik (`useCallback`), nem megy el mellette. A maradék 35 `any` mind a három külső formátumot olvasó fájlban volt (TMDB, torznab, qBittorrent) — ott a szabály fájl-szinten kikapcsolva, indoklással az `eslint.config.mjs`-ben; máshol továbbra is hiba.
 - [x] **Letöltési mappák** (2026-08-08) — `TORRENT_MOVIE_PATH` és `TORRENT_SERIES_PATH`; ha üresek, minden marad a kategória saját könyvtárában (a régi viselkedés). A qBittorrent `add` hívás `savepath` mezőjét használja, a kategória nem változik, tehát a sync és a `listManagedTorrents` szűrése érintetlen.
 - [x] **Kattintás → adatlap várakozása** (2026-08-08) — `loading.tsx` boundary, szerver oldalon renderelt adatlap, a dupla sections-kérés és a provider-újrarenderelések megszüntetése. Mérésekkel: lásd a lenti „Kattintás → adatlap" alfejezetet.
-- [ ] **Seedelés/utómunka**: nincs semmilyen kezelés arra, hogy egy kész torrent meddig seedeljen, és a fájlok átnevezése/rendezése sem történik meg (médiaszerver-integráció nélkül ez a kliens dolga marad).
+- [x] **Seedelés** (2026-08-09) — `LIBRARY_SEED_DAYS`, alapból 3 nap. A kész letöltés addig nem törölhető, csak törlésre jelölhető, és a végén magától elmegy; a torrent utána is seedel, amíg te nem törlöd. Ld. „A watchlist keres, a library birtokol".
+- [ ] **Fájlok rendezése**: az átnevezés és a `Movies/Cím (év)/…` szerkezet felépítése nem történik meg. A kézenfekvő út a **hardlink** — a letöltés a helyén marad seedelni, mellé épül egy olvasható fa, nulla plusz helyfoglalással —, aminek egy feltétele van: a letöltési és a könyvtár-mappa ugyanazon a fájlrendszeren legyen.
 
 ### Fázis 8 — Későbbi, opcionális
 - [x] **Settings UI** (2026-08-08) — `/settings`, 52 beállítás tíz al-tabon (a *Log* csoport az admin log oldallal jött), **kizárólag** a DB-ből, a defaultok a registryben. Lásd a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket.
@@ -943,13 +946,56 @@ Helyreállítás: a hét torrent leállítva (`/api/v2/torrents/stop`, nem tör�
 
 **Ami nyitva marad.** A bepipálás mostantól TMDB-hívást igényel (cache-elt, 12 óra), tehát TMDB-kiesésnél nem lehet évadot felvenni — eddig a sorok már ott voltak, csak billenni kellett. Cserébe TMDB nélkül az adatlap sem jelenik meg, tehát a gyakorlatban nem új korlát. A `monitorNewSeasons`-nek nincs saját kapcsolója a felületen: a „watchlistre teszem" gomb kapcsolja be, az évadonkénti pipálás nem, a `Stop watching` pedig kikapcsolja.
 
+#### A watchlist keres, a library birtokol (2026-08-09-i kérés) ✅
+
+Kérés: a watchlist szerepe **csak annyi legyen, hogy a scanner tudja, mit kell figyelnie**; amint elindul a letöltés, a tétel kikerül a watchlistből (a táblából is), és átkerül a **libraryba**, ahol a letöltés állapota látszik, majd elérhetővé válik és elindul a seed időszak. A seed idő beállítható, alapból 3 nap; alatta a tétel nem törölhető, csak **megjelölhető törlésre**, és a végén magától eltűnik. Két döntés a kérdéseimre: a torrent a seed idő letelte után is **seedel tovább**, amíg nem törlöd, és a library **letöltésenként egy sort** mutat.
+
+**Amit ez a modellben jelent.** Eddig egy `WatchlistUnit` sor öt állapoton ment végig (`PENDING → SEARCHING → DOWNLOADING → DOWNLOADED`), és ugyanaz a tábla volt a keresési sor és a leltár. Most kettéválik:
+
+| | Watchlist | Library |
+|---|---|---|
+| mire válaszol | *mit kell még megtalálni* | *mim van, és mi jön* |
+| sor = | egy epizód / egy film, amit még keresünk | **egy torrent**, és minden, amit hoz |
+| állapotok | `PENDING`, `SEARCHING` | `DOWNLOADING`, `AVAILABLE` |
+| élettartam | a letöltés indulásáig | a törlésig (utána is, tombstone-ként) |
+
+A `LibraryItem` sor **a torrent hozzáadása előtt** jön létre, mert az id-ja lett a tag, amiről a hash visszaolvasható — ezzel a `movieTag` / `episodeTag` / `seasonTag` hármas egyetlen `libraryTag`-ra egyszerűsödött. A `LibraryEpisode` gyerektábla mondja meg, mit fed le egy letöltés: filmnél semmit, epizódnál egyet, packnél mindet — a több évadot fedő pack másik évadjait is.
+
+**Ami ebből következett, és nem volt nyilvánvaló:**
+
+- **A hiányzó sor kétértelműsége, harmadszor.** Ha egy évad összes unitját elviszi a letöltés, semmi nem őrzi, hogy az évadot *figyelted* — a következő epizódja így nem kerülne fel. Ezért van a `LibraryItem.watched`: azt rögzíti, hogy amit ez a letöltés leváltott, figyelt volt-e. A `syncTvSeasons` vízjele (`már felkínáltuk`) is a libraryból egészül ki, a törölt sorokat is beleértve — enélkül egy kitörölt epizód a következő körben újra letöltődne.
+- **A törlés nem törli a sort.** `removedAt` kerül rá. A library ettől „amim van vagy volt" — ez az egyetlen dolog, ami megakadályozza, hogy a scanner újra lehozza, amit szándékosan kidobtál.
+- **Ami sosem landolt, visszakerül a watchlistre.** Elakadt, hibás, hamis tartalmú vagy a kliensből eltűnt torrentnél a `restoreToWatchlist` visszaírja a unitokat és eldobja a library sort — az mindig egy *letöltést* jelent, és nem volt letöltés. **Figyeltként** kerül vissza, akkor is, ha azonnali letöltésként indult: az alternatíva az, hogy valami, amit kértél, némán megszűnik létezni.
+- **A `/api/watchlist` cím szerint is kérdezhető.** Egy sorozat, aminek minden epizódja letöltött, **nem szerepel a watchlist táblában** — az adatlapnak mégis ki kell pipálnia a részeit. A `getTitleState()` ezért mindkét táblából épít, és `id: null`-lal tér vissza, ha nincs watchlist sor.
+- **Egy badge, két tábla.** A poszterek `getWatchlistSlim()`-et kérdezik, ami mostantól **összefésült** listát ad: ami épp töltődik, az `Downloading`, ami csak a libraryban van, az `Available`, a többi a watchlist saját állapota.
+
+**A seed időszak.** `LIBRARY_SEED_DAYS` (Settings / Library, default 3). A `seedUntil` a letöltés befejezésekor áll be, és **kizárólag a törlés gombot zárolja** — a torrent utána is seedel, amíg te nem törlöd. Zárolás alatt a törlés dialógusa „törlésre jelölés"-re vált (fájllal vagy anélkül), a `runLibraryCleanup()` pedig a percenkénti kliens-visszaolvasással együtt fut, tehát a késés legrosszabb esetben egy perc. Az API a biztosíték: `DELETE` seedelés közben **409**, nem csak a gomb tűnik el.
+
+**Mérve** (a futó szerveren, eldobható Ted Lasso sorral, ami utána törlődött):
+
+```
+1. S1 kipipálva                     watchlist: 10 unit    library: üres
+2. a pack elindul                   watchlist: nincs sor  library: DOWNLOADING x10 watched
+3. újra keresné?                    0 epizód kereshető, 0 grab
+4. befejeződik                      AVAILABLE, még 72 óra seedelés
+5. DELETE -> 409 "still seeding",   PATCH -> 200, a sor "marked"
+6. cleanup seedelés alatt: 0 tétel; a lejárat után: 1 tétel -> removed
+7. metaadat-kör: nem hoz vissza semmit; a libraryból törölt E10 -> 1 unit visszakerül
+8. a torrent meghal                 watchlist: 1 unit     library: üres
+9. badge: 125988 UPCOMING (watchlist) | 1339713 DOWNLOADED, id=null (csak library)
+```
+
+Migráció: `20260809160000_library`. A meglévő letöltések torrentenként csoportosítva kerültek át (a hash amúgy is pontosan így fogta össze őket), a `completedAt` a sor utolsó módosítása — pontosabb adat nem volt, és csak azt dönti el, mikor oldódik a zár. A release nevét egyik unit sem tárolta; azt a következő kliens-visszaolvasás tölti ki a torrent nevéből.
+
+**Ami nyitva marad.** A `WatchStatus` enumban benne maradt a `DOWNLOADING`, `DOWNLOADED` és `FAILED` — a unitok már egyiket sem veszik fel, de egy Postgres enum-érték eldobása külön migráció, és a badge-ek úgyis ugyanezeket a neveket használják a library felől. A `monitorNewSeasons`-nek továbbra sincs saját kapcsolója a felületen. És a seedelésnek nincs arány-alapú vége: az „meddig seedeljen" kérdésre a válasz most „amíg nem törlöd".
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"). Ami maradt: **seedelés/utómunka**, auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
+**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **Git remote és push** — 2026-08-08 estéjén 43 commit van, mind egyetlen gépen. Ez a legnagyobb kockázat a listán, és nem kód: el kell dönteni, hova. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre.

@@ -12,18 +12,23 @@ export type WatchStatus = "PENDING" | "SEARCHING" | "DOWNLOADING" | "DOWNLOADED"
  */
 export type WatchlistStatus = WatchStatus | "UPCOMING";
 
-// One row of `GET /api/watchlist?slim=1` — built without any TMDB call.
+/**
+ * One row of `GET /api/watchlist?slim=1` — built without any TMDB call. It merges
+ * both tables, because a poster has to say where a title is in one word: being
+ * looked for, on its way, or on disk.
+ */
 export type WatchlistEntry = {
-    id: number;
+    // null for something that is only in the library: there is nothing to watch
+    id: number | null;
     tmdbId: number;
     type: "movie" | "tv";
     status: WatchlistStatus;
     // when the next part still wanted airs, null once nothing is waiting on a date
     nextAirDate: string | null;
+    // what is still wanted plus what the library holds
     episodeCount: number;
     downloadedCount: number;
-    // being watched and being on disk are separate: something downloaded stays
-    // listed under Downloaded after you stop watching it
+    // whether anything of it is still being watched for
     monitored: boolean;
 };
 
@@ -55,7 +60,11 @@ export type WatchlistDownload = {
     size: number;
 };
 
-// One row of `GET /api/watchlist` — database state plus TMDB metadata.
+/**
+ * One row of `GET /api/watchlist` — database state plus TMDB metadata. Asked for by
+ * title it can also describe something that is only in the library, and then there
+ * is no watchlist row behind it and `id` is null.
+ */
 export type WatchlistItem = WatchlistEntry & {
     media: Media | null;
     addedAt: string;
@@ -63,5 +72,7 @@ export type WatchlistItem = WatchlistEntry & {
     lastCheckedAt: string | null;
     searchAttempts: number;
     seasons: WatchlistSeasonItem[];
-    download?: WatchlistDownload | null;
 };
+
+// Built from a watchlist row, so unlike the above its id is never null.
+export type WatchlistRowItem = WatchlistItem & { id: number };

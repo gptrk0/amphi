@@ -1,7 +1,15 @@
-import { ContentType, LogLevel, WatchStatus } from "../../prisma/generated/client";
+import { ContentType, LibraryStatus, LogLevel, WatchStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { errorText, writeLog } from "@/lib/log";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
+import {
+    forgetLibraryItem,
+    libraryInclude,
+    libraryLabel,
+    markAvailable,
+    restoreToWatchlist,
+    runLibraryCleanup
+} from "@/lib/library";
 import { getMediaMetadata, getTvSeasons, isTmdbConfigured } from "@/lib/media";
 import { isIndexerConfigured } from "@/lib/indexer";
 import { normalizeTitle } from "@/lib/release";
@@ -11,15 +19,7 @@ import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 import { getTorrentFiles, getTorrentStatus, isClientConfigured, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { isNotifyConfigured, notify } from "@/lib/notify";
-import {
-    ensureMovieUnit,
-    forgetUnits,
-    markUnitsDownloading,
-    pruneWatchlistItem,
-    syncTvSeasons,
-    toAirDate,
-    toMediaType
-} from "@/lib/watchlist";
+import { ensureMovieUnit, syncTvSeasons, toAirDate, toMediaType } from "@/lib/watchlist";
 
 const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES") * 60 * 1000;
 
@@ -61,6 +61,14 @@ const backoffMs = (attempts: number) => Math.min(backoffBaseMs() * 2 ** attempts
 
 const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
 
+// the log says when the seed lock lifts, because that is the only thing standing
+// between a finished download and the delete button
+const seedUntilText = () => {
+    const days = settingNumber("LIBRARY_SEED_DAYS");
+
+    return days > 0 ? `${ days } day${ days === 1 ? "" : "s" } from now` : "no seed time is set";
+};
+
 /**
  * Coarse pre-filter for the query — the shortest wait any row can have. `isDue`
  * then applies the row's own backoff, so changing the env takes effect at once
@@ -100,103 +108,60 @@ const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) 
     return torrent;
 };
 
-/**
- * One torrent can cover several units — a season pack — so the log names the item
- * once and says how much of it the torrent carries.
- */
-const unitLabel = (units: { episodeNumber: number | null, watchlist: { tmdbId: number } }[]) => {
-    const tmdbId = units[0].watchlist.tmdbId;
-    const episodes = units.filter(unit => unit.episodeNumber !== null).length;
+/** A title instead of a tmdb id, for a line a person reads. The metadata is cached. */
+const titleOf = async (type: ContentType, tmdbId: number) => {
+    const metadata = await getMediaMetadata(toMediaType(type), tmdbId);
 
-    return episodes === 0 ? `movie ${ tmdbId }` : `show ${ tmdbId }, ${ episodes } episode(s)`;
-};
-
-const code = (value: number | null) => String(value ?? 0).padStart(2, "0");
-
-// structural on purpose, like unitLabel above: only what the label needs
-type UnitWithItem = {
-    seasonNumber: number | null;
-    episodeNumber: number | null;
-    watchlist: { tmdbId: number, type: ContentType };
+    return metadata ? metadata.media.name : `TMDB #${ tmdbId }`;
 };
 
 /**
- * The same thing as `unitLabel` but for a person: a title instead of a tmdb id. The
- * metadata is cached, so this costs nothing on the usual path.
- */
-const readableLabel = async (units: UnitWithItem[]) => {
-    const item = units[0].watchlist;
-    const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
-    const name = metadata ? metadata.media.name : `TMDB #${ item.tmdbId }`;
-    const episodes = units.filter(unit => unit.episodeNumber !== null);
-
-    if (episodes.length === 0) {
-        return name;
-    }
-
-    if (episodes.length === 1) {
-        return `${ name } S${ code(episodes[0].seasonNumber) }E${ code(episodes[0].episodeNumber) }`;
-    }
-
-    const seasons = [ ...new Set(episodes.map(unit => unit.seasonNumber)) ];
-    const where = seasons.length === 1 ? ` S${ code(seasons[0]) }` : "";
-
-    return `${ name }${ where } — ${ episodes.length } episodes`;
-};
-
-/**
- * Reads download state back from qBittorrent. The loop runs over hashes rather than
- * units, because the episodes of a season pack are finished by one torrent at once.
+ * Reads download state back from qBittorrent. One library row is one torrent, so
+ * this is a plain loop now — the episodes of a season pack are one row and finish
+ * together by construction.
  *
  * This runs in dry-run too: it starts nothing, it only records what the client
- * already did, and hiding that would leave a finished download stuck DOWNLOADING.
+ * already did, and hiding that would leave a finished download stuck on its bar.
  */
 export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
     const torrents = preloaded || await listManagedTorrents();
     const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
-    const units = await prisma.watchlistUnit.findMany({
-        where: {
-            status: { in: [ WatchStatus.DOWNLOADING, WatchStatus.DOWNLOADED ] },
-            torrentHash: { not: null }
-        },
-        include: { watchlist: true }
+    const items = await prisma.libraryItem.findMany({
+        where: { removedAt: null, torrentHash: { not: null } },
+        include: libraryInclude
     });
 
-    const hashes = [ ...new Set(units.map(unit => String(unit.torrentHash).toLowerCase())) ];
-
-    for (const hash of hashes) {
-        const covered = units.filter(unit => String(unit.torrentHash).toLowerCase() === hash);
-        const running = covered.filter(unit => unit.status === WatchStatus.DOWNLOADING);
-        const done = covered.filter(unit => unit.status === WatchStatus.DOWNLOADED);
-        const where = { id: { in: running.map(unit => unit.id) } };
-
+    for (const item of items) {
+        const hash = String(item.torrentHash).toLowerCase();
+        const label = await libraryLabel(item);
         const torrent = await resolveTorrent(byHash, hash);
 
         if (! torrent) {
             // the same disappearance means two different things: a download that
             // never finished was cancelled or failed and is worth another search,
             // while a finished one was watched and cleaned up
-            if (done.length > 0) {
-                await syncLog(`${ unitLabel(done) }: removed from the client after finishing, treated as watched and deleted`);
+            if (item.status === LibraryStatus.AVAILABLE) {
+                await syncLog(`${ label }: removed from the client after finishing, treated as watched and deleted`);
 
-                await forgetUnits(done.map(unit => unit.id));
-                await pruneWatchlistItem(done[0].watchlistId);
-            }
+                await forgetLibraryItem(item.id);
 
-            if (running.length > 0) {
-                await syncLog(`${ unitLabel(running) }: torrent is gone from the client, queued for a new search`, LogLevel.WARN);
+            } else {
+                await syncLog(`${ label }: torrent is gone from the client, queued for a new search`, LogLevel.WARN);
 
-                await prisma.watchlistUnit.updateMany({
-                    where,
-                    data: { status: WatchStatus.PENDING, torrentHash: null }
-                });
+                await restoreToWatchlist(item);
             }
 
             continue;
         }
 
-        if (running.length === 0) {
+        if (item.status === LibraryStatus.AVAILABLE) {
+            // rows that came from the old model have no release name: it was never
+            // stored on a unit, and the client is the only place it still exists
+            if (! item.releaseTitle) {
+                await prisma.libraryItem.update({ where: { id: item.id }, data: { releaseTitle: torrent.name } });
+            }
+
             continue;
         }
 
@@ -207,7 +172,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
         const payload = inspectPayload(await getTorrentFiles(hash));
 
         if (payload.bad) {
-            await syncLog(`${ unitLabel(running) }: ${ payload.reason } (${ torrent.name }), not the release it claims to be — dropping it`, LogLevel.WARN);
+            await syncLog(`${ label }: ${ payload.reason } (${ torrent.name }), not the release it claims to be — dropping it`, LogLevel.WARN);
 
             if (isDryRun()) {
                 await log("a bad payload is left alone in dry-run, the torrent stays");
@@ -216,56 +181,32 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             }
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
-            await notify("dropped", await readableLabel(running), `${ payload.reason } — ${ torrent.name }`);
+            await notify("dropped", label, `${ payload.reason } — ${ torrent.name }`);
 
             await removeTorrent(hash, payloadDeleteFiles());
             forgetStall(hash);
 
-            await prisma.watchlistUnit.updateMany({
-                where,
-                data: {
-                    status: WatchStatus.PENDING,
-                    torrentHash: null,
-                    searchAttempts: { increment: 1 },
-                    lastCheckedAt: null
-                }
-            });
+            await restoreToWatchlist(item);
 
             continue;
         }
 
         if (torrent.isComplete) {
-            await syncLog(`${ unitLabel(running) }: downloaded (${ torrent.name })`);
+            await syncLog(`${ label }: downloaded (${ torrent.name }), seeding until ${ seedUntilText() }`);
 
-            // A finished film is off the watchlist the moment it lands — there is
-            // never anything left to watch for. An episode keeps the flag: it is the
-            // only record that its season was wanted, and `syncTvSeasons` reads it
-            // to decide whether a later episode or season is followed.
-            const isMovie = running.every(unit => unit.seasonNumber === null);
-
-            await prisma.watchlistUnit.updateMany({
-                where,
-                data: {
-                    status: WatchStatus.DOWNLOADED,
-                    ...(isMovie ? { monitored: false } : {})
-                }
-            });
-
-            await notify("ready", await readableLabel(running), torrent.name);
+            await markAvailable(item.id, torrent.name);
+            await notify("ready", label, torrent.name);
 
         } else if (torrent.isFailed) {
-            await syncLog(`${ unitLabel(running) }: torrent failed (${ torrent.state }), queued for a new search`, LogLevel.WARN);
+            await syncLog(`${ label }: torrent failed (${ torrent.state }), queued for a new search`, LogLevel.WARN);
 
-            await prisma.watchlistUnit.updateMany({
-                where,
-                data: { status: WatchStatus.PENDING, torrentHash: null, searchAttempts: { increment: 1 } }
-            });
+            await restoreToWatchlist(item);
 
         } else if (trackStall(torrent)) {
             // nothing has arrived for the whole threshold: the release is dead, not
             // slow. it goes with its files, is remembered so the next search does
-            // not pick it again, and the units are due immediately
-            await syncLog(`${ unitLabel(running) }: stalled at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes (${ torrent.state }), dropping it for another release`, LogLevel.WARN);
+            // not pick it again, and what it covered is due immediately
+            await syncLog(`${ label }: stalled at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes (${ torrent.state }), dropping it for another release`, LogLevel.WARN);
 
             if (isDryRun()) {
                 await log("stall handling is skipped in dry-run, the torrent stays");
@@ -276,21 +217,18 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             const stalled = `stood still at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes`;
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
-            await notify("dropped", await readableLabel(running), `${ stalled } — ${ torrent.name }`);
+            await notify("dropped", label, `${ stalled } — ${ torrent.name }`);
 
             await removeTorrent(hash, stallDeleteFiles());
             forgetStall(hash);
 
-            await prisma.watchlistUnit.updateMany({
-                where,
-                data: {
-                    status: WatchStatus.PENDING,
-                    torrentHash: null,
-                    searchAttempts: { increment: 1 },
-                    lastCheckedAt: null
-                }
-            });
+            await restoreToWatchlist(item);
         }
+    }
+
+    // what was marked for deletion while it was still seeding, now that it is not
+    for (const done of await runLibraryCleanup()) {
+        await syncLog(`${ await libraryLabel(done) }: the seed time is up and it was marked for deletion, ${ done.deleteFiles ? "removed with its files" : "removed, the files were kept" }`);
     }
 };
 
@@ -336,14 +274,14 @@ export const scanMovies = async (options: ScanOptions = {}) => {
                 const started = await executeMovieGrab(tmdbId, plan.release);
 
                 if (! started) {
-                    // the release was picked but the client did not take it, and the unit
-                    // is marked downloading with no hash — worth saying out loud
+                    // the grab put itself back on the watchlist, so nothing is lost —
+                    // but a client that will not take a release is worth saying out loud
                     await log(`movie ${ tmdbId }: the torrent client did not take the release`, LogLevel.WARN);
 
-                    await markUnitsDownloading([ unit.id ], null);
+                    continue;
                 }
 
-                await notify("started", await readableLabel([ unit ]), plan.release.title);
+                await notify("started", await titleOf(ContentType.MOVIE, tmdbId), plan.release.title);
             }
 
             continue;
@@ -390,7 +328,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
     const due = options.force ? found : found.filter(isDue);
     let grabCount = 0;
 
-    const groups = new Map<string, { watchlistId: number, tmdbId: number, seasonNumber: number, units: typeof due }>();
+    const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
 
     for (const unit of due) {
         if (unit.seasonNumber === null) {
@@ -399,7 +337,6 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
 
         const key = `${ unit.watchlistId }:${ unit.seasonNumber }`;
         const group = groups.get(key) || {
-            watchlistId: unit.watchlistId,
             tmdbId: unit.watchlist.tmdbId,
             seasonNumber: unit.seasonNumber,
             units: []
@@ -409,7 +346,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         groups.set(key, group);
     }
 
-    for (const { watchlistId, tmdbId, seasonNumber, units } of groups.values()) {
+    for (const { tmdbId, seasonNumber, units } of groups.values()) {
         const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
 
         const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
@@ -418,7 +355,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
             continue;
         }
 
-        const { usePack, grabs } = await planSeasonGrabs(watchlistId, plan, { episodeNumbers });
+        const { usePack, grabs } = await planSeasonGrabs(tmdbId, plan, { episodeNumbers });
 
         for (const grab of grabs) {
             await log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` }: grabbing ${ grab.release.title }`);
@@ -427,13 +364,10 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         grabCount += grabs.length;
 
         if (! isDryRun() && grabs.length > 0) {
-            await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack });
+            const name = await titleOf(ContentType.TV, tmdbId);
 
-            for (const grab of grabs) {
-                const covered = units.filter(unit => unit.episodeNumber !== null
-                    && grab.episodeNumbers.includes(unit.episodeNumber));
-
-                await notify("started", await readableLabel(covered.length > 0 ? covered : units), grab.release.title);
+            for (const started of await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack })) {
+                await notify("started", `${ name } ${ started.label }`, started.title);
             }
         }
 

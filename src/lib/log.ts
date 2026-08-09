@@ -25,6 +25,7 @@ export type LogSource =
     | "scheduler"
     | "download"
     | "watchlist"
+    | "library"
     | "settings"
     | "tmdb"
     | "indexer"

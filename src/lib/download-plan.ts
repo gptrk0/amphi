@@ -11,7 +11,6 @@ import {
 } from "@/lib/grab";
 import { parseResolution } from "@/lib/release";
 import { settingNumber } from "@/lib/settings";
-import { toContentType, getWatchlistItemByTmdbId } from "@/lib/watchlist";
 import { DownloadPreview, GrabChoice, GrabOption, MissingSeason } from "@/types/download";
 
 export type SeasonRequest = {
@@ -175,8 +174,6 @@ export const buildPreview = async (
         stored.missingMovie = plan.candidates.length === 0;
 
     } else {
-        const item = await getWatchlistItemByTmdbId(tmdbId, toContentType("tv")!);
-
         for (const request of seasons) {
             const wanted = request.episodeNumbers.length > 0 ? request.episodeNumbers : undefined;
             const plan = await planSeasonGrab(tmdbId, request.seasonNumber, { episodeNumbers: wanted });
@@ -185,7 +182,7 @@ export const buildPreview = async (
                 continue;
             }
 
-            const { usePack } = await planSeasonGrabs(item ? item.id : null, plan, { episodeNumbers: wanted });
+            const { usePack } = await planSeasonGrabs(tmdbId, plan, { episodeNumbers: wanted });
 
             stored.seasons.push({ request, plan, usePack });
 

@@ -103,19 +103,21 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
     const { startDownload } = useDownload();
     const entry = getEntry(type, tmdbId);
 
-    // the watchlist item carries the per episode monitored flags
+    // Per episode ticks and states, from both tables at once — asked for by title
+    // rather than by watchlist id, because a show whose episodes are all downloaded
+    // has no watchlist row left and still has to draw as downloaded.
     useEffect(() => {
         if (! entry) {
             setItem(undefined);
             return;
         }
 
-        axios.get(`/api/watchlist/${ entry.id }`)
+        axios.get("/api/watchlist", { params: { type, tmdbId } })
             .then(res => setItem(res.data.result))
             .catch(err => console.error(err));
         // the whole entry, not its id: a finished download replaces it and the
         // episode states below have to follow
-    }, [ entry ])
+    }, [ entry, type, tmdbId ])
 
     // whatever the server says wins, every toggle answers with the whole item
     useEffect(() => {

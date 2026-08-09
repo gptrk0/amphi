@@ -1,29 +1,32 @@
 import { NextRequest } from "next/server";
 
 import { logInfo } from "@/lib/log";
-import { syncDownloadsOnce } from "@/lib/scheduler";
-import { listManagedTorrents } from "@/lib/torrent";
-import { addToWatchlist, getWatchlistSlim, getWatchlistWithMedia, setMonitored, toContentType } from "@/lib/watchlist";
+import {
+    addToWatchlist,
+    getTitleState,
+    getWatchlistSlim,
+    getWatchlistWithMedia,
+    setMonitored,
+    toContentType
+} from "@/lib/watchlist";
 
 /** A title the log can be read by, since no name is stored anywhere. */
 const label = (name: string | null | undefined, tmdbId: number) => name || `TMDB #${ tmdbId }`;
 
 export async function GET(req: NextRequest) {
     const slim = req.nextUrl.searchParams.get('slim');
-    // only the table asks for this, it costs a qBittorrent call
-    const live = req.nextUrl.searchParams.get('live') === "1";
+
+    // one title, from both tables: the details page needs the per episode state of
+    // something that may have no watchlist row left at all
+    const tmdbId = Number(req.nextUrl.searchParams.get('tmdbId'));
+    const type = toContentType(req.nextUrl.searchParams.get('type'));
 
     try {
-        const torrents = live ? await listManagedTorrents() : null;
-
-        // the same list the rows are drawn from also finishes them: whoever is
-        // watching the table sees a download flip to done in seconds instead of
-        // waiting for the next scheduled round
-        if (torrents) {
-            await syncDownloadsOnce(torrents);
+        if (tmdbId && type) {
+            return Response.json({ success: true, result: await getTitleState(type, tmdbId) });
         }
 
-        const result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia(torrents);
+        const result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia();
 
         return Response.json({ success: true, result });
 

@@ -85,6 +85,9 @@ export const SETTINGS: SettingDef[] = [
     { key: "TORRENT_MOVIE_PATH", group: "Torrent client", label: "Film save path", type: "string", help: "As qBittorrent sees it. Empty leaves the destination to the category." },
     { key: "TORRENT_SERIES_PATH", group: "Torrent client", label: "Series save path", type: "string" },
 
+    // Library
+    { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "A finished download cannot be deleted until this is up — it can be marked for deletion, and goes by itself when the time comes. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
+
     // Quality
     { key: "QUALITY_RESOLUTIONS", group: "Quality", label: "Resolutions, best first", type: "list", ordered: true, default: "1080p,720p,2160p", help: "Anything not listed is rejected. An unrecognised resolution is kept as a last resort." },
     { key: "QUALITY_PREFERRED_CODECS", group: "Quality", label: "Preferred codecs", type: "list", ordered: true, default: "x264,h264,avc", help: "h264 plays on everything; hevc and av1 are the fallback." },

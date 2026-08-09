@@ -61,6 +61,68 @@ model LogEntry {
   @@index([at])
 }
 
+enum LibraryStatus {
+  DOWNLOADING
+  AVAILABLE
+}
+
+/// One download: one torrent and everything it brought. The watchlist is what is
+/// still to be found, this is what is on disk or on its way there — the moment a
+/// download starts, the units it covers leave the watchlist and a row appears here.
+model LibraryItem {
+  id     Int         @id @default(autoincrement())
+  tmdbId Int
+  type   ContentType
+
+  /// What the indexer offered, which is also what qBittorrent named the torrent.
+  /// Empty only in the window between the grab and the first read back.
+  releaseTitle String  @default("")
+  torrentHash  String?
+
+  status LibraryStatus @default(DOWNLOADING)
+
+  /// Whether what this download replaced was being watched. Once a season's last
+  /// unit is carried off by a download, this is the only record left that the season
+  /// was wanted — and that is what decides whether its next episode is picked up.
+  watched Boolean @default(false)
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  /// Until when it may not be deleted. Set when the download finishes; the torrent
+  /// keeps seeding past it, this only unlocks the delete button.
+  seedUntil DateTime?
+
+  /// Asked for while it was still seeding. The cleanup carries it out the moment
+  /// `seedUntil` passes.
+  deleteRequested Boolean @default(false)
+  deleteFiles     Boolean @default(true)
+
+  /// Deleted, but remembered. Without the row the scanner would have no idea the
+  /// episode was ever obtained and would fetch it all over again.
+  removedAt DateTime?
+
+  episodes LibraryEpisode[]
+
+  @@index([tmdbId, type])
+  @@index([torrentHash])
+  @@index([status])
+}
+
+/// What one download covers. A film has none, a single episode one, a season pack
+/// all of them — including the other seasons a multi season pack carries.
+model LibraryEpisode {
+  id     Int         @id @default(autoincrement())
+  itemId Int
+  item   LibraryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  seasonNumber  Int
+  episodeNumber Int
+
+  @@unique([itemId, seasonNumber, episodeNumber])
+  @@index([seasonNumber, episodeNumber])
+}
+
 enum BlockReason {
   STALLED
   BAD_PAYLOAD

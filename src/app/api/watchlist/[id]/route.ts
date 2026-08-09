@@ -1,7 +1,5 @@
-import { NextRequest } from "next/server";
-
-import { logInfo, logWarn } from "@/lib/log";
-import { deleteItem, getWatchlistItem, getWatchlistItemWithMedia, stopWatching, toMediaType } from "@/lib/watchlist";
+import { logInfo } from "@/lib/log";
+import { getWatchlistItem, getWatchlistItemWithMedia, stopWatching, toMediaType } from "@/lib/watchlist";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -30,21 +28,17 @@ export async function GET(req: Request, { params }: Params) {
 }
 
 /**
- * Two different things behind one verb. Without `torrent` this only stops watching:
- * the client is untouched, and anything already downloaded stays listed under
- * Downloaded. With `torrent=1` the torrents are removed as well — `files=1` takes
- * the files with them — and the item is gone for good.
+ * Stop watching, which is all a watchlist row can be asked to do now: it holds what
+ * is still to be found, nothing else. Deleting files is a library action, on the
+ * download that brought them.
  */
-export async function DELETE(req: NextRequest, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
     const { id } = await params;
     const watchlistId = Number(id);
 
     if (! watchlistId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
     }
-
-    const withTorrent = req.nextUrl.searchParams.get('torrent') === "1";
-    const withFiles = req.nextUrl.searchParams.get('files') === "1";
 
     try {
         const item = await getWatchlistItem(watchlistId);
@@ -53,28 +47,14 @@ export async function DELETE(req: NextRequest, { params }: Params) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
         }
 
-        const result = withTorrent
-            ? await deleteItem(watchlistId, withFiles)
-            : await stopWatching(watchlistId);
-
+        const result = await stopWatching(watchlistId);
         const name = result?.media?.name || `TMDB #${ item.tmdbId }`;
 
-        // deleting takes the torrents with it, and with `files=1` the files too — the one
-        // action in the app that cannot be undone
-        if (withTorrent) {
-            await logWarn(
-                "watchlist",
-                `deleted: ${ name }`,
-                withFiles ? "the torrents and their files were removed from the client" : "the torrents were removed, the files were kept"
-            );
-
-        } else {
-            await logInfo(
-                "watchlist",
-                `stopped watching: ${ name }`,
-                result ? "what is already downloaded stays listed" : "nothing was downloaded from it, so the item is gone"
-            );
-        }
+        await logInfo(
+            "watchlist",
+            `stopped watching: ${ name }`,
+            result ? "some of it is still watched" : "nothing is left to look for, so it came off the watchlist"
+        );
 
         // no title is stored, the caller renders the message from what it already knows
         return Response.json({
