@@ -269,7 +269,10 @@ export const applyPicks = (plan: StoredPlan, picks: Record<string, string>) => {
 
 export const executeStoredPlan = async (
     plan: StoredPlan,
-    picks: Record<string, string>
+    picks: Record<string, string>,
+    // whoever answered the dialog. On an instant download this is the only record of
+    // who wanted it — there is no watchlist row to read it off
+    requestedBy: number | null = null
 ): Promise<StartedDownload[]> => {
     applyPicks(plan, picks);
 
@@ -278,7 +281,7 @@ export const executeStoredPlan = async (
             return [];
         }
 
-        const started = await executeMovieGrab(plan.tmdbId, plan.movie.release);
+        const started = await executeMovieGrab(plan.tmdbId, plan.movie.release, requestedBy);
 
         return started ? [ started ] : [];
     }
@@ -291,7 +294,8 @@ export const executeStoredPlan = async (
         started.push(...await executeSeasonGrab(plan.tmdbId, season.plan, {
             episodeNumbers: wanted,
             // the dialog was built for this decision, so it must not change under it
-            usePack: season.usePack
+            usePack: season.usePack,
+            requestedBy
         }));
     }
 

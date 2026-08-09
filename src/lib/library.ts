@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getMediaMetadata } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
 import { removeTorrent, TorrentStatus } from "@/lib/torrent";
-import { addToWatchlist, ensureEpisodeUnits, pruneWatchlistItem, toMediaType } from "@/lib/watchlist";
+import { addToWatchlist, ensureEpisodeUnits, pruneWatchlistItem, rowsForTitle, toMediaType } from "@/lib/watchlist";
 import { LibraryEntry, LibraryItem } from "@/types/library";
 import { WatchlistDownload } from "@/types/watchlist";
 
@@ -78,34 +78,51 @@ export const moveToLibrary = async (input: {
     type: ContentType;
     releaseTitle: string;
     episodes: GrabbedEpisode[];
+    /// whoever pressed the button, for a download nobody had on a list yet
+    requestedBy?: number | null;
 }): Promise<LibraryRow> => {
-    const row = await prisma.watchlist.findUnique({ where: { tmdbId_type: { tmdbId: input.tmdbId, type: input.type } } });
+    // everybody's, not one person's: one file arrives, and it answers every list that
+    // was waiting for it. Leaving the others behind would have them searching for
+    // something that is already on the disk.
+    const rows = await rowsForTitle(input.tmdbId, input.type);
+    const ids = rows.map(row => row.id);
 
     const where = input.episodes.length === 0
         ? { seasonNumber: null }
         : { OR: input.episodes.map(episode => ({ ...episode })) };
 
-    // read before the units go: whether this was being watched is about to have no
-    // other record anywhere
-    const replaced = row
-        ? await prisma.watchlistUnit.findMany({ where: { watchlistId: row.id, ...where } })
+    // read before the units go: who was watching this is about to have no other
+    // record anywhere
+    const replaced = ids.length > 0
+        ? await prisma.watchlistUnit.findMany({ where: { watchlistId: { in: ids }, ...where } })
         : [];
+
+    const owner = new Map(rows.map(row => [ row.id, row.userId ]));
+
+    const watchedBy = [ ...new Set([
+        ...replaced.filter(unit => unit.monitored).map(unit => owner.get(unit.watchlistId)!),
+        // an instant download is on nobody's list, and without this it would be
+        // nobody's download either — no notification, and nothing to restore it to
+        ...(input.requestedBy ? [ input.requestedBy ] : [])
+    ]) ];
 
     const item = await prisma.library.create({
         data: {
             tmdbId: input.tmdbId,
             type: input.type,
             releaseTitle: input.releaseTitle,
-            watched: replaced.some(unit => unit.monitored),
+            watchedBy,
             episodes: input.episodes.map(episodeKey)
         }
     });
 
-    if (row) {
-        await prisma.watchlistUnit.deleteMany({ where: { watchlistId: row.id, ...where } });
+    if (ids.length > 0) {
+        await prisma.watchlistUnit.deleteMany({ where: { watchlistId: { in: ids }, ...where } });
 
         // a film has nothing else to watch, so its row goes with the last unit
-        await pruneWatchlistItem(row.id);
+        for (const id of ids) {
+            await pruneWatchlistItem(id);
+        }
     }
 
     return item;
@@ -138,11 +155,21 @@ export const markAvailable = async (id: number, releaseTitle: string) => {
  * It goes back **watched**, however it started. An instant download that fails has
  * nowhere else to live, and the alternative is that something the user asked for
  * quietly stops existing.
+ *
+ * And it goes back to **everybody** it was taken from. `watchedBy` is the list this
+ * download emptied; a restore that only served one of them would silently stop
+ * looking for the others.
  */
 export const restoreToWatchlist = async (item: LibraryRow) => {
-    const created = await addToWatchlist(item.tmdbId, item.type, []);
+    const restored = [];
 
-    if (created) {
+    for (const userId of item.watchedBy) {
+        const created = await addToWatchlist(userId, item.tmdbId, item.type, []);
+
+        if (! created) {
+            continue;
+        }
+
         if (item.type === ContentType.MOVIE) {
             await prisma.watchlistUnit.updateMany({
                 where: { watchlistId: created.id, seasonNumber: null },
@@ -167,11 +194,13 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
                 data: { lastCheckedAt: null }
             });
         }
+
+        restored.push(created);
     }
 
     await prisma.library.delete({ where: { id: item.id } });
 
-    return created;
+    return restored;
 };
 
 /**
@@ -280,7 +309,8 @@ const toDownload = (torrent: TorrentStatus): WatchlistDownload => ({
     size: torrent.size
 });
 
-export const toLibraryEntry = (item: LibraryRow): LibraryEntry => ({
+export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = new Map()): LibraryEntry => ({
+    watchers: item.watchedBy.map(id => names.get(id)).filter((name): name is string => !! name),
     id: item.id,
     tmdbId: item.tmdbId,
     type: toMediaType(item.type),
@@ -308,12 +338,17 @@ export const getLibrary = async (torrents: TorrentStatus[] | null = null): Promi
 
     const byHash = new Map((torrents || []).map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
+    // one lookup for the whole page rather than one per row, and a deleted account
+    // simply drops out of the list instead of showing as a number
+    const users = await prisma.user.findMany({ select: { id: true, name: true } });
+    const names = new Map(users.map(user => [ user.id, user.name ]));
+
     return await Promise.all(items.map(async item => {
         const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
         const torrent = item.torrentHash ? byHash.get(item.torrentHash.toLowerCase()) : undefined;
 
         return {
-            ...toLibraryEntry(item),
+            ...toLibraryEntry(item, names),
             media: metadata ? metadata.media : null,
             ...(torrents ? { download: torrent ? toDownload(torrent) : null } : {})
         };

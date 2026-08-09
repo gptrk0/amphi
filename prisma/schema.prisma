@@ -52,10 +52,17 @@ model User {
   /// provider and be auto-created as a new one.
   disabled Boolean @default(false)
 
+  /// Where this person's own notifications go. The install has a chat of its own in
+  /// the settings — that one hears about everything; this one only hears about what
+  /// its owner asked for.
+  telegramChatId String?
+  telegramEvents String  @default("ready")
+
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
 
-  sessions Session[]
+  sessions   Session[]
+  watchlists Watchlist[]
 }
 
 /// A signed in browser. The cookie carries a random token, this table holds its
@@ -136,10 +143,13 @@ model Library {
 
   status LibraryStatus @default(DOWNLOADING)
 
-  /// Whether what this download replaced was being watched. Once a season's last
-  /// unit is carried off by a download, this is the only record left that the season
-  /// was wanted — and that is what decides whether its next episode is picked up.
-  watched Boolean @default(false)
+  /// Who was watching what this download carried off. Once a season's last unit is
+  /// taken by a download, this is the only record left that the season was wanted —
+  /// and that is what decides, per person, whether its next episode is picked up.
+  ///
+  /// It is also the notification list: these are the people who asked for this, so
+  /// these are the ones told when it is ready.
+  watchedBy Int[]
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?
@@ -193,10 +203,21 @@ model BlockedRelease {
   @@index([expiresAt])
 }
 
-// Identity only — titles and images always come from TMDB, everything else lives on
-// the units.
+/// Identity only — titles and images always come from TMDB, everything else lives on
+/// the units.
+///
+/// **One row per person per title.** The same film wanted by three people is three
+/// rows, and that is the point: nobody can take a title off somebody else's list.
+/// What it costs is that "is this being watched" is never a single row's answer —
+/// every write that acts on a title (a download starting, a release turning out to be
+/// fake) has to act on **all** the rows for it, across everybody. The library is the
+/// opposite and stays shared: there is one file on the disk however many people were
+/// waiting for it.
 model Watchlist {
-  id        Int         @id @default(autoincrement())
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   tmdbId    Int
   type      ContentType @default(MOVIE)
   addedAt   DateTime    @default(now())
@@ -211,7 +232,9 @@ model Watchlist {
 
   units WatchlistUnit[]
 
-  @@unique([tmdbId, type])
+  @@unique([userId, tmdbId, type])
+  // every write that acts on a title has to find it on everybody's list
+  @@index([tmdbId, type])
 }
 
 /// One thing that can be searched for and downloaded: a movie is a single unit, a

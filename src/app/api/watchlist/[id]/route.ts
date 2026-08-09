@@ -9,9 +9,9 @@ type Params = { params: Promise<{ id: string }> };
  * is still to be found, nothing else. Deleting files is a library action, on the
  * download that brought them.
  *
- * Not an administrator's job: the list is shared, but taking something off it loses
- * nothing — anything already downloaded stays in the library, and it can be watched
- * again in two clicks. Deleting is the irreversible half, and that one is admin only.
+ * A row belongs to somebody, and only they can take it off — plus an administrator,
+ * who is the one person who can clear up after somebody who left. Deleting files is
+ * a library action, and that one is administrators only for everybody.
  */
 export async function DELETE(req: Request, { params }: Params) {
     const refusal = await refuseUnlessSignedIn();
@@ -22,6 +22,7 @@ export async function DELETE(req: Request, { params }: Params) {
 
     const { id } = await params;
     const watchlistId = Number(id);
+    const me = (await currentUser())!;
 
     if (! watchlistId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
@@ -34,6 +35,12 @@ export async function DELETE(req: Request, { params }: Params) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
         }
 
+        // 404 and not 403: whether somebody else is watching something is not this
+        // endpoint's to tell
+        if (item.userId !== me.id && ! me.isAdmin) {
+            return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
+        }
+
         const result = await stopWatching(watchlistId);
         const name = result?.media?.name || `TMDB #${ item.tmdbId }`;
 
@@ -41,8 +48,11 @@ export async function DELETE(req: Request, { params }: Params) {
             "watchlist",
             `stopped watching: ${ name }`,
             withActor(
-                result ? "some of it is still watched" : "nothing is left to look for, so it came off the watchlist",
-                await currentUser()
+                [
+                    result ? "some of it is still watched" : "nothing is left to look for, so it came off the watchlist",
+                    item.userId === me.id ? "" : `off ${ item.user.name }'s list`
+                ].filter(Boolean).join(", "),
+                me
             )
         );
 

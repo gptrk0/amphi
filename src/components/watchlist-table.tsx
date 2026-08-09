@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
@@ -15,15 +15,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
-import { WatchlistItem, WatchlistStatus } from "@/types/watchlist";
+import { WatchlistRowItem, WatchlistStatus } from "@/types/watchlist";
 
 type Column = {
     key: string;
     label: string;
     // what the column sorts on; a column without it cannot be sorted
-    value?: (item: WatchlistItem) => string | number;
-    render: (item: WatchlistItem) => ReactNode;
+    value?: (item: WatchlistRowItem) => string | number;
+    render: (item: WatchlistRowItem) => ReactNode;
     className?: string;
+    // only drawn while an administrator is looking at everybody's lists
+    everybody?: boolean;
 };
 
 const STATUS_FILTERS: { label: string, value: WatchlistStatus | "ALL" }[] = [
@@ -98,9 +100,10 @@ const untilText = (deadline: number | null, now: number) => {
  * it covers has nothing left to look for and moves to the library.
  */
 export function WatchlistTable() {
-    const { entries, remove } = useWatchlist();
+    const { entries, refresh } = useWatchlist();
     const { isAdmin } = useSession();
-    const [ items, setItems ] = useState<WatchlistItem[]>();
+    const [ items, setItems ] = useState<WatchlistRowItem[]>();
+    const [ everybody, setEverybody ] = useState(false);
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
@@ -113,20 +116,39 @@ export function WatchlistTable() {
      * it, so two requests are in the air with the older one still carrying the row
      * that was just removed. Only the answer to the newest request is taken.
      */
-    const load = () => {
+    const load = useCallback(() => {
         const ticket = ++request.current;
 
-        return axios.get("/api/watchlist")
+        return axios.get("/api/watchlist", { params: everybody ? { all: 1 } : {} })
             .then(res => {
                 if (ticket === request.current) {
                     setItems(res.data.result || []);
                 }
             })
             .catch(err => console.error(err));
-    };
+    }, [ everybody ]);
 
-    const stopWatching = async (item: WatchlistItem) => {
-        await remove(item.type, item.tmdbId, item.media?.name || `TMDB #${ item.tmdbId }`);
+    /**
+     * By row id and not through the shared context: an administrator looking at
+     * everybody's lists is acting on a row that is not on their own, and the context
+     * only knows their own.
+     */
+    const stopWatching = async (item: WatchlistRowItem) => {
+        const name = item.media?.name || `TMDB #${ item.tmdbId }`;
+
+        try {
+            const res = await axios.delete(`/api/watchlist/${ item.id }`);
+
+            toast(res.data.kept
+                ? `${ name } is partly off the watchlist.`
+                : `${ name } is off the watchlist.`);
+
+        } catch(err) {
+            console.error(err);
+            toast(`Could not take ${ name } off the watchlist.`);
+        }
+
+        await refresh();
         await load();
     };
 
@@ -189,9 +211,9 @@ export function WatchlistTable() {
 
     useEffect(() => {
         load();
-    }, [ signature ])
+    }, [ signature, load ])
 
-    const poster = (item: WatchlistItem) => {
+    const poster = (item: WatchlistRowItem) => {
         if (! item.media?.poster_img) {
             return <div className="flex h-[48px] w-[32px] shrink-0 items-center justify-center rounded-sm border text-[8px] text-muted-foreground">no<br />img</div>;
         }
@@ -213,6 +235,13 @@ export function WatchlistTable() {
                     </Link>
                 </div>
             )
+        },
+        {
+            key: "owner",
+            label: "Added by",
+            everybody: true,
+            value: item => item.owner.name.toLowerCase(),
+            render: item => <span className="text-muted-foreground">{ item.owner.name }</span>
         },
         {
             key: "type",
@@ -267,7 +296,7 @@ export function WatchlistTable() {
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title="Stop watching — anything already downloaded stays in your library"
+                    title="Stop watching — anything already downloaded stays in the library"
                     onClick={() => stopWatching(item)}
                 >
                     <BookmarkX />
@@ -284,8 +313,10 @@ export function WatchlistTable() {
 
     const countdown = isScanning ? "scanning..." : untilText(nextScanAt, now);
 
+    const shown = columns.filter(column => ! column.everybody || everybody);
+
     const visible = (items || []).filter(item => status === "ALL" || item.status === status);
-    const column = columns.find(v => v.key === sort.key);
+    const column = shown.find(v => v.key === sort.key);
 
     const sorted = column?.value
         ? [ ...visible ].sort((a, b) => {
@@ -301,9 +332,10 @@ export function WatchlistTable() {
         <div className="p-4">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">Watchlist</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight">{ everybody ? "Everybody's watchlist" : "Your watchlist" }</h2>
                     <p className="text-sm text-muted-foreground">
-                        What the app is looking for. As soon as a release turns up it is downloaded, and it moves to your library.
+                        What is being looked for{ everybody ? " by anybody here" : " for you" }. As soon as a release turns up it is
+                        downloaded, and it moves to the library — which is shared, however many people were waiting for it.
                     </p>
                 </div>
 
@@ -328,6 +360,28 @@ export function WatchlistTable() {
             <Separator className="my-5" />
 
             <div className="flex flex-wrap gap-2 pb-4">
+                {isAdmin && <>
+                    <Button
+                        size="sm"
+                        variant={everybody ? "outline" : "default"}
+                        className="cursor-pointer"
+                        onClick={() => setEverybody(false)}
+                    >
+                        Mine
+                    </Button>
+
+                    <Button
+                        size="sm"
+                        variant={everybody ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => setEverybody(true)}
+                    >
+                        Everybody
+                    </Button>
+
+                    <Separator orientation="vertical" className="mx-1 h-8" />
+                </>}
+
                 {STATUS_FILTERS.map(filter => (
                     <Button
                         key={filter.value}
@@ -346,13 +400,15 @@ export function WatchlistTable() {
             </div>}
 
             {items && sorted.length === 0 && <p className="text-sm text-muted-foreground">
-                Your watchlist is empty — add something from a details page or by right clicking a poster.
+                { everybody
+                    ? "Nobody is waiting for anything at the moment."
+                    : "Your watchlist is empty — add something from a details page or by right clicking a poster." }
             </p>}
 
             {items && sorted.length > 0 && <Table>
                 <TableHeader>
                     <TableRow>
-                        {columns.map(col => (
+                        {shown.map(col => (
                             <TableHead key={col.key} className={col.className}>
                                 {col.value
                                     ? <button
@@ -375,7 +431,7 @@ export function WatchlistTable() {
                 <TableBody>
                     {sorted.map(item => (
                         <TableRow key={item.id}>
-                            {columns.map(col => (
+                            {shown.map(col => (
                                 <TableCell key={col.key} className={classNames(col.className, "py-1")}>
                                     { col.render(item) }
                                 </TableCell>

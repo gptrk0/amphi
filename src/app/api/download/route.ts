@@ -72,9 +72,10 @@ export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
 
-        // the shared list has no owner, so the log is the only place that records who
-        // pointed at a release and said yes
-        const who = actorText(await currentUser());
+        // an instant download never touches a watchlist, so this is the only record
+        // of whose it is — both for the log and for the notification when it lands
+        const me = await currentUser();
+        const who = actorText(me);
 
         const notConfigured = await missingService();
 
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
                 return Response.json({ success: false, expired: true, message: "The search results expired, please try again." }, { status: 410 });
             }
 
-            const started = await executeStoredPlan(plan, toPicks(body?.picks));
+            const started = await executeStoredPlan(plan, toPicks(body?.picks), me?.id ?? null);
 
             await logStarted(started, who);
 
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest) {
                 });
             }
 
-            const started = await executeMovieGrab(id, plan.release);
+            const started = await executeMovieGrab(id, plan.release, me?.id ?? null);
 
             await logStarted(started ? [ started ] : [], who);
 
@@ -182,7 +183,7 @@ export async function POST(req: NextRequest) {
             }
 
             if (plan.pack || plan.episodes.some(episode => episode.release)) {
-                started.push(...await executeSeasonGrab(id, plan, { episodeNumbers: wanted }));
+                started.push(...await executeSeasonGrab(id, plan, { episodeNumbers: wanted, requestedBy: me?.id ?? null }));
             }
 
             // only report what was actually asked for as missing

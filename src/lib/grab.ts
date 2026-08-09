@@ -75,6 +75,9 @@ export type StartedDownload = {
     title: string;
     hash: string | null;
     episodeNumbers: number[];
+    // the library row this became, which is also who to tell about it
+    libraryId: number;
+    watchedBy: number[];
 };
 
 export type PlannedGrab = {
@@ -221,12 +224,19 @@ export const planSeasonGrab = async (
  * A film is one download and nothing else: the moment it starts there is nothing
  * left to watch for, so it goes straight into the library and off the watchlist.
  */
-export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): Promise<StartedDownload | null> => {
+export const executeMovieGrab = async (
+    tmdbId: number,
+    release: IndexerResult,
+    // null when the scanner did it: then the people it belongs to are the ones whose
+    // units it carries off
+    requestedBy: number | null = null
+): Promise<StartedDownload | null> => {
     const item = await moveToLibrary({
         tmdbId,
         type: ContentType.MOVIE,
         releaseTitle: release.title,
-        episodes: []
+        episodes: [],
+        requestedBy
     });
 
     const hash = await addRelease(release, libraryTag(item.id), moviePath());
@@ -239,7 +249,14 @@ export const executeMovieGrab = async (tmdbId: number, release: IndexerResult): 
 
     await setTorrentHash(item.id, hash);
 
-    return { label: "movie", title: release.title, hash, episodeNumbers: [] };
+    return {
+        label: "movie",
+        title: release.title,
+        hash,
+        episodeNumbers: [],
+        libraryId: item.id,
+        watchedBy: item.watchedBy
+    };
 };
 
 /**
@@ -416,7 +433,7 @@ export const grabbedEpisodes = async (tmdbId: number, plan: SeasonPlan, grab: Pl
 export const executeSeasonGrab = async (
     tmdbId: number,
     plan: SeasonPlan,
-    options: { episodeNumbers?: number[], usePack?: boolean } = {}
+    options: { episodeNumbers?: number[], usePack?: boolean, requestedBy?: number | null } = {}
 ): Promise<StartedDownload[]> => {
     const { grabs } = await planSeasonGrabs(tmdbId, plan, options);
     const started: StartedDownload[] = [];
@@ -428,7 +445,8 @@ export const executeSeasonGrab = async (
             tmdbId,
             type: ContentType.TV,
             releaseTitle: grab.release.title,
-            episodes
+            episodes,
+            requestedBy: options.requestedBy ?? null
         });
 
         const hash = await addRelease(grab.release, libraryTag(item.id), tvPath());
@@ -448,7 +466,9 @@ export const executeSeasonGrab = async (
             label: label(plan.seasonNumber, grab, [ ...new Set(episodes.map(episode => episode.seasonNumber)) ]),
             title: grab.release.title,
             hash,
-            episodeNumbers: grab.episodeNumbers
+            episodeNumbers: grab.episodeNumbers,
+            libraryId: item.id,
+            watchedBy: item.watchedBy
         });
     }
 

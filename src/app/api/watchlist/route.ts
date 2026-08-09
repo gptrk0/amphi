@@ -14,6 +14,10 @@ import {
 /** A title the log can be read by, since no name is stored anywhere. */
 const label = (name: string | null | undefined, tmdbId: number) => name || `TMDB #${ tmdbId }`;
 
+/**
+ * Your list, and nobody else's — except for an administrator asking for `all=1`,
+ * which is the one view where the owner column means anything.
+ */
 export async function GET(req: NextRequest) {
     const refusal = await refuseUnlessSignedIn();
 
@@ -21,7 +25,9 @@ export async function GET(req: NextRequest) {
         return refusal;
     }
 
+    const me = (await currentUser())!;
     const slim = req.nextUrl.searchParams.get('slim');
+    const everybody = req.nextUrl.searchParams.get('all') === "1" && me.isAdmin;
 
     // one title, from both tables: the details page needs the per episode state of
     // something that may have no watchlist row left at all
@@ -30,12 +36,15 @@ export async function GET(req: NextRequest) {
 
     try {
         if (tmdbId && type) {
-            return Response.json({ success: true, result: await getTitleState(type, tmdbId) });
+            return Response.json({ success: true, result: await getTitleState(me.id, type, tmdbId) });
         }
 
-        const result = slim ? await getWatchlistSlim() : await getWatchlistWithMedia();
+        // the badges are always your own: they say whether *you* are watching this
+        const result = slim
+            ? await getWatchlistSlim(me.id)
+            : await getWatchlistWithMedia(everybody ? undefined : me.id);
 
-        return Response.json({ success: true, result });
+        return Response.json({ success: true, result, everybody });
 
     } catch(err) {
         console.error(err);
@@ -64,7 +73,8 @@ export async function POST(req: NextRequest) {
             return Response.json({ success: false, message: 'Invalid tmdbId or type!' }, { status: 400 });
         }
 
-        const result = await addToWatchlist(tmdbId, type, seasons);
+        const me = (await currentUser())!;
+        const result = await addToWatchlist(me.id, tmdbId, type, seasons);
 
         if (! result) {
             return Response.json({ success: false, message: 'Media not found on tmdb!' }, { status: 404 });
@@ -127,7 +137,8 @@ export async function PATCH(req: NextRequest) {
             return Response.json({ success: false, message: 'Invalid episode number!' }, { status: 400 });
         }
 
-        const result = await setMonitored(tmdbId, type, monitored, { seasonNumber, episodeNumbers });
+        const me = (await currentUser())!;
+        const result = await setMonitored(me.id, tmdbId, type, monitored, { seasonNumber, episodeNumbers });
 
         const what = [
             seasonNumber === undefined ? "every season" : `S${ String(seasonNumber).padStart(2, "0") }`,

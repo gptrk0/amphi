@@ -74,5 +74,12 @@ export type WatchlistItem = WatchlistEntry & {
     seasons: WatchlistSeasonItem[];
 };
 
-// Built from a watchlist row, so unlike the above its id is never null.
-export type WatchlistRowItem = WatchlistItem & { id: number };
+/**
+ * Built from a watchlist row, so unlike the above its id is never null — and a row
+ * belongs to somebody now, which is what an administrator looking at everybody's
+ * lists reads the owner column from.
+ */
+export type WatchlistRowItem = WatchlistItem & {
+    id: number;
+    owner: { id: number, name: string };
+};

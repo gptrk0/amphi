@@ -18,7 +18,7 @@ import { forgetStall, stallDeleteFiles, stallMinutes, trackStall } from "@/lib/s
 import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/lib/payload";
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 import { getTorrentFiles, getTorrentStatus, isClientConfigured, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
-import { isNotifyConfigured, notify } from "@/lib/notify";
+import { isNotifyConfigured, notify, notifyUsers } from "@/lib/notify";
 import { ensureMovieUnit, syncTvSeasons, toAirDate, toMediaType } from "@/lib/watchlist";
 
 const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES") * 60 * 1000;
@@ -154,6 +154,26 @@ const titleOf = async (type: ContentType, tmdbId: number) => {
 };
 
 /**
+ * A grab the scanner made: the install chat hears about it because it hears about
+ * everything, and the people whose lists it came off hear about it because it is
+ * theirs.
+ */
+const notifyStarted = async (
+    type: ContentType,
+    tmdbId: number,
+    releaseTitle: string,
+    started?: { label: string, watchedBy: number[] }
+) => {
+    const name = await titleOf(type, tmdbId);
+
+    // a film has no label worth printing — "Mortal Kombat II movie" reads like a typo
+    const full = started?.label ? `${ name } ${ started.label }` : name;
+
+    await notify("started", full, releaseTitle);
+    await notifyUsers(started ? started.watchedBy : [], "started", full, releaseTitle);
+};
+
+/**
  * Reads download state back from qBittorrent. One library row is one torrent, so
  * this is a plain loop now — the episodes of a season pack are one row and finish
  * together by construction.
@@ -219,6 +239,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
             await notify("dropped", label, `${ payload.reason } — ${ torrent.name }`);
+            await notifyUsers(item.watchedBy, "dropped", label, `${ payload.reason } — ${ torrent.name }`);
 
             await removeTorrent(hash, payloadDeleteFiles());
             forgetStall(hash);
@@ -233,6 +254,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             await markAvailable(item.id, torrent.name);
             await notify("ready", label, torrent.name);
+            await notifyUsers(item.watchedBy, "ready", label, torrent.name);
 
         } else if (torrent.isFailed) {
             await syncLog(`${ label }: torrent failed (${ torrent.state }), queued for a new search`, LogLevel.WARN);
@@ -255,6 +277,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
             await notify("dropped", label, `${ stalled } — ${ torrent.name }`);
+            await notifyUsers(item.watchedBy, "dropped", label, `${ stalled } — ${ torrent.name }`);
 
             await removeTorrent(hash, stallDeleteFiles());
             forgetStall(hash);
@@ -298,9 +321,18 @@ export const scanMovies = async (options: ScanOptions = {}) => {
     const due = options.force ? units : units.filter(isDue);
     let grabbed = 0;
 
+    // Three people wanting the same film is three units, and it is still one film to
+    // look for. Grouping is not an optimisation here — searching an indexer three
+    // times for the same thing is how an account gets rate limited.
+    const groups = new Map<number, typeof due>();
+
     for (const unit of due) {
         const tmdbId = unit.watchlist.tmdbId;
 
+        groups.set(tmdbId, [ ...(groups.get(tmdbId) || []), unit ]);
+    }
+
+    for (const [ tmdbId, wanted ] of groups) {
         // The episode side asks this through `heldEpisodes`; a film has no episodes,
         // so it needs its own look. Without it a film that is already in the library
         // — put back on the watchlist by a failed grab, say — is fetched all over
@@ -314,7 +346,7 @@ export const scanMovies = async (options: ScanOptions = {}) => {
         const plan = await planMovieGrab(tmdbId);
 
         if (plan?.release) {
-            await log(`movie ${ tmdbId }: grabbing ${ plan.release.title }`);
+            await log(`movie ${ tmdbId }: grabbing ${ plan.release.title }${ wanted.length > 1 ? ` (${ wanted.length } people are waiting for it)` : "" }`);
 
             grabbed++;
 
@@ -329,19 +361,21 @@ export const scanMovies = async (options: ScanOptions = {}) => {
                     continue;
                 }
 
-                await notify("started", await titleOf(ContentType.MOVIE, tmdbId), plan.release.title);
+                await notifyStarted(ContentType.MOVIE, tmdbId, plan.release.title, { label: "", watchedBy: started.watchedBy });
             }
 
             continue;
         }
 
-        const attempts = unit.searchAttempts + 1;
+        // the backoff is the film's, not one person's: whoever asked last does not get
+        // to reset the clock for everybody else
+        const attempts = Math.max(...wanted.map(unit => unit.searchAttempts)) + 1;
 
         await log(`movie ${ tmdbId }: nothing suitable found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
         if (! isDryRun()) {
-            await prisma.watchlistUnit.update({
-                where: { id: unit.id },
+            await prisma.watchlistUnit.updateMany({
+                where: { id: { in: wanted.map(unit => unit.id) } },
                 data: {
                     status: WatchStatus.SEARCHING,
                     searchAttempts: attempts,
@@ -351,8 +385,9 @@ export const scanMovies = async (options: ScanOptions = {}) => {
         }
     }
 
-    // what the round summary is made of: how much was looked at, how much came of it
-    return { looked: due.length, grabbed };
+    // what the round summary is made of: how much was looked at, how much came of it.
+    // Searches, not rows — the same film on four lists is one look.
+    return { looked: groups.size, grabbed };
 };
 
 /**
@@ -376,6 +411,8 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
     const due = options.force ? found : found.filter(isDue);
     let grabCount = 0;
 
+    // by the show and the season, not by the watchlist row: the same season on four
+    // lists is one season to search for, and one pack to decide about
     const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
 
     for (const unit of due) {
@@ -383,7 +420,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
             continue;
         }
 
-        const key = `${ unit.watchlistId }:${ unit.seasonNumber }`;
+        const key = `${ unit.watchlist.tmdbId }:${ unit.seasonNumber }`;
         const group = groups.get(key) || {
             tmdbId: unit.watchlist.tmdbId,
             seasonNumber: unit.seasonNumber,
@@ -394,8 +431,14 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         groups.set(key, group);
     }
 
+    let lookedAt = 0;
+
     for (const { tmdbId, seasonNumber, units } of groups.values()) {
-        const episodeNumbers = units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null);
+        const episodeNumbers = [ ...new Set(units
+            .map(unit => unit.episodeNumber)
+            .filter((v): v is number => v !== null)) ];
+
+        lookedAt += episodeNumbers.length;
 
         const plan = await planSeasonGrab(tmdbId, seasonNumber, { episodeNumbers });
 
@@ -412,27 +455,32 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         grabCount += grabs.length;
 
         if (! isDryRun() && grabs.length > 0) {
-            const name = await titleOf(ContentType.TV, tmdbId);
-
             for (const started of await executeSeasonGrab(tmdbId, plan, { episodeNumbers, usePack })) {
-                await notify("started", `${ name } ${ started.label }`, started.title);
+                await notifyStarted(ContentType.TV, tmdbId, started.title, started);
             }
         }
 
         const grabbed = new Set(grabs.flatMap(grab => grab.episodeNumbers));
+
+        // one line and one write per episode, however many lists it sits on
+        const missed = new Map<number, typeof units>();
 
         for (const unit of units) {
             if (unit.episodeNumber === null || grabbed.has(unit.episodeNumber)) {
                 continue;
             }
 
-            const attempts = unit.searchAttempts + 1;
+            missed.set(unit.episodeNumber, [ ...(missed.get(unit.episodeNumber) || []), unit ]);
+        }
 
-            await log(`show ${ tmdbId } S${ seasonNumber }E${ unit.episodeNumber }: nothing found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+        for (const [ episodeNumber, waiting ] of missed) {
+            const attempts = Math.max(...waiting.map(unit => unit.searchAttempts)) + 1;
+
+            await log(`show ${ tmdbId } S${ seasonNumber }E${ episodeNumber }: nothing found (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
             if (! isDryRun()) {
-                await prisma.watchlistUnit.update({
-                    where: { id: unit.id },
+                await prisma.watchlistUnit.updateMany({
+                    where: { id: { in: waiting.map(unit => unit.id) } },
                     data: {
                         status: WatchStatus.SEARCHING,
                         searchAttempts: attempts,
@@ -443,7 +491,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         }
     }
 
-    return { looked: due.length, grabbed: grabCount };
+    return { looked: lookedAt, grabbed: grabCount };
 };
 
 /**

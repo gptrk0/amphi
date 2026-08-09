@@ -24,6 +24,8 @@ export type LibraryEntry = {
     seeding: boolean;
     deleteRequested: boolean;
     deleteFiles: boolean;
+    // who was waiting for this, by name. The library is shared; the wanting was not
+    watchers: string[];
 };
 
 export type LibraryItem = LibraryEntry & {

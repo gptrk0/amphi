@@ -48,7 +48,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-09: nyolc tábla.** A `User` és a `Session` az első kettő, aminek semmi köze a filmekhez: azt mondják meg, ki léphet be és melyik böngésző van bejelentkezve. Ld. a lenti „Bejelentkezés, szerepkörök, Authentik" alfejezetet.
+**2026-08-09: nyolc tábla, és a watchlist tulajdonost kapott.** A `User` és a `Session` az első kettő, aminek semmi köze a filmekhez: azt mondják meg, ki léphet be és melyik böngésző van bejelentkezve (ld. „Bejelentkezés, szerepkörök, Authentik"). Utána a `Watchlist` `userId`-t kapott és **mindenkinek sajátja lett**, a `Library` viszont közös maradt — ld. „Mindenkinek saját watchlistje".
 
 **2026-08-09: hat tábla.** A watchlist és a library kettévált: ami letöltésre került, az a `LibraryItem` táblában él, és a `WatchlistUnit` már csak azt jelenti, amit még meg kell találni. Ld. a lenti „A watchlist keres, a library birtokol" alfejezetet.
 
@@ -1046,6 +1046,45 @@ provider elutasít -> a saját szövege jön vissza a login oldalra
 **Amit nem tudtam kipróbálni:** magát az Authentik-belépést, mert ahhoz a te példányod kell. A flow minden lába megvan mérve a token-cseréig; ami hátra van, az a `sub`/`email`/`groups` kiolvasása egy valódi userinfo-válaszból.
 
 **Ami nyitva marad.** Nincs „elfelejtett jelszó" (levélküldés nélkül az admin `Set a password` gombja az), nincs kétfaktor (az Authentik dolga), és a `/api/log/stream` jogosultsága a kézfogáskor dől el egyszer — egy közben megszűnt session egy már nyitott kapcsolatba kerül.
+
+#### Mindenkinek saját watchlistje (2026-08-09-i kérés) ✅
+
+Kérés: „a watchlist mégse legyen közös, az mindenkinek saját legyen (így senki se tudja törölni más filmjét a watchlistről, kivéve az admin)… ha pl. letöltött a film, akkor mindegyik watchlistelt recordon egységesen kell végrehajtani a műveleteket", plusz: a usernek legyen **saját Telegram-értesítése** a saját dolgairól.
+
+Ez visszavonja a pár órával korábbi „közös lista" döntést, és a modell **aszimmetrikus** lett:
+
+| | kié | miért |
+|---|---|---|
+| **Watchlist** | mindenkinek a sajátja | a *várakozás* személyes: az én listám az én ízlésem |
+| **Library** | közös | a *fájl* egy darab, akárhányan várták |
+
+`Watchlist` egy `userId`-t kapott, és az egyediség `(userId, tmdbId, type)` lett — **ugyanaz a film három ember listáján három sor**.
+
+**A drága következmény, ami minden íráson átmegy.** Semmi nem kérdezheti többé egy sorból, hogy „figyeljük-e ezt". Ami egy *címre* hat — elindult egy letöltés, egy release hamisnak bizonyult — annak **mindenki során** kell hatnia egyszerre. Ez a `moveToLibrary` és a `restoreToWatchlist`: az egyik minden listáról leszedi, amit a torrent hoz, a másik mindenkinek visszaadja, akitől elvette. A `Library.watched` bool ezért lett `watchedBy Int[]`: az a lista, akiktől elvette — és **ugyanez az értesítési lista**.
+
+**A scanner deduplikál.** Négy ember ugyanarra a filmre négy unit, és továbbra is **egy** keresés: a `scanMovies` `tmdbId` szerint, a `scanEpisodes` `tmdbId:évad` szerint csoportosít (eddig `watchlistId:évad` volt). Nem optimalizálás — négyszer ugyanazt kérdezni egy indexertől az a mód, ahogy egy fiókot letiltanak. A backoff is a *címé*: aki utoljára kérte, az nem nullázza a többiek óráját.
+
+**Az azonnali letöltésnek nincs watchlist sora**, tehát nincs miből kiolvasni, kié. Ezért kapott a `moveToLibrary` egy `requestedBy`-t: aki a gombot nyomta, bekerül a `watchedBy`-ba. Enélkül egy meghiúsult azonnali letöltésnek nem lenne hova visszakerülnie, és a kész filmről senki nem kapna értesítést.
+
+**Saját Telegram.** `User.telegramChatId` + `telegramEvents`, a `/account` oldalon. A **bot token az installé** (Settings / Notifications), a **chat a felhasználóé** — így egy admin, akinek mindkettő be van állítva, két üzenetet kap: egyet üzemeltetőként az install-csatornán, egyet magánemberként. Ez a helyes olvasat, nem duplikáció. Az admin nem tudja se beállítani, se megnézni valaki más chat id-ját: az csak a `/api/auth/me`-n megy át.
+
+**Mérve** (eldobható „Anna" adminnal és „Bela" userrel, utána törölve):
+
+```
+mindketten felveszik a Fight Clubot   -> 2 watchlist sor, ugyanaz a tmdbId
+Anna lát 1-et, Bela lát 1-et, ?all=1  -> 3 (a te House of the Dragonoddal együtt)
+Bela ?all=1                           -> továbbra is 1 (nem admin, a kapcsoló figyelmen kívül)
+Bela törli Anna sorát                 -> 404, és Anna sora ott marad
+Bela törli a sajátját                 -> 200
+Anna törli Bela sorát                 -> 200, a log: "off Bela's list — by Anna"
+letöltés indul (közvetlen hívás)      -> watchedBy [Anna, Bela], 0 sor marad egyik listán sem
+a grab meghiúsul                      -> 2 sor vissza, mindkettő figyelve, a library sor eltűnt
+dry-run scan, 2 ember ugyanarra       -> EGY sor: "movie 550: grabbing ... (2 people are waiting for it)"
+                                         a kör összegzése: "2 searched" (keresés, nem sor)
+Bela saját chat id-ja                 -> mentve; a /api/users válaszában sehol nem szerepel
+```
+
+**Ami nyitva marad.** A `getWatchlistSlim` a saját listádat fésüli össze a **teljes** libraryval, tehát a posztereken `Available` jelvényt látsz olyasmin is, amit más töltött le — ez szándékos, a fájl közös. A `refreshMetadata` címenként annyiszor fut, ahány ember figyeli (a TMDB-cache miatt olcsó, de nem nulla). És a migráció minden korábbi watchlist sort **az első adminra** írt: az install eddig egy emberé volt, most az övé.
 
 ---
 

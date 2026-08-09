@@ -4,10 +4,37 @@ import { logInfo } from "@/lib/log";
 import { loadSettings } from "@/lib/settings";
 import { updateUser, UserError } from "@/lib/users";
 
+/** Your own account, including the parts the shared session state does not carry. */
+export async function GET() {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
+    const me = (await currentUser())!;
+    const row = await prisma.user.findUnique({ where: { id: me.id } });
+
+    return Response.json({
+        success: true,
+        account: {
+            id: me.id,
+            email: me.email,
+            name: me.name,
+            role: me.role,
+            hasPassword: me.hasPassword,
+            linkedToProvider: me.linkedToProvider,
+            telegramChatId: row?.telegramChatId || "",
+            telegramEvents: row?.telegramEvents || ""
+        }
+    });
+}
+
 /**
- * Your own account: the name you are shown by, and the password. Changing it needs
- * the old one even though you are already signed in — an unattended browser should
- * not be enough to take an account over.
+ * Your own account: the name you are shown by, the password, and where your own
+ * notifications go. Changing the password needs the old one even though you are
+ * already signed in — an unattended browser should not be enough to take an account
+ * over.
  *
  * The change drops every session of this account, which is the point of it. This one
  * browser is then signed straight back in, so the person who just typed their own
@@ -46,6 +73,19 @@ export async function PATCH(req: Request) {
         }
 
         await updateUser(me.id, { name, password });
+
+        // Not through `updateUser`: these are nobody's business but their own, so an
+        // administrator has no way to set them and this is the only place they change.
+        // An empty chat id is a decision — it turns the notifications off.
+        if (typeof body?.telegramChatId === "string" || typeof body?.telegramEvents === "string") {
+            await prisma.user.update({
+                where: { id: me.id },
+                data: {
+                    ...(typeof body.telegramChatId === "string" ? { telegramChatId: body.telegramChatId.trim() || null } : {}),
+                    ...(typeof body.telegramEvents === "string" ? { telegramEvents: body.telegramEvents.trim() } : {})
+                }
+            });
+        }
 
         if (password) {
             await startSession(me.id);

@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from "react";
+import Link from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
-import { KeyRound, Loader2, LogOut } from "lucide-react";
+import { KeyRound, Loader2, LogOut, UserCog } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
@@ -93,6 +94,13 @@ export function UserMenu() {
                     </DropdownMenuLabel>
 
                     <DropdownMenuSeparator />
+
+                    <DropdownMenuItem asChild className="cursor-pointer">
+                        <Link href="/account">
+                            <UserCog />
+                            Your account
+                        </Link>
+                    </DropdownMenuItem>
 
                     {user.hasPassword && (
                         <DropdownMenuItem className="cursor-pointer" onClick={() => setOpen(true)}>
