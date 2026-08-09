@@ -1,5 +1,18 @@
-import { runScan } from "@/lib/scheduler";
-import { loadSettings, settingFlag } from "@/lib/settings";
+import { isScanRunning, nextScanAt, runScan } from "@/lib/scheduler";
+import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
+
+/** When the next round is due, so the page can count down instead of guessing. */
+export async function GET() {
+    await loadSettings();
+
+    return Response.json({
+        success: true,
+        nextScanAt: nextScanAt(),
+        intervalMinutes: settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES"),
+        running: isScanRunning(),
+        dryRun: settingFlag("SCAN_DRY_RUN")
+    });
+}
 
 export async function POST(req: Request) {
     try {
@@ -16,6 +29,8 @@ export async function POST(req: Request) {
         return Response.json({
             success: true,
             dryRun: settingFlag("SCAN_DRY_RUN"),
+            // the round it just ran pushed the next one a full interval away
+            nextScanAt: nextScanAt(),
             message: started ? "Scan finished." : "A scan is already running."
         });
 

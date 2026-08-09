@@ -1,4 +1,4 @@
-import { ContentType, LibraryItem as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
+import { ContentType, Library as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
@@ -91,7 +91,7 @@ export const moveToLibrary = async (input: {
         ? await prisma.watchlistUnit.findMany({ where: { watchlistId: row.id, ...where } })
         : [];
 
-    const item = await prisma.libraryItem.create({
+    const item = await prisma.library.create({
         data: {
             tmdbId: input.tmdbId,
             type: input.type,
@@ -112,14 +112,14 @@ export const moveToLibrary = async (input: {
 };
 
 export const setTorrentHash = async (id: number, torrentHash: string) => {
-    return await prisma.libraryItem.update({ where: { id }, data: { torrentHash } });
+    return await prisma.library.update({ where: { id }, data: { torrentHash } });
 };
 
 /** The download finished: it can be watched, and the seed window starts now. */
 export const markAvailable = async (id: number, releaseTitle: string) => {
     const completedAt = new Date();
 
-    return await prisma.libraryItem.update({
+    return await prisma.library.update({
         where: { id },
         data: {
             status: LibraryStatus.AVAILABLE,
@@ -169,7 +169,7 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
         }
     }
 
-    await prisma.libraryItem.delete({ where: { id: item.id } });
+    await prisma.library.delete({ where: { id: item.id } });
 
     return created;
 };
@@ -179,7 +179,7 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
  * idea the episode was ever obtained, and it would fetch it all over again.
  */
 export const forgetLibraryItem = async (id: number) => {
-    return await prisma.libraryItem.update({
+    return await prisma.library.update({
         where: { id },
         data: { removedAt: new Date(), torrentHash: null, deleteRequested: false }
     });
@@ -191,12 +191,20 @@ export const forgetLibraryItem = async (id: number) => {
  * asking for it again is allowed.
  */
 export const heldEpisodes = async (tmdbId: number) => {
-    const items = await prisma.libraryItem.findMany({
+    const items = await prisma.library.findMany({
         where: { tmdbId, removedAt: null },
         select: { episodes: true }
     });
 
     return new Set(items.flatMap(item => item.episodes));
+};
+
+/**
+ * Whether the title has anything in the library at all. A film has no episodes, so
+ * `heldEpisodes` cannot answer this for one.
+ */
+export const hasLibraryItem = async (tmdbId: number) => {
+    return await prisma.library.count({ where: { tmdbId, removedAt: null } }) > 0;
 };
 
 /** Whether anything of this season is already downloading or on disk. */
@@ -207,15 +215,15 @@ export const seasonStarted = async (tmdbId: number, seasonNumber: number) => {
 };
 
 export const getLibraryItem = async (id: number) => {
-    return await prisma.libraryItem.findUnique({ where: { id } });
+    return await prisma.library.findUnique({ where: { id } });
 };
 
 export const requestDelete = async (id: number, deleteFiles: boolean) => {
-    return await prisma.libraryItem.update({ where: { id }, data: { deleteRequested: true, deleteFiles } });
+    return await prisma.library.update({ where: { id }, data: { deleteRequested: true, deleteFiles } });
 };
 
 export const cancelDelete = async (id: number) => {
-    return await prisma.libraryItem.update({ where: { id }, data: { deleteRequested: false } });
+    return await prisma.library.update({ where: { id }, data: { deleteRequested: false } });
 };
 
 /**
@@ -235,7 +243,7 @@ export const deleteLibraryItem = async (item: LibraryRow, deleteFiles: boolean) 
  * Runs with the client read back, so a minute is the worst case lateness.
  */
 export const runLibraryCleanup = async () => {
-    const due = await prisma.libraryItem.findMany({
+    const due = await prisma.library.findMany({
         where: {
             deleteRequested: true,
             removedAt: null,
@@ -280,7 +288,7 @@ export const toLibraryEntry = (item: LibraryRow): LibraryEntry => ({
  * the whole page. Removed rows are the scanner's memory, not a listing.
  */
 export const getLibrary = async (torrents: TorrentStatus[] | null = null): Promise<LibraryItem[]> => {
-    const items = await prisma.libraryItem.findMany({
+    const items = await prisma.library.findMany({
         where: { removedAt: null },
         orderBy: { startedAt: "desc" }
     });

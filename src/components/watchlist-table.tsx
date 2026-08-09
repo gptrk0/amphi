@@ -69,6 +69,30 @@ const airText = (value: string | null) => {
 };
 
 /**
+ * The wait until the next round, as a clock. Seconds only matter near the end, so
+ * above a minute it counts in minutes and seconds and nothing jumps about.
+ */
+const untilText = (deadline: number | null, now: number) => {
+    if (! deadline) {
+        return "";
+    }
+
+    const seconds = Math.max(Math.round((deadline - now) / 1000), 0);
+
+    if (seconds === 0) {
+        return "next scan: any moment";
+    }
+
+    if (seconds < 60) {
+        return `next scan in ${ seconds }s`;
+    }
+
+    const minutes = Math.floor(seconds / 60);
+
+    return `next scan in ${ minutes }:${ String(seconds % 60).padStart(2, "0") }`;
+};
+
+/**
  * What is still to be found. A download is not here — the moment one starts, what
  * it covers has nothing left to look for and moves to the library.
  */
@@ -78,6 +102,8 @@ export function WatchlistTable() {
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
+    const [ nextScanAt, setNextScanAt ] = useState<number | null>(null);
+    const [ now, setNow ] = useState(() => Date.now());
     const request = useRef(0);
 
     /**
@@ -117,6 +143,9 @@ export function WatchlistTable() {
                     ? `${ res.data.message } SCAN_DRY_RUN is on, so nothing was actually downloaded.`
                     : res.data.message);
 
+                // the round that just ran is the round: the wait starts over
+                setNextScanAt(res.data.nextScanAt || null);
+
                 return load();
             })
             .catch(err => {
@@ -125,6 +154,32 @@ export function WatchlistTable() {
             })
             .finally(() => setScanning(false));
     };
+
+    const readSchedule = () => {
+        return axios.get("/api/scan")
+            .then(res => setNextScanAt(res.data.nextScanAt || null))
+            .catch(err => console.error(err));
+    };
+
+    useEffect(() => {
+        readSchedule();
+    }, [])
+
+    // one tick a second is what a countdown is; the deadline itself is only asked
+    // for when it can have moved
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+
+        return () => clearInterval(timer);
+    }, [])
+
+    // the round may have run on its own while the page was open, and then the
+    // deadline the page holds is in the past
+    useEffect(() => {
+        if (nextScanAt && nextScanAt <= now) {
+            readSchedule();
+        }
+    }, [ nextScanAt, now ])
 
     // a change in the shared list reloads the table. the whole state is the key, not
     // the number of rows: a download takes rows off this list, and that has to show
@@ -225,6 +280,8 @@ export function WatchlistTable() {
             : { key, direction: "asc" });
     };
 
+    const countdown = isScanning ? "scanning..." : untilText(nextScanAt, now);
+
     const visible = (items || []).filter(item => status === "ALL" || item.status === status);
     const column = columns.find(v => v.key === sort.key);
 
@@ -248,16 +305,20 @@ export function WatchlistTable() {
                     </p>
                 </div>
 
-                <Button
-                    className="shrink-0 cursor-pointer"
-                    onClick={scan}
-                    disabled={isScanning}
-                    title="Check everything you watch that is already out, without waiting for its next slot"
-                >
-                    <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
-                    <RefreshCw className={classNames({ "hidden": isScanning })} />
-                    Scan now
-                </Button>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Button
+                        className="cursor-pointer"
+                        onClick={scan}
+                        disabled={isScanning}
+                        title="Check everything you watch that is already out, without waiting for its next slot"
+                    >
+                        <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
+                        <RefreshCw className={classNames({ "hidden": isScanning })} />
+                        Scan now
+                    </Button>
+
+                    <span className="text-xs text-muted-foreground">{ countdown }</span>
+                </div>
             </div>
 
             <Separator className="my-5" />

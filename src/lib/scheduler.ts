@@ -4,6 +4,7 @@ import { errorText, writeLog } from "@/lib/log";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import {
     forgetLibraryItem,
+    hasLibraryItem,
     libraryLabel,
     markAvailable,
     restoreToWatchlist,
@@ -48,8 +49,46 @@ const syncLog = (message: string, level: LogLevel = LogLevel.INFO, detail?: stri
 const globalForScheduler = global as unknown as {
     schedulerStarted: boolean,
     schedulerRunning: boolean,
-    syncRunning: boolean
+    syncRunning: boolean,
+    // the timer is held so a round that just finished — scheduled or asked for by
+    // hand — can push the next one a full interval away instead of letting the old
+    // countdown run out minutes later
+    scanTimer: ReturnType<typeof setTimeout> | null,
+    nextScanAt: number | null
 };
+
+const scanTick = async () => {
+    try {
+        await runScan();
+
+    } catch(err) {
+        // never let one bad round end the loop
+        console.error(err);
+
+        await log("a scheduled tick failed, the loop carries on", LogLevel.ERROR, errorText(err));
+
+        scheduleScan(scanIntervalMs());
+    }
+};
+
+/** Every round ends by setting the next one, so there is only ever one timer. */
+const scheduleScan = (delayMs: number) => {
+    if (globalForScheduler.scanTimer) {
+        clearTimeout(globalForScheduler.scanTimer);
+    }
+
+    globalForScheduler.nextScanAt = Date.now() + delayMs;
+    globalForScheduler.scanTimer = setTimeout(scanTick, delayMs);
+};
+
+/**
+ * When the next round is due, so the page can count down to it instead of the user
+ * guessing. Null until the scheduler has started — or when it never will, because
+ * `SCAN_DISABLED` is set.
+ */
+export const nextScanAt = () => globalForScheduler.nextScanAt || null;
+
+export const isScanRunning = () => !! globalForScheduler.schedulerRunning;
 
 /**
  * The wait doubles with every fruitless search up to a cap, and nothing is ever
@@ -126,7 +165,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
     const torrents = preloaded || await listManagedTorrents();
     const byHash = new Map(torrents.map(torrent => [ torrent.hash.toLowerCase(), torrent ]));
 
-    const items = await prisma.libraryItem.findMany({
+    const items = await prisma.library.findMany({
         where: { removedAt: null, torrentHash: { not: null } },
     });
 
@@ -157,7 +196,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             // rows that came from the old model have no release name: it was never
             // stored on a unit, and the client is the only place it still exists
             if (! item.releaseTitle) {
-                await prisma.libraryItem.update({ where: { id: item.id }, data: { releaseTitle: torrent.name } });
+                await prisma.library.update({ where: { id: item.id }, data: { releaseTitle: torrent.name } });
             }
 
             continue;
@@ -261,6 +300,17 @@ export const scanMovies = async (options: ScanOptions = {}) => {
 
     for (const unit of due) {
         const tmdbId = unit.watchlist.tmdbId;
+
+        // The episode side asks this through `heldEpisodes`; a film has no episodes,
+        // so it needs its own look. Without it a film that is already in the library
+        // — put back on the watchlist by a failed grab, say — is fetched all over
+        // again, in whatever release the profile likes this time.
+        if (await hasLibraryItem(tmdbId)) {
+            await log(`movie ${ tmdbId }: already in the library, not searched for`, LogLevel.DEBUG);
+
+            continue;
+        }
+
         const plan = await planMovieGrab(tmdbId);
 
         if (plan?.release) {
@@ -508,6 +558,12 @@ export const runScan = async (options: ScanOptions = {}) => {
 
     } finally {
         globalForScheduler.schedulerRunning = false;
+
+        // a manual round counts as a round: the wait starts again from here, which is
+        // also what the countdown next to the button shows
+        if (globalForScheduler.scanTimer) {
+            scheduleScan(scanIntervalMs());
+        }
     }
 
     return true;
@@ -576,6 +632,9 @@ export const startScheduler = async () => {
         setTimeout(tick, firstDelay);
     };
 
-    loop(() => runScan(), scanIntervalMs, START_DELAY_MS);
+    // the scan has its own scheduler rather than this loop, because every round —
+    // including a manual one — restarts its clock
+    scheduleScan(START_DELAY_MS);
+
     loop(() => syncDownloadsOnce(), syncIntervalMs, syncIntervalMs());
 };

@@ -69,7 +69,7 @@ enum LibraryStatus {
 /// One download: one torrent and everything it brought. The watchlist is what is
 /// still to be found, this is what is on disk or on its way there — the moment a
 /// download starts, the units it covers leave the watchlist and a row appears here.
-model LibraryItem {
+model Library {
   id     Int         @id @default(autoincrement())
   tmdbId Int
   type   ContentType

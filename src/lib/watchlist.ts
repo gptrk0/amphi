@@ -110,7 +110,7 @@ const EMPTY_STATE: LibraryState = { items: 0, downloading: 0, held: 0, available
 const key = (type: ContentType, tmdbId: number) => `${ toMediaType(type) }:${ tmdbId }`;
 
 const libraryState = async (): Promise<Map<string, LibraryState>> => {
-    const items = await prisma.libraryItem.findMany({ where: { removedAt: null } });
+    const items = await prisma.library.findMany({ where: { removedAt: null } });
 
     const map = new Map<string, LibraryState>();
 
@@ -185,7 +185,7 @@ export const getWatchlistSlim = async (): Promise<WatchlistEntry[]> => {
  * units left is still a season on the details page, so this is what draws it.
  */
 const libraryEpisodes = async (tmdbId: number) => {
-    const items = await prisma.libraryItem.findMany({
+    const items = await prisma.library.findMany({
         where: { tmdbId, removedAt: null },
         select: { status: true, episodes: true }
     });
@@ -446,7 +446,7 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
     // An obtained episode has no unit, so the watermark below would slide back down
     // and offer it again. The library remembers everything ever downloaded, deleted
     // ones included, and that is exactly what "already offered" means here.
-    const downloads = await prisma.libraryItem.findMany({
+    const downloads = await prisma.library.findMany({
         where: { tmdbId },
         select: { watched: true, episodes: true }
     });

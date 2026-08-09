@@ -235,10 +235,38 @@ export const findTorrentByTag = async (tag: string): Promise<TorrentStatus | nul
     return torrents.find(torrent => torrent.tags.includes(tag)) || null;
 };
 
+// enough to recognise the same release under a different punctuation
+const sameName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/**
+ * qBittorrent ignores a torrent it already has: the add answers "Ok." and nothing
+ * new appears, so the tag lookup finds nothing. The release is already in the
+ * client though, and that is the one thing the caller wants to know.
+ */
+const findTorrentByName = async (title: string): Promise<TorrentStatus | null> => {
+    const torrents = await listManagedTorrents();
+    const wanted = sameName(title);
+
+    return torrents.find(torrent => sameName(torrent.name) === wanted) || null;
+};
+
+export const addTag = async (hash: string, tag: string) => {
+    try {
+        return await request("/api/v2/torrents/addTags", form({ hashes: hash, tags: tag }));
+
+    } catch(err) {
+        await logFailure("tagging a torrent", err);
+    }
+};
+
 /**
  * The add endpoint only answers "Ok.", so the hash is read back by the tag we set.
  * An empty `savePath` leaves the destination to qBittorrent, which is what the
  * category is already configured for.
+ *
+ * A release the client already holds never turns up under the new tag, so the last
+ * word is a lookup by name — that one is adopted and tagged, because "you already
+ * have this" is a started download, not a failed one.
  */
 export const addRelease = async (release: IndexerResult, tag: string, savePath = ""): Promise<string | null> => {
     await ensureCategory();
@@ -258,6 +286,14 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
         }
 
         await sleep(500);
+    }
+
+    const existing = await findTorrentByName(release.title);
+
+    if (existing) {
+        await addTag(existing.hash, tag);
+
+        return existing.hash;
     }
 
     return null;

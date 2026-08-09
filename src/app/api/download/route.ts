@@ -88,12 +88,22 @@ export async function POST(req: NextRequest) {
 
             await logStarted(started);
 
+            // silence here was how a download could look like a watchlisting: the
+            // grab puts what it cannot start back on the watchlist, and nothing said so
+            if (started.length === 0) {
+                await logWarn(
+                    "download",
+                    `the chosen release could not be started for tmdb ${ plan.tmdbId }`,
+                    "the torrent client did not take it, so it went back on the watchlist"
+                );
+            }
+
             return Response.json({
                 success: true,
                 started,
                 message: started.length > 0
                     ? `Started ${ started.length } download${ started.length > 1 ? "s" : "" }.`
-                    : "Could not start the download."
+                    : "The torrent client did not take that release — it is on your watchlist instead."
             });
         }
 
@@ -127,11 +137,21 @@ export async function POST(req: NextRequest) {
 
             await logStarted(started ? [ started ] : []);
 
+            if (! started) {
+                await logWarn(
+                    "download",
+                    `${ plan.release.title } could not be started`,
+                    "the torrent client did not take it, so it went back on the watchlist"
+                );
+            }
+
             return Response.json({
                 success: true,
                 started: started ? [ started ] : [],
                 missingMovie: false,
-                message: started ? `Downloading ${ started.title }` : "Could not start the download."
+                message: started
+                    ? `Downloading ${ started.title }`
+                    : "The torrent client did not take that release — it is on your watchlist instead."
             });
         }
 
