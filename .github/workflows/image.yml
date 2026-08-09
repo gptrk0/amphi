@@ -1,4 +1,4 @@
-# Builds and publishes the image anyone installs. Pushing to main moves `latest`; pushing a
+# Builds and publishes the image anyone installs. Pushing to master moves `latest`; pushing a
 # `v1.2.3` tag publishes `1.2.3`, `1.2` and `latest` alongside it, so a compose file can pin
 # a version if it wants to and follow the head if it does not.
 
@@ -6,7 +6,7 @@ name: image
 
 on:
     push:
-        branches: [ main ]
+        branches: [ master ]
         tags: [ "v*" ]
     workflow_dispatch:
 

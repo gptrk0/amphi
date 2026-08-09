@@ -1151,7 +1151,7 @@ memória           app 97 MB, postgres 46 MB
 
 **A végfelhasználói [docker-compose.yml](docker-compose.yml)** a repo gyökerében: `ghcr.io/gptrk0/aioseerr:latest` + `postgres:17.7` + egy volume. A DB-nek nincs publikált portja, ezért a fix jelszó benne ártalmatlan — ez a fájlban is oda van írva, mert a port megnyitásával megszűnik. A `.docker/` compose változatlanul a fejlesztői stack, a `.env`-ben lévő `COMPOSE_FILE` miatt a `docker compose` itt továbbra is azt találja meg.
 
-**A publikálás** [.github/workflows/image.yml](.github/workflows/image.yml): push `main`-re mozdítja a `latest`-et, egy `v1.2.3` tag pedig `1.2.3` és `1.2` tageket is kirak. `linux/amd64` + `linux/arm64` — az arm QEMU-val emulálva készül, ez a job lassú fele, és kivehető, ha nem kell.
+**A publikálás** [.github/workflows/image.yml](.github/workflows/image.yml): push `master`-re mozdítja a `latest`-et, egy `v1.2.3` tag pedig `1.2.3` és `1.2` tageket is kirak. `linux/amd64` + `linux/arm64` — az arm QEMU-val emulálva készül, ez a job lassú fele, és kivehető, ha nem kell.
 
 **Ami nyitva marad.** A fájlok rendezése (átnevezés, hardlinkelt könyvtár) még nincs meg; amikor lesz, az app először fog fájlrendszert érinteni, és akkor a compose-ba kell egy médiakönyvtár mount **ugyanazon az útvonalon, ahol a qBittorrent látja** — enélkül a hardlink nem működik. Addig a konténernek nincs mit mountolni.
 

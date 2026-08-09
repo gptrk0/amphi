@@ -14,7 +14,7 @@ answer, kept in its own database.
 Two containers, one file, no configuration:
 
 ```bash
-curl -O https://raw.githubusercontent.com/gptrk0/aioseerr/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/gptrk0/aioseerr/master/docker-compose.yml
 docker compose up -d
 ```
 
