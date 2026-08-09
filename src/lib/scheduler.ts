@@ -181,7 +181,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             if (item.status === LibraryStatus.AVAILABLE) {
                 await syncLog(`${ label }: removed from the client after finishing, treated as watched and deleted`);
 
-                await forgetLibraryItem(item.id);
+                await forgetLibraryItem(item);
 
             } else {
                 await syncLog(`${ label }: torrent is gone from the client, queued for a new search`, LogLevel.WARN);

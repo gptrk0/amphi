@@ -175,12 +175,21 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
 };
 
 /**
- * Gone, but remembered. Dropping the row outright would leave the scanner with no
- * idea the episode was ever obtained, and it would fetch it all over again.
+ * Gone. A row that covers episodes is kept as a tombstone: it is the only record
+ * that they were ever obtained, and `syncTvSeasons` reads it so a deleted episode
+ * is not offered all over again.
+ *
+ * A film has no episodes and so remembers nothing — every other query in the app
+ * skips removed rows anyway, so keeping one would only be a row nobody can see and
+ * nobody reads. That one goes for good.
  */
-export const forgetLibraryItem = async (id: number) => {
+export const forgetLibraryItem = async (item: LibraryRow) => {
+    if (item.episodes.length === 0) {
+        return await prisma.library.delete({ where: { id: item.id } });
+    }
+
     return await prisma.library.update({
-        where: { id },
+        where: { id: item.id },
         data: { removedAt: new Date(), torrentHash: null, deleteRequested: false }
     });
 };
@@ -235,7 +244,7 @@ export const deleteLibraryItem = async (item: LibraryRow, deleteFiles: boolean) 
         await removeTorrent(item.torrentHash, deleteFiles);
     }
 
-    return await forgetLibraryItem(item.id);
+    return await forgetLibraryItem(item);
 };
 
 /**
@@ -254,6 +263,10 @@ export const runLibraryCleanup = async () => {
     for (const item of due) {
         await deleteLibraryItem(item, item.deleteFiles);
     }
+
+    // tombstones that remember nothing, left by an earlier rule that kept every
+    // removed row. nothing reads them and nothing shows them
+    await prisma.library.deleteMany({ where: { removedAt: { not: null }, episodes: { isEmpty: true } } });
 
     return due;
 };
