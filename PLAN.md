@@ -935,6 +935,12 @@ Kérdés: „biztos szükség van minden évad részt felvenni fixen? szerintem 
 
 Migráció: `20260809120000_drop_unwatched_units` (a te 26 felesleges Silo-sorod, plusz a unit nélkül maradt tételek) és `20260809130000_monitor_new_seasons`.
 
+**Incidens a bevezetéskor (2026-08-09, ~08:39).** A migráció lefutott, a kód elkészült, a Silo négy soron állt — a **futó dev szerver viszont még a régi `syncTvSeasons`-t tartotta a memóriájában**, mert a schedulert az `instrumentation.ts` indítja a boot-nál, és az a modulgráf nem esik a hot reload hatálya alá. Egy külön `bun` processzben az új kód négy sort mért, ugyanabban a percben a szerverben futó **régi** szabály viszont a friss, ritka adatra nézett rá: „az évadnak nincs unitja → örököljön a legmagasabb meglévő évadtól", ami S3-ra `monitored = true` volt. Ezzel a Silo mind a 30 epizódja figyeltre került, a következő kör pedig **26 unitot keresett és 8 torrentet indított** (S01 pack 41 GB, S02 pack 7,5 GB, öt S03-as epizód) — kb. 65 GB-nyi nem kért letöltés.
+
+A tanulság nem a szabályról szól, hanem a sorrendről: **egy migráció, ami megváltoztatja a meglévő adat jelentését, addig veszélyes, amíg a régi kód még fut rajta.** A „nincs sor" itt tegnap még „nem kérted, de tudunk róla" volt, ma pedig „nem kérted" — a régi öröklés a másodikat az elsőnek olvasta. Ezért került be a lenti üzemeltetési jegyzetbe: ilyen migráció után **azonnal `docker compose restart aioseerr_app`**, még a következő scan-kör előtt.
+
+Helyreállítás: a hét torrent leállítva (`/api/v2/torrents/stop`, nem törölve — a döntés a felhasználóé), a 26 átvett unit törölve, a Silo vissza a négy figyelt epizódra, a szerver újraindítva. Az újraindulás utáni első kör: `round finished in 0s: 0 searched, 0 grabbed`.
+
 **Ami nyitva marad.** A bepipálás mostantól TMDB-hívást igényel (cache-elt, 12 óra), tehát TMDB-kiesésnél nem lehet évadot felvenni — eddig a sorok már ott voltak, csak billenni kellett. Cserébe TMDB nélkül az adatlap sem jelenik meg, tehát a gyakorlatban nem új korlát. A `monitorNewSeasons`-nek nincs saját kapcsolója a felületen: a „watchlistre teszem" gomb kapcsolja be, az évadonkénti pipálás nem, a `Stop watching` pedig kikapcsolja.
 
 ---
@@ -971,7 +977,12 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma migrate dev --name <nev> -
 # 2. alkalmazás + kliens újragenerálás
 docker exec -w /home/bun/app aioseerr_app bunx prisma migrate deploy
 docker exec -w /home/bun/app aioseerr_app bunx prisma generate
+
+# 3. ha a migráció a meglévő adat JELENTÉSÉT változtatja: azonnali újraindítás
+docker compose restart aioseerr_app
 ```
+
+A 3. lépés nem formalitás. A schedulert az `instrumentation.ts` indítja a boot-nál, és **az a modulgráf nem esik a hot reload hatálya alá**: a futó szerver a régi függvényeket tartja a memóriájában, amíg a processz él. Egy olyan migráció után, ami átírja, mit jelent a meglévő adat, ez azt jelenti, hogy a **régi szabály fut az új adaton** — 2026-08-09-én pontosan ez indított 65 GB nem kért letöltést (ld. „Csak a figyelt részeknek van sora" / Incidens). Tiszta séma-bővítésnél (új, defaultos oszlop) elég a `generate`.
 
 Ha a `--create-only` mégis elakadna (shadow adatbázis nélküli környezetben), a kézi út:
 
