@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessSignedIn } from "@/lib/auth";
 import { logInfo } from "@/lib/log";
 import {
     addToWatchlist,
@@ -14,6 +15,12 @@ import {
 const label = (name: string | null | undefined, tmdbId: number) => name || `TMDB #${ tmdbId }`;
 
 export async function GET(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const slim = req.nextUrl.searchParams.get('slim');
 
     // one title, from both tables: the details page needs the per episode state of
@@ -38,6 +45,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const body = await req.json();
 
@@ -83,6 +96,12 @@ export async function POST(req: NextRequest) {
  * `result` comes back null.
  */
 export async function PATCH(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const body = await req.json();
 

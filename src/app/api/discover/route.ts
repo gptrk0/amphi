@@ -1,7 +1,14 @@
 import { NextRequest } from "next/server";
+import { refuseUnlessSignedIn } from "@/lib/auth";
 import { getDiscoverPage } from "@/lib/media";
 
 export async function GET(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const params = req.nextUrl.searchParams;
     const requested = Number(params.get("page"));
 

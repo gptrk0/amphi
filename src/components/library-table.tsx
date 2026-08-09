@@ -21,6 +21,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
 import { LibraryItem } from "@/types/library";
 
@@ -93,6 +94,7 @@ const seedText = (value: string | null) => {
  */
 export function LibraryTable() {
     const { refresh } = useWatchlist();
+    const { isAdmin } = useSession();
     const [ items, setItems ] = useState<LibraryItem[]>();
     const [ filter, setFilter ] = useState<"ALL" | "DOWNLOADING" | "AVAILABLE">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "startedAt", direction: "desc" });
@@ -274,7 +276,11 @@ export function LibraryTable() {
             key: "actions",
             label: "",
             className: "text-right",
-            render: item => (item.deleteRequested
+            // deleting is the one action here that cannot be undone, and the files
+            // belong to everybody — so it is an administrator's
+            render: item => ! isAdmin
+                ? (item.deleteRequested ? <span className="text-xs text-muted-foreground">marked</span> : null)
+                : (item.deleteRequested
                 ? <Button
                     variant="ghost"
                     size="sm"

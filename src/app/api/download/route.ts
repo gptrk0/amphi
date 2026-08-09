@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { actorText, currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
 import { isIndexerConfigured } from "@/lib/indexer";
@@ -31,12 +32,12 @@ const missingService = async () => {
  * Every download the user asked for by hand, one line each. The scanner logs its own
  * grabs, and this is the other half of the answer to "where did this file come from".
  */
-const logStarted = async (started: StartedDownload[]) => {
+const logStarted = async (started: StartedDownload[], who: string) => {
     for (const download of started) {
         await logInfo(
             "download",
             `asked for by hand: ${ download.title }`,
-            `${ download.label }${ download.hash ? `, torrent ${ download.hash.slice(0, 8) }` : ", the client returned no hash" }`
+            `${ who }, ${ download.label }${ download.hash ? `, torrent ${ download.hash.slice(0, 8) }` : ", the client returned no hash" }`
         );
     }
 };
@@ -62,8 +63,18 @@ const toPicks = (value: unknown): Record<string, string> => {
  * one the quality profile decides on its own, the same way the scanner does.
  */
 export async function POST(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const body = await req.json();
+
+        // the shared list has no owner, so the log is the only place that records who
+        // pointed at a release and said yes
+        const who = actorText(await currentUser());
 
         const notConfigured = await missingService();
 
@@ -86,7 +97,7 @@ export async function POST(req: NextRequest) {
 
             const started = await executeStoredPlan(plan, toPicks(body?.picks));
 
-            await logStarted(started);
+            await logStarted(started, who);
 
             // silence here was how a download could look like a watchlisting: the
             // grab puts what it cannot start back on the watchlist, and nothing said so
@@ -135,7 +146,7 @@ export async function POST(req: NextRequest) {
 
             const started = await executeMovieGrab(id, plan.release);
 
-            await logStarted(started ? [ started ] : []);
+            await logStarted(started ? [ started ] : [], who);
 
             if (! started) {
                 await logWarn(
@@ -182,7 +193,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        await logStarted(started);
+        await logStarted(started, who);
 
         return Response.json({
             success: true,

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessSignedIn } from "@/lib/auth";
 import { buildPreview, toSeasonRequests } from "@/lib/download-plan";
 import { isIndexerConfigured } from "@/lib/indexer";
 import { errorText, logDebug, logError, logWarn } from "@/lib/log";
@@ -11,6 +12,12 @@ import { loadSettings, NotConfiguredError } from "@/lib/settings";
  * chosen releases find their way back to it.
  */
 export async function POST(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const body = await req.json();
 

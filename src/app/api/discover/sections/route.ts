@@ -2,8 +2,15 @@ import { NextRequest } from "next/server";
 import { getSections, isSectionView } from "@/lib/sections";
 import { isTmdbConfigured } from "@/lib/media";
 import { loadSettings } from "@/lib/settings";
+import { refuseUnlessSignedIn } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const view = req.nextUrl.searchParams.get("view") || "home";
 
     if (! isSectionView(view)) {

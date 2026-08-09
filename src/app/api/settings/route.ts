@@ -1,3 +1,4 @@
+import { refuseUnlessAdmin } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
 import {
     deleteSetting,
@@ -14,8 +15,9 @@ import {
 /**
  * A secret is never sent back. The page shows whether one is set and lets it be
  * replaced, which is enough to administer it without the value ever leaving the
- * server — the app has no login yet, and a form that renders the qBittorrent password
- * would hand it to anyone who can reach the page.
+ * server. Everything here is administrators only now, which is a reason to relax this
+ * and not a good one: a rendered password is one shoulder, one screen share or one
+ * cached response away from being somebody else's.
  */
 const toItem = (key: string) => {
     const def = SETTINGS.find(entry => entry.key === key)!;
@@ -66,6 +68,12 @@ const name = (key: string) => {
 };
 
 export async function GET() {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         await loadSettings(true);
 
@@ -79,6 +87,12 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const body = await req.json().catch(() => null);
         const values = body?.values;
@@ -140,6 +154,12 @@ export async function PUT(req: Request) {
  * field cannot mean it.
  */
 export async function DELETE(req: Request) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const key = new URL(req.url).searchParams.get("key");
 

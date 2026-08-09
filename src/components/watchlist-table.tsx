@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { WatchlistBadge } from "@/components/watchlist-badge";
+import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
 import { WatchlistItem, WatchlistStatus } from "@/types/watchlist";
 
@@ -98,6 +99,7 @@ const untilText = (deadline: number | null, now: number) => {
  */
 export function WatchlistTable() {
     const { entries, remove } = useWatchlist();
+    const { isAdmin } = useSession();
     const [ items, setItems ] = useState<WatchlistItem[]>();
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
@@ -305,8 +307,10 @@ export function WatchlistTable() {
                     </p>
                 </div>
 
+                {/* the countdown is for everybody, the button is not: a round hits every
+                    indexer at once, which is an operator's decision */}
                 <div className="flex shrink-0 flex-col items-end gap-1">
-                    <Button
+                    {isAdmin && <Button
                         className="cursor-pointer"
                         onClick={scan}
                         disabled={isScanning}
@@ -315,7 +319,7 @@ export function WatchlistTable() {
                         <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
                         <RefreshCw className={classNames({ "hidden": isScanning })} />
                         Scan now
-                    </Button>
+                    </Button>}
 
                     <span className="text-xs text-muted-foreground">{ countdown }</span>
                 </div>

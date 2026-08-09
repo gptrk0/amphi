@@ -1,10 +1,17 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessSignedIn } from "@/lib/auth";
 import { getLibrary } from "@/lib/library";
 import { syncDownloadsOnce } from "@/lib/scheduler";
 import { listManagedTorrents } from "@/lib/torrent";
 
 export async function GET(req: NextRequest) {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     // only the table asks for this, it costs a qBittorrent call
     const live = req.nextUrl.searchParams.get('live') === "1";
 

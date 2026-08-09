@@ -17,11 +17,15 @@ import {
 import Link from "next/link";
 import classNames from "classnames";
 
+import { useSession } from "@/context/session";
+
 const teko = Teko({ subsets: [ 'latin' ] });
 
 const menus: {
     title: string,
     url: string,
+    // hidden from a plain user, because every page under it answers them with a 403
+    admin?: boolean,
     items: {
         title: string;
         url: string
@@ -62,7 +66,12 @@ const menus: {
     {
         title: "ADMIN",
         url: "#",
+        admin: true,
         items: [
+            {
+                title: "Users",
+                url: "/users"
+            },
             {
                 title: "Settings",
                 url: "/settings"
@@ -77,6 +86,9 @@ const menus: {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const pathname = usePathname();
+    const { isAdmin } = useSession();
+
+    const visible = menus.filter(menu => ! menu.admin || isAdmin);
 
     return (
         <Sidebar {...props}>
@@ -85,7 +97,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarHeader>
 
             <SidebarContent>
-                {menus.map((item, i) => (
+                {visible.map((item, i) => (
                     <SidebarGroup key={i}>
                         <SidebarGroupLabel>{item.title}</SidebarGroupLabel>
 

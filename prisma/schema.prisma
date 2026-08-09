@@ -20,6 +20,57 @@ enum WatchStatus {
   FAILED
 }
 
+enum UserRole {
+  ADMIN
+  USER
+}
+
+/// Somebody who may use this install. The watchlist and the library are shared — one
+/// household, one list — so a user is not an owner of anything here; the role only
+/// decides who may change how the app behaves and who may destroy files.
+///
+/// An account can sign in two ways and does not have to have both: `passwordHash` is
+/// null for one that only ever arrives through the identity provider, and
+/// `oidcSubject` is null for a local one. The provider's `sub` is what links them,
+/// not the address — an email can be reassigned to another person, `sub` cannot.
+model User {
+  id    Int      @id @default(autoincrement())
+  /// stored lowercased, because it is also how an OIDC login finds an existing account
+  email String   @unique
+  name  String   @default("")
+  role  UserRole @default(USER)
+
+  passwordHash String?
+  oidcSubject  String? @unique
+
+  /// Kept rather than deleted: the sessions go, the account stays refusable and the
+  /// address stays taken, so a disabled user cannot sign straight back in through the
+  /// provider and be auto-created as a new one.
+  disabled Boolean @default(false)
+
+  createdAt   DateTime  @default(now())
+  lastLoginAt DateTime?
+
+  sessions Session[]
+}
+
+/// A signed in browser. The cookie carries a random token, this table holds its
+/// SHA-256 — a database that leaks is then not a set of usable sessions, and there is
+/// nothing to sign with, so no secret has to be kept anywhere.
+model Session {
+  /// the hash of the token, never the token
+  id     String @id
+  userId Int
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 /// A setting edited from the admin page. One row per key that was actually changed:
 /// everything else falls through to the `default` in the settings registry, so the table
 /// stays a list of deliberate decisions rather than a copy of the whole config.

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessAdmin } from "@/lib/auth";
 import { newestLogId, onLogWritten, tailLog, toLogDto, toLogFilter } from "@/lib/log";
 
 /**
@@ -39,6 +40,14 @@ const nextChange = (signal: AbortSignal) => new Promise<void>(resolve => {
 });
 
 export async function GET(req: NextRequest) {
+    // checked once, at the handshake: the stream then lives for as long as the tab is
+    // open, and a session that ends meanwhile costs an already open connection
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const params = req.nextUrl.searchParams;
     const filter = toLogFilter(params);
 

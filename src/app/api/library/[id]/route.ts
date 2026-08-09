@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessAdmin } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
 import {
     cancelDelete,
@@ -18,6 +19,12 @@ type Params = { params: Promise<{ id: string }> };
  * it is up.
  */
 export async function PATCH(req: Request, { params }: Params) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const { id } = await params;
     const itemId = Number(id);
 
@@ -61,6 +68,12 @@ export async function PATCH(req: Request, { params }: Params) {
  * for. `files=1` takes the files as well, and nothing about that can be undone.
  */
 export async function DELETE(req: NextRequest, { params }: Params) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     const { id } = await params;
     const itemId = Number(id);
 

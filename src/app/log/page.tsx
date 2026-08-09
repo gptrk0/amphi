@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ChevronDown, Loader2, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
+import { AdminOnly } from "@/components/admin-only";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,7 +86,7 @@ const toQuery = (filter: Filter, extra: Record<string, number> = {}) => {
     return params.toString();
 };
 
-export default function Page() {
+function LogPage() {
     const [ entries, setEntries ] = useState<Entry[]>();
     const [ sources, setSources ] = useState<{ source: string, count: number }[]>([]);
     const [ hasMore, setHasMore ] = useState(false);
@@ -344,5 +345,13 @@ export default function Page() {
                 </Button>
             </div>}
         </div>
+    );
+}
+
+export default function Page() {
+    return (
+        <AdminOnly title="Log">
+            <LogPage />
+        </AdminOnly>
     );
 }

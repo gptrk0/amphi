@@ -26,6 +26,7 @@ export type LogSource =
     | "download"
     | "watchlist"
     | "library"
+    | "auth"
     | "settings"
     | "tmdb"
     | "indexer"

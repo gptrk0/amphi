@@ -48,6 +48,8 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
+**2026-08-09: nyolc tábla.** A `User` és a `Session` az első kettő, aminek semmi köze a filmekhez: azt mondják meg, ki léphet be és melyik böngésző van bejelentkezve. Ld. a lenti „Bejelentkezés, szerepkörök, Authentik" alfejezetet.
+
 **2026-08-09: hat tábla.** A watchlist és a library kettévált: ami letöltésre került, az a `LibraryItem` táblában él, és a `WatchlistUnit` már csak azt jelenti, amit még meg kell találni. Ld. a lenti „A watchlist keres, a library birtokol" alfejezetet.
 
 **2026-08-08: öt tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease`, a `Setting` és a `LogEntry`. A `Setting` kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` és a `LogEntry` az a kettő, ami nem a watchlistről szól: egyiknek sincs relációja semmivel. A feketelista kulcsa a normalizált release-név (ld. „A feketelista tábla lett"), a `LogEntry` pedig maga a napló, amit a `/log` oldal mutat (ld. „Admin log oldal"). Mindhárom sémája itt van, a `WatchlistUnit` után.
@@ -377,7 +379,7 @@ Amit ebből átvettem:
 ### Fázis 8 — Későbbi, opcionális
 - [x] **Settings UI** (2026-08-08) — `/settings`, 52 beállítás tíz al-tabon (a *Log* csoport az admin log oldallal jött), **kizárólag** a DB-ből, a defaultok a registryben. Lásd a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket.
 - [x] **Telegram-értesítések** (2026-08-08) — ld. a lenti „Telegram-értesítések" alfejezetet. Böngésző push és Discord webhook továbbra is nyitott; a [notify.ts](src/lib/notify.ts) egy csatornát ismer, egy másik hozzávétele új `notify` implementációt jelent, nem átépítést.
-- [ ] Több felhasználó / auth, ha nem csak személyes használatra kell.
+- [x] **Több felhasználó / auth** (2026-08-09) — bejelentkezés, admin és user szerepkör, OpenID Connect (Authentik) saját klienssel. Ld. a lenti „Bejelentkezés, szerepkörök, Authentik" alfejezetet.
 - [ ] Médiaszerver-integráció, ha később mégis felkerül Plex/Jellyfin/Emby.
 - [x] **Epizód-szintű nézet és választás** — lásd a lenti alfejezetet (2026-08-07).
 - [x] **Évad-monitorozás kézi váltása a felületen** — ugyanott; a régi, sosem hívott `PATCH /api/watchlist/:id/seasons/:n` végpont helyére a `PATCH /api/watchlist` lépett.
@@ -904,7 +906,7 @@ Plusz a beállítás-út: `PUT` → `INFO setting changed: Log / Keep debug entr
 
 **A felület** (`/log`, az ADMIN menüben a Settings mellett): szintszűrő (a *Warnings* a hibákat is tartalmazza), forrás-választó a tábla tényleges forrásaival és darabszámukkal, szöveges keresés (300 ms debounce, a `message` és a `detail` felett), *Live* kapcsoló zöld/sárga/szürke ponttal, és *Clear*. A lista **legújabb elöl**, tehát az új sor elé kerül — nincs automatikus görgetés, amit el lehetne rontani. A szűrő ugyanazokat a paramétereket adja a listának és a streamnek, egy `where`-építőn keresztül, tehát a kettő nem tud eltérni; a lapozás `before=<id>`, nem offset, mert az kihagyná az azóta beérkezett sorokat.
 
-**Ami nyitva marad.** Nincs auth: aki eléri a `/log`-ot, az elolvassa — pontosan annyira, mint a `/settings`-et (ott *írni* lehet, itt *olvasni*). Ezért nem megy titok a naplóba még maszkolatlanul sem. És mint a schedulernél: **egy processzre** épül az azonnali ébresztés; több worker esetén a 15 másodperces tick lenne az egyetlen csatorna, ott Postgres `LISTEN/NOTIFY` a következő lépés.
+**Ami nyitva marad.** ~~Nincs auth: aki eléri a `/log`-ot, az elolvassa~~ — 2026-08-09 óta a `/log` és a `/settings` is **admin-only** (ld. „Bejelentkezés, szerepkörök, Authentik"). A titok-maszkolás ettől függetlenül marad: az admin sem az a szint, ahol egy qBittorrent-jelszót ki kell írni a képernyőre. És mint a schedulernél: **egy processzre** épül az azonnali ébresztés; több worker esetén a 15 másodperces tick lenne az egyetlen csatorna, ott Postgres `LISTEN/NOTIFY` a következő lépés.
 
 #### Csak a figyelt részeknek van sora (2026-08-09-i kérdés) ✅
 
@@ -995,13 +997,63 @@ Migráció: `20260809160000_library`, majd `20260809180000_library_episode_list`
 
 **Ami nyitva marad.** A `WatchStatus` enumban benne maradt a `DOWNLOADING`, `DOWNLOADED` és `FAILED` — a unitok már egyiket sem veszik fel, de egy Postgres enum-érték eldobása külön migráció, és a badge-ek úgyis ugyanezeket a neveket használják a library felől. A `monitorNewSeasons`-nek továbbra sincs saját kapcsolója a felületen. És a seedelésnek nincs arány-alapú vége: az „meddig seedeljen" kérdésre a válasz most „amíg nem törlöd".
 
+#### Bejelentkezés, szerepkörök, Authentik (2026-08-09-i kérés) ✅
+
+Kérés: „csinálj user kezelést, bejelentkezéssel, admin fiókkal, oauth támogatással hogy authentiket tudjak használni". Három döntés a kérdéseimre: **közös lista, admin a kapuőr** (nincs Overseerr-szerű kérelem-folyamat), **saját session + OIDC kliens** (nem Auth.js), és **az Authentik által beengedett ismeretlen automatikusan fiókot kap**, user szerepkörrel.
+
+**Miért nem Auth.js.** Ebben a kódbázisban minden konfiguráció a `Setting` táblából jön, és futásidőben átírható újraindítás nélkül (ld. „Csak a settings, env nélkül"). A NextAuth v5 a providereket **modul-szinten**, importáláskor várja, és env-változókból konfigurálja magát — vagyis vagy megszegtem volna a saját szabályt, vagy végig a könyvtár ellen dolgozom. Cserébe amit meg kellett írni, az kevesebb, mint amit a beillesztése jelentett volna: egy random token, egy sor, és egy authorization-code flow.
+
+**Nincs mit titkosan tárolni.** A cookie a tokent viszi, a `Session.id` annak a **SHA-256-a**. Semmi nincs aláírva, tehát nincs `AUTH_SECRET`, amit be kéne tenni az env-be — és egy kiszivárgott adatbázis nem egy csomó működő session. A jelszó `scrypt` (node beépített, memóriaigényes), a tárolt alak `scrypt$N$r$p$salt$hash`, tehát a költség később emelhető anélkül, hogy a meglévő sorok érvénytelenné válnának. `+0 npm függőség`.
+
+**Hol a határ.** A `middleware.ts` **nem** az: az edge runtime-on nincs adatbázis, ott csak annyi látszik, hogy van-e egyáltalán session cookie. Az igazi ellenőrzést minden route handler maga kéri (`refuseUnlessSignedIn` / `refuseUnlessAdmin`), a tábla ellen. A middleware dolga csak az, hogy a bejelentkezetlen böngésző a `/login`-ra menjen és ne egy üres képernyőre, az API pedig 401-et adjon és ne egy redirectet, amivel a `fetch` nem tud mit kezdeni.
+
+| | user | admin |
+|---|---|---|
+| discover, keresés, adatlap | ✅ | ✅ |
+| watchlistre tesz / levesz | ✅ | ✅ |
+| letöltést indít | ✅ | ✅ |
+| library megnézése | ✅ | ✅ |
+| **library törlés / törlésre jelölés** | ❌ | ✅ |
+| **Scan now** | ❌ | ✅ |
+| **Settings, Log, Users** | ❌ | ✅ |
+
+A „watchlistről levétel" szándékosan a user oldalán maradt: visszafordítható, és ami már letöltődött, azt nem érinti. A **törlés** a fájlokat viszi, azt nem.
+
+**Az első admin.** Nincs env-ből seedelt fiók (nem lenne hova tenni), ezért: amíg **nulla** user van, minden a `/setup`-ra megy, ahol az első ember adminként létrehozza magát — és a `createFirstAdmin` másodszor is ellenőrzi, mert ez az egyetlen végpont az appban, ami idegennek írással válaszol. Az ablak abban a pillanatban bezárul, hogy létezik egy fiók.
+
+**OIDC, egy fájlban.** `discovery` → PKCE (S256) → authorization code. Az issuer az egyetlen, amit tudni kell, a többi endpoint a `.well-known/openid-configuration`-ből jön (10 percig cache-elve, issuer-váltásra azonnal újra). Az `id_token` **aláírását nem ellenőrzöm**, és ez tudatos: a token-választ ez a szerver kérte le, a token endpointról, TLS-en, egy kóddal, aminek csak nála volt meg a verifier-e — a benne lévő identitáshoz nem kell aláírás, mert nem volt más a beszélgetésben. Ami a két lábat összeköti, az a `state`, ami rövid életű cookie-ban utazik és visszafelé összehasonlításra kerül.
+
+**Az Authentik-specifikus rész**, amiért az egész készült: `AUTH_OIDC_ADMIN_GROUPS`. Ha ki van töltve, a provider dönti el minden általa beléptetett fiók szerepkörét — a csoportból való kikerülés **elveszi** az admint, nem csak adni tud. Egy kivétellel: az **utolsó** admint nem veheti el, mert egy elgépelt csoportnév különben olyan installt hagyna maga után, amit csak adatbázisból lehet megjavítani.
+
+**Mérve** (a futó szerveren, eldobható `verify-admin@` és `verify-user@` fiókkal, amik utána törlődtek):
+
+```
+setup             -> admin #1, session cookie
+admin             -> /api/{watchlist,settings,log,library,scan}  mind 200
+user              -> watchlist/library/scan(GET) 200
+                     settings/log/users/scan(POST)/library DELETE  403
+                     PUT /api/settings 403, és a LIBRARY_SEED_DAYS tényleg nem íródott
+kikapcsolt user   -> a nyitott session 401, és belépni sem tud (401)
+saját szerepkör   -> "You cannot change your own role."
+11 rossz jelszó   -> 401 x10, majd 429
+OIDC kikapcsolva  -> /oidc/start 307 -> /login?error=sso
+OIDC bekapcsolva  -> 307 -> accounts.google.com/o/oauth2/v2/auth?...&code_challenge_method=S256
+                     (valódi discovery, valódi PKCE; a próba-issuer utána törölve)
+rossz state       -> "That sign-in attempt could not be verified"
+provider elutasít -> a saját szövege jön vissza a login oldalra
+```
+
+**Amit nem tudtam kipróbálni:** magát az Authentik-belépést, mert ahhoz a te példányod kell. A flow minden lába megvan mérve a token-cseréig; ami hátra van, az a `sub`/`email`/`groups` kiolvasása egy valódi userinfo-válaszból.
+
+**Ami nyitva marad.** Nincs „elfelejtett jelszó" (levélküldés nélkül az admin `Set a password` gombja az), nincs kétfaktor (az Authentik dolga), és a `/api/log/stream` jogosultsága a kézfogáskor dől el egyszer — egy közben megszűnt session egy már nyitott kapcsolatba kerül.
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
+**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Az app **be van zárva**: bejelentkezés, admin/user szerepkör és OpenID Connect (ld. „Bejelentkezés, szerepkörök, Authentik"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **Git remote és push** — 2026-08-08 estéjén 43 commit van, mind egyetlen gépen. Ez a legnagyobb kockázat a listán, és nem kód: el kell dönteni, hova. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre.

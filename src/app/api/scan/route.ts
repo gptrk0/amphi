@@ -1,8 +1,15 @@
+import { refuseUnlessAdmin, refuseUnlessSignedIn } from "@/lib/auth";
 import { isScanRunning, nextScanAt, runScan } from "@/lib/scheduler";
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 
 /** When the next round is due, so the page can count down instead of guessing. */
 export async function GET() {
+    const refusal = await refuseUnlessSignedIn();
+
+    if (refusal) {
+        return refusal;
+    }
+
     await loadSettings();
 
     return Response.json({
@@ -14,7 +21,18 @@ export async function GET() {
     });
 }
 
+/**
+ * Starting a round is an operator's button, so it is an administrator's: it hits every
+ * indexer at once, and an indexer that is being hammered starts refusing everybody.
+ * The countdown above is not — it is on the watchlist page, which everybody sees.
+ */
 export async function POST(req: Request) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         // `force` is the button on the watchlist: check everything monitored now,
         // ignoring the backoff. release dates are never ignored. no body means a

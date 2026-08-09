@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TagInput } from "@/components/tag-input";
+import { AdminOnly } from "@/components/admin-only";
 
 type SettingItem = {
     key: string;
@@ -53,7 +54,7 @@ const tableEntry = (tag: string) => {
     return null;
 };
 
-export default function Page() {
+function SettingsPage() {
     const [ items, setItems ] = useState<SettingItem[]>();
     const [ values, setValues ] = useState<Record<string, string>>({});
     const [ isSaving, setSaving ] = useState(false);
@@ -273,5 +274,13 @@ export default function Page() {
                 ))}
             </Tabs>
         </div>
+    );
+}
+
+export default function Page() {
+    return (
+        <AdminOnly title="Settings">
+            <SettingsPage />
+        </AdminOnly>
     );
 }

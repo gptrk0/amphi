@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { refuseUnlessAdmin } from "@/lib/auth";
 import { clearLog, logSources, logWarn, newestLogId, readLog, toLogDto, toLogFilter } from "@/lib/log";
 
 const PAGE_SIZE = 200;
@@ -12,6 +13,12 @@ const PAGE_SIZE = 200;
  * that currently matches nothing must not make the stream replay the whole table.
  */
 export async function GET(req: NextRequest) {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const params = req.nextUrl.searchParams;
         const filter = toLogFilter(params);
@@ -37,6 +44,12 @@ export async function GET(req: NextRequest) {
 
 /** Everything, on purpose — there is nothing selective worth building here. */
 export async function DELETE() {
+    const refusal = await refuseUnlessAdmin();
+
+    if (refusal) {
+        return refusal;
+    }
+
     try {
         const count = await clearLog();
 

@@ -144,6 +144,20 @@ export const SETTINGS: SettingDef[] = [
     { key: "DOWNLOAD_OPTION_COUNT", group: "Download dialog", label: "Releases to offer", type: "number", default: "5" },
     { key: "DOWNLOAD_PLAN_TTL_MINUTES", group: "Download dialog", label: "Search result kept for (minutes)", type: "number", default: "15", help: "How long the search behind an open dialog is kept, so answering it does not search again." },
 
+    // Access
+    { key: "AUTH_SESSION_DAYS", group: "Access", label: "Stay signed in for (days)", type: "number", default: "30", help: "Counted from the last request, not from the login, so somebody who uses the app never gets thrown out." },
+    { key: "AUTH_ALLOW_PASSWORD", group: "Access", label: "Allow the password form", type: "boolean", default: "1", help: "Off leaves single sign-on as the only way in — and is ignored while no provider is configured, so this cannot be the setting that locks you out." },
+    { key: "AUTH_PUBLIC_URL", group: "Access", label: "Public address of this app", type: "string", placeholder: "https://aioseerr.example.com", help: "Only needed for single sign-on behind a proxy that does not send X-Forwarded-Host: it is what the redirect back from the provider is built from." },
+    { key: "AUTH_OIDC_ENABLED", group: "Access", label: "Single sign-on", type: "boolean", default: "0", help: "OpenID Connect — Authentik, Authelia, Keycloak, Google. The provider is asked what its endpoints are, so the issuer below is all it needs." },
+    { key: "AUTH_OIDC_NAME", group: "Access", label: "Name of the provider", type: "string", default: "Single sign-on", help: "What the button on the login page says." },
+    { key: "AUTH_OIDC_ISSUER", group: "Access", label: "Issuer URL", type: "string", placeholder: "https://auth.example.com/application/o/aioseerr/", help: "Authentik prints it on the provider page. Everything else is read from its .well-known/openid-configuration." },
+    { key: "AUTH_OIDC_CLIENT_ID", group: "Access", label: "Client id", type: "string" },
+    { key: "AUTH_OIDC_CLIENT_SECRET", group: "Access", label: "Client secret", type: "string", secret: true, help: "Leave empty for a public client — the flow uses PKCE either way." },
+    { key: "AUTH_OIDC_SCOPES", group: "Access", label: "Scopes", type: "list", default: "openid,profile,email", help: "Add the one that carries the groups claim if you map admins by group below." },
+    { key: "AUTH_OIDC_AUTO_CREATE", group: "Access", label: "Create an account on first sign-in", type: "boolean", default: "1", help: "On: whoever the provider lets through gets an account here, as a plain user. Off: only somebody already on the users page can sign in." },
+    { key: "AUTH_OIDC_GROUPS_CLAIM", group: "Access", label: "Groups claim", type: "string", default: "groups" },
+    { key: "AUTH_OIDC_ADMIN_GROUPS", group: "Access", label: "Groups that make an admin", type: "list", help: "While this is filled in, the provider decides the role of every account it signs in — being removed from the group takes admin away again. It can never take away the last admin, so a typo here cannot lock you out." },
+
     // Log
     { key: "LOG_RETENTION_DAYS", group: "Log", label: "Keep entries for (days)", type: "number", default: "14", help: "0 = keep everything. Checked once an hour, on the way out of a write." },
     { key: "LOG_DEBUG", group: "Log", label: "Keep debug entries", type: "boolean", default: "0", help: "Every indexer search and every preview, which is a lot of lines — worth turning on while something is being chased down." }
