@@ -574,13 +574,6 @@ export const stopWatching = async (id: number) => {
     return await pruneWatchlistItem(id);
 };
 
-export const getSeasonUnits = async (watchlistId: number, seasonNumber: number) => {
-    return await prisma.watchlistUnit.findMany({
-        where: { watchlistId, seasonNumber },
-        orderBy: { episodeNumber: "asc" }
-    });
-};
-
 /**
  * A unit that is not watched has nothing left to say. A search that came back empty
  * is bookkeeping, not a possession, and it must not keep the row alive — otherwise

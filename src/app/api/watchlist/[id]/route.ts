@@ -1,31 +1,7 @@
 import { logInfo } from "@/lib/log";
-import { getWatchlistItem, getWatchlistItemWithMedia, stopWatching, toMediaType } from "@/lib/watchlist";
+import { getWatchlistItem, stopWatching, toMediaType } from "@/lib/watchlist";
 
 type Params = { params: Promise<{ id: string }> };
-
-export async function GET(req: Request, { params }: Params) {
-    const { id } = await params;
-    const watchlistId = Number(id);
-
-    if (! watchlistId) {
-        return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
-    }
-
-    try {
-        const result = await getWatchlistItemWithMedia(watchlistId);
-
-        if (! result) {
-            return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
-        }
-
-        return Response.json({ success: true, result });
-
-    } catch(err) {
-        console.error(err);
-
-        return Response.json({ success: false, message: 'Failed to load watchlist item!' }, { status: 500 });
-    }
-}
 
 /**
  * Stop watching, which is all a watchlist row can be asked to do now: it holds what
