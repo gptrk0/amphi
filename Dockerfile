@@ -36,8 +36,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # the client is generated, never committed, so the build has to make it before the compile
-# can typecheck anything that touches the database
-RUN bunx prisma generate && bun run build
+# can typecheck anything that touches the database. `public` is created because it is empty
+# and git does not carry empty directories: it exists in a working copy and not in a fresh
+# checkout, which is exactly the difference between a build here and a build on a runner.
+RUN mkdir -p public && bunx prisma generate && bun run build
 
 # ---- the migration tool -----------------------------------------------------------------
 
