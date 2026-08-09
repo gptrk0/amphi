@@ -139,6 +139,7 @@ export const SETTINGS: SettingDef[] = [
     { key: "TELEGRAM_CHAT_ID", group: "Notifications", label: "Chat id", type: "string", help: "Message the bot once, then read it from /getUpdates. Negative for a group, and it changes if Telegram turns that group into a supergroup." },
     { key: "TELEGRAM_EVENTS", group: "Notifications", label: "Events to send", type: "list", default: "ready,started,dropped", help: "ready = a download finished and is watchable, started = the scanner grabbed something, dropped = a grab turned out to be fake or dead. Empty sends nothing, `*` sends everything." },
     { key: "TELEGRAM_API_URL", group: "Notifications", label: "Bot API URL", type: "string", default: "https://api.telegram.org", help: "Only for a self hosted Bot API server." },
+    { key: "NOTIFY_WEBHOOK_ALLOW_PRIVATE", group: "Notifications", label: "Allow webhooks inside your network", type: "boolean", default: "0", help: "Everybody here can set a webhook of their own on their account page, and the server is what calls it — so by default it refuses addresses only the server can reach (localhost, 10.x, 192.168.x). Turn this on only if somebody genuinely has a receiver on the same network." },
 
     // Download dialog
     { key: "DOWNLOAD_OPTION_COUNT", group: "Download dialog", label: "Releases to offer", type: "number", default: "5" },

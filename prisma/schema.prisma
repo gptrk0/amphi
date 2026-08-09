@@ -52,11 +52,14 @@ model User {
   /// provider and be auto-created as a new one.
   disabled Boolean @default(false)
 
-  /// Where this person's own notifications go. The install has a chat of its own in
-  /// the settings — that one hears about everything; this one only hears about what
-  /// its owner asked for.
-  telegramChatId String?
-  telegramEvents String  @default("ready")
+  /// Where this person's own notifications go: any URL the app can call. With a
+  /// placeholder in it (`{message}`) it is fetched with the text substituted in,
+  /// which is what Telegram's `sendMessage` wants; without one it is posted to as
+  /// JSON, which is what a Discord webhook wants. The install has a Telegram chat of
+  /// its own in the settings — that one hears about everything, this one only about
+  /// what its owner asked for.
+  webhookUrl   String?
+  notifyEvents String  @default("ready")
 
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?

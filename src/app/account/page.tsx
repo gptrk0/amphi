@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, Send } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -21,11 +21,23 @@ type Account = {
     role: "ADMIN" | "USER";
     hasPassword: boolean;
     linkedToProvider: boolean;
-    telegramChatId: string;
-    telegramEvents: string;
+    webhookUrl: string;
+    notifyEvents: string;
 };
 
 const EVENTS = "ready, started, dropped";
+
+// what to paste, for the two services anybody actually uses
+const EXAMPLES = [
+    {
+        name: "Telegram",
+        url: "https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>&text={message}"
+    },
+    {
+        name: "Discord",
+        url: "https://discord.com/api/webhooks/<id>/<token>"
+    }
+];
 
 /**
  * The settings that are yours rather than the install's. The admin page decides how
@@ -37,18 +49,19 @@ export default function Page() {
 
     const [ account, setAccount ] = useState<Account>();
     const [ name, setName ] = useState("");
-    const [ chatId, setChatId ] = useState("");
+    const [ webhook, setWebhook ] = useState("");
     const [ events, setEvents ] = useState("");
     const [ current, setCurrent ] = useState("");
     const [ next, setNext ] = useState("");
     const [ isSaving, setSaving ] = useState(false);
     const [ isChanging, setChanging ] = useState(false);
+    const [ isTesting, setTesting ] = useState(false);
 
     const load = (data: Account) => {
         setAccount(data);
         setName(data.name);
-        setChatId(data.telegramChatId);
-        setEvents(data.telegramEvents);
+        setWebhook(data.webhookUrl);
+        setEvents(data.notifyEvents);
     };
 
     useEffect(() => {
@@ -61,7 +74,7 @@ export default function Page() {
         setSaving(true);
 
         try {
-            await axios.patch("/api/auth/me", { name, telegramChatId: chatId, telegramEvents: events });
+            await axios.patch("/api/auth/me", { name, webhookUrl: webhook, notifyEvents: events });
 
             const res = await axios.get("/api/auth/me");
 
@@ -75,6 +88,23 @@ export default function Page() {
 
         } finally {
             setSaving(false);
+        }
+    };
+
+    /** Sends the field as it is on screen, so a typo shows up before it is saved. */
+    const test = async () => {
+        setTesting(true);
+
+        try {
+            const res = await axios.post("/api/auth/me/test", { webhookUrl: webhook });
+
+            toast(res.data.message);
+
+        } catch(err) {
+            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || "The webhook could not be called.");
+
+        } finally {
+            setTesting(false);
         }
     };
 
@@ -126,21 +156,53 @@ export default function Page() {
 
                 <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                        <label className="text-sm font-medium">Your Telegram chat</label>
-                        {! account.telegramChatId && <Badge variant="outline">off</Badge>}
+                        <label className="text-sm font-medium">Your webhook</label>
+                        {! account.webhookUrl && <Badge variant="outline">off</Badge>}
                     </div>
 
-                    <Input
-                        value={chatId}
-                        placeholder="e.g. 123456789"
-                        onChange={event => setChatId(event.target.value)}
-                    />
+                    <div className="flex gap-2">
+                        <Input
+                            value={webhook}
+                            placeholder="https://…"
+                            onChange={event => setWebhook(event.target.value)}
+                        />
+
+                        <Button
+                            variant="outline"
+                            className="shrink-0 cursor-pointer"
+                            onClick={test}
+                            disabled={isTesting || ! webhook.trim()}
+                        >
+                            <Loader2 className={classNames("animate-spin", { "hidden": ! isTesting })} />
+                            <Send className={classNames({ "hidden": isTesting })} />
+                            Test
+                        </Button>
+                    </div>
 
                     <p className="text-xs text-muted-foreground">
-                        Only about what <b>you</b> put on your watchlist — nobody else&apos;s downloads. Message the
-                        bot once, then read the id out of its <code>/getUpdates</code>. Empty turns it off. The bot
-                        itself is the install&apos;s, so an administrator has to have set one up.
+                        A URL the app calls when something of <b>yours</b> happens — never anybody else&apos;s
+                        downloads. Put <code>{"{message}"}</code> in it and it is fetched with the text filled in;
+                        leave it without one and it is posted to as JSON (<code>content</code>), which is what a
+                        Discord webhook wants. <code>{"{title}"}</code>, <code>{"{detail}"}</code> and{" "}
+                        <code>{"{event}"}</code> are the other placeholders. Empty turns it off.
                     </p>
+
+                    <div className="space-y-1 rounded-md border p-3">
+                        {EXAMPLES.map(example => (
+                            <div key={example.name} className="flex flex-wrap items-baseline gap-2 text-xs">
+                                <span className="w-16 shrink-0 font-medium">{ example.name }</span>
+
+                                <button
+                                    type="button"
+                                    className="cursor-pointer break-all text-left font-mono text-muted-foreground hover:text-foreground"
+                                    onClick={() => setWebhook(example.url)}
+                                    title="Use this as a starting point"
+                                >
+                                    { example.url }
+                                </button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 <div className="space-y-2">

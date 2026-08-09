@@ -3,6 +3,7 @@ import { currentUser, refuseUnlessSignedIn, signInWithPassword, startSession } f
 import { logInfo } from "@/lib/log";
 import { loadSettings } from "@/lib/settings";
 import { updateUser, UserError } from "@/lib/users";
+import { webhookProblem } from "@/lib/webhook";
 
 /** Your own account, including the parts the shared session state does not carry. */
 export async function GET() {
@@ -24,8 +25,8 @@ export async function GET() {
             role: me.role,
             hasPassword: me.hasPassword,
             linkedToProvider: me.linkedToProvider,
-            telegramChatId: row?.telegramChatId || "",
-            telegramEvents: row?.telegramEvents || ""
+            webhookUrl: row?.webhookUrl || "",
+            notifyEvents: row?.notifyEvents || ""
         }
     });
 }
@@ -76,13 +77,25 @@ export async function PATCH(req: Request) {
 
         // Not through `updateUser`: these are nobody's business but their own, so an
         // administrator has no way to set them and this is the only place they change.
-        // An empty chat id is a decision — it turns the notifications off.
-        if (typeof body?.telegramChatId === "string" || typeof body?.telegramEvents === "string") {
+        // An empty url is a decision — it turns the notifications off.
+        if (typeof body?.webhookUrl === "string" || typeof body?.notifyEvents === "string") {
+            const url = typeof body.webhookUrl === "string" ? body.webhookUrl.trim() : null;
+
+            // refused here rather than at the first download: a url the server will
+            // never call is worth saying no to while somebody is looking at the form
+            if (url) {
+                const problem = webhookProblem(url);
+
+                if (problem) {
+                    return Response.json({ success: false, message: problem }, { status: 400 });
+                }
+            }
+
             await prisma.user.update({
                 where: { id: me.id },
                 data: {
-                    ...(typeof body.telegramChatId === "string" ? { telegramChatId: body.telegramChatId.trim() || null } : {}),
-                    ...(typeof body.telegramEvents === "string" ? { telegramEvents: body.telegramEvents.trim() } : {})
+                    ...(url !== null ? { webhookUrl: url || null } : {}),
+                    ...(typeof body.notifyEvents === "string" ? { notifyEvents: body.notifyEvents.trim() } : {})
                 }
             });
         }

@@ -1066,7 +1066,7 @@ Ez visszavonja a pár órával korábbi „közös lista" döntést, és a model
 
 **Az azonnali letöltésnek nincs watchlist sora**, tehát nincs miből kiolvasni, kié. Ezért kapott a `moveToLibrary` egy `requestedBy`-t: aki a gombot nyomta, bekerül a `watchedBy`-ba. Enélkül egy meghiúsult azonnali letöltésnek nem lenne hova visszakerülnie, és a kész filmről senki nem kapna értesítést.
 
-**Saját Telegram.** `User.telegramChatId` + `telegramEvents`, a `/account` oldalon. A **bot token az installé** (Settings / Notifications), a **chat a felhasználóé** — így egy admin, akinek mindkettő be van állítva, két üzenetet kap: egyet üzemeltetőként az install-csatornán, egyet magánemberként. Ez a helyes olvasat, nem duplikáció. Az admin nem tudja se beállítani, se megnézni valaki más chat id-ját: az csak a `/api/auth/me`-n megy át.
+**Saját értesítés: egy webhook URL.** Először Telegram chat id volt, de az egy szolgáltatást jelentett. Most `User.webhookUrl` + `notifyEvents`, a `/account` oldalon — bármilyen URL, tehát a Telegram és a Discord is „csak egy URL", és nincs szolgáltatás-választó. Ld. a lenti „Egy URL, két alak" alfejezetet. A **Settings-beli Telegram az installé** és mindenről hall; a webhook a felhasználóé és csak a sajátjáról. Akinek mindkettő be van állítva, két üzenetet kap: egyet üzemeltetőként, egyet magánemberként — ez a helyes olvasat, nem duplikáció. Az admin nem tudja se beállítani, se megnézni valaki más webhookját: az csak a `/api/auth/me`-n megy át.
 
 **Mérve** (eldobható „Anna" adminnal és „Bela" userrel, utána törölve):
 
@@ -1085,6 +1085,36 @@ Bela saját chat id-ja                 -> mentve; a /api/users válaszában seho
 ```
 
 **Ami nyitva marad.** A `getWatchlistSlim` a saját listádat fésüli össze a **teljes** libraryval, tehát a posztereken `Available` jelvényt látsz olyasmin is, amit más töltött le — ez szándékos, a fájl közös. A `refreshMetadata` címenként annyiszor fut, ahány ember figyeli (a TMDB-cache miatt olcsó, de nem nulla). És a migráció minden korábbi watchlist sort **az első adminra** írt: az install eddig egy emberé volt, most az övé.
+
+#### Egy URL, két alak (2026-08-09-i kérés) ✅
+
+Kérés: „a user saját magánál inkább webhookot adhasson meg, egy linket benne placeholderrel — így telegram és discord értesítéseket is tud kapni".
+
+A két szolgáltatás nem ugyanúgy fogad üzenetet: a Telegram `sendMessage`-e **GET**, a szöveg a query stringben; a Discord webhook **POST**, a szöveg JSON törzsben. Ahelyett, hogy megkérdezném, melyikről van szó, **maga az URL mondja meg**: ha van benne placeholder, a szöveg az URL-be megy és GET lesz; ha nincs, POST lesz `{"content": …}` törzzsel. Így mindkettő egy mező, és nincs mit kiválasztani:
+
+```
+https://api.telegram.org/bot<token>/sendMessage?chat_id=123&text={message}
+https://discord.com/api/webhooks/<id>/<token>
+```
+
+Placeholderek: `{message}` (a teljes szöveg), `{title}`, `{detail}`, `{event}`. URL-be `encodeURIComponent`-tel megy — egy release-név tele van ponttal, zárójellel és `&`-tel, kódolatlanul kettévágná a query stringet.
+
+**Amiért ez őrzött.** A szerver hív meg egy URL-t, amit egy tetszőleges bejelentkezett felhasználó adott meg — ez **SSRF**: az app eléri a qBittorrent API-ját, a Postgrest és a saját admin végpontjait, amiket a böngészőjéből nem érne el. Ezért a privát és loopback címek alapból tiltottak (`localhost`, `127.`, `10.`, `192.168.`, `172.16–31.`, `169.254.`, `::1`, `fc/fd`, `.local`, `.internal`), és csak a `NOTIFY_WEBHOOK_ALLOW_PRIVATE` kapcsolja fel őket. Ez **hostnév-alapú**, tudatosan: egy DNS-név mögé rejtett privát cím elkapásához resolver kell és minden átirányítás után újraellenőrzés — az több gépezet, mint amennyit egy otthoni install indokol. A nyilvánvalót megfogja, a kapcsoló pedig ott van annak, akinek tényleg belső fogadója van.
+
+**Teszt gomb**, mert enélkül hetekkel később derülne ki, hogy elgépelted: a `/account` oldalon a mező mellett, és **a képernyőn lévő értéket küldi**, nem a mentettet.
+
+**Mérve** (a konténerben futó fogadóval, ami leírta, mi érkezett):
+
+```
+{message}-szel   GET /hook?chat_id=42&text=%E2%9C%85%20Ready%20to%20watch%20%E2%80%94%20A%20test...
+nélküle          POST /api/webhooks/1/2
+                   body: {"content":"✅ Ready to watch — A test from aioseerr — ..."}
+igazi esemény    notifyUsers([Wanda]) -> 1 elküldve
+más userre       -> 0            (nincs webhookja)
+"started" neki   -> 0            (csak "ready"-re iratkozott fel)
+guard vissza     localhost -> elutasítva, 192.168.1.10 -> elutasítva
+                 "not a url" -> elutasítva, file:///etc/passwd -> elutasítva
+```
 
 ---
 
