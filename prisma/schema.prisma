@@ -95,6 +95,13 @@ model Watchlist {
   addedAt   DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
+  /// Whether a season the show has not had yet is followed when it turns up. Since
+  /// only what is watched has units, "no rows for season 4" cannot tell apart a
+  /// season that was never announced from one that was not picked — so the whole
+  /// show intent is stored instead of guessed. True is "watch this show", false is
+  /// "watch these seasons".
+  monitorNewSeasons Boolean @default(false)
+
   units WatchlistUnit[]
 
   @@unique([tmdbId, type])

@@ -239,8 +239,8 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             // A finished film is off the watchlist the moment it lands — there is
             // never anything left to watch for. An episode keeps the flag: it is the
-            // only record that its season was wanted, and `inheritedMonitored` reads
-            // it to decide whether a later episode or season is followed.
+            // only record that its season was wanted, and `syncTvSeasons` reads it
+            // to decide whether a later episode or season is followed.
             const isMovie = running.every(unit => unit.seasonNumber === null);
 
             await prisma.watchlistUnit.updateMany({

@@ -14,9 +14,10 @@ import { settingNumber, settingText } from "@/lib/settings";
 import { addRelease, episodeTag, movieTag, seasonTag } from "@/lib/torrent";
 import {
     addToWatchlist,
+    ensureEpisodeUnits,
     ensureMovieUnit,
+    ensureSeasonUnits,
     getSeasonUnits,
-    getUnitsInSeasons,
     markUnitsDownloading
 } from "@/lib/watchlist";
 
@@ -377,10 +378,13 @@ const label = (seasonNumber: number, grab: PlannedGrab, packSeasons: number[]) =
  * A pack can carry more than the season it was searched for. Everything it brings
  * is claimed by its hash, whether or not those seasons are watched — the files are
  * on disk either way, and a second torrent for them would be the same data again.
+ *
+ * Those seasons may have no rows at all, since only what is watched or had is
+ * stored. This is the moment they become "had", so the rows are created here.
  */
-export const packUnitIds = async (watchlistId: number, plan: SeasonPlan, release: IndexerResult) => {
+export const packUnitIds = async (watchlistId: number, tmdbId: number, plan: SeasonPlan, release: IndexerResult) => {
     const seasons = parseNumbering(release.title).seasons.filter(v => v !== plan.seasonNumber);
-    const units = await getUnitsInSeasons(watchlistId, seasons);
+    const units = seasons.length > 0 ? await ensureSeasonUnits(watchlistId, tmdbId, seasons) : [];
 
     return {
         seasons: [ plan.seasonNumber, ...seasons ],
@@ -402,16 +406,17 @@ export const executeSeasonGrab = async (
         return [];
     }
 
-    const { rows, grabs } = await planSeasonGrabs(item.id, plan, options);
+    const { grabs } = await planSeasonGrabs(item.id, plan, options);
     const started: StartedDownload[] = [];
 
     for (const grab of grabs) {
-        const ids = rows
-            .filter(row => row.episodeNumber !== null && grab.episodeNumbers.includes(row.episodeNumber))
-            .map(row => row.id);
+        // the rows for these episodes may not exist yet — an episode is only stored
+        // once it is watched or had, and this download is what makes it the latter
+        const units = await ensureEpisodeUnits(item.id, tmdbId, plan.seasonNumber, grab.episodeNumbers);
+        const ids = units.map(unit => unit.id);
 
         const pack = grab.isPack
-            ? await packUnitIds(item.id, plan, grab.release)
+            ? await packUnitIds(item.id, tmdbId, plan, grab.release)
             : { seasons: [ plan.seasonNumber ], ids: [] };
 
         const tag = grab.isPack

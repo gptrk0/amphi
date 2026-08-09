@@ -52,7 +52,9 @@ Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a 
 
 **2026-08-07: két tábla, semmi más.** Korábban a film letöltési állapota a `Watchlist` soron ült, a sorozaté a `WatchlistEpisode` sorokon — ugyanaz a négy oszlop (`status`, `torrentHash`, `searchAttempts`, `lastCheckedAt`) két helyen, két külön kódúttal. Most **minden kereshető és letölthető dolog egy `WatchlistUnit` sor: a film egy unit, a sorozat epizódonként egy.** A `Watchlist` puszta azonosítóvá vált, a `WatchlistSeason` pedig megszűnt: az egyetlen tartalma a `monitored` volt, az átkerült a unitokra.
 
-Az évad így már nem tárolt entitás, hanem a unitok `seasonNumber` mezőjéből olvasható ki. Egy évad akkor „figyelt", ha a unitjai azok; az évad-szintű kapcsoló egy `updateMany`. Amit ez elvesz: **egy olyan évadhoz, aminek a TMDB-n még egy epizódja sincs, nem tárolható monitorozási beállítás** (a Severance S3 pont ilyen) — nincs mihez kötni. Amint megjelenik az első epizódja, az `inheritedMonitored` szabálya dönt.
+Az évad így már nem tárolt entitás, hanem a unitok `seasonNumber` mezőjéből olvasható ki. Egy évad akkor „figyelt", ha a unitjai azok.
+
+**2026-08-09: unit csak arra van, amit figyelsz vagy már megvan.** Ld. a lenti „Csak a figyelt részeknek van sora" alfejezetet. Ezzel az évad-szintű kapcsoló már nem `updateMany` a meglévő sorokon, hanem sor-létrehozás és -törlés; és mivel egy hiányzó sor nem „ismeretlen", hanem „nem kell", a *show* szintű szándék külön mezőbe került (`monitorNewSeasons`).
 
 ```prisma
 enum ContentType {
@@ -68,7 +70,8 @@ enum WatchStatus {
   FAILED        // sok próbálkozás után sem található / hiba
 }
 
-// csak azonosság; minden más a unitokon él
+// azonosság, plusz az egy dolog, amit unit nem tud hordozni: követjük-e a
+// sorozatot olyan évadba is, ami még nem létezik
 model Watchlist {
   id        Int         @id @default(autoincrement())
   tmdbId    Int
@@ -76,12 +79,16 @@ model Watchlist {
   addedAt   DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
+  // true = „ezt a sorozatot nézem", false = „ezeket az évadokat nézem"
+  monitorNewSeasons Boolean @default(false)
+
   units WatchlistUnit[]
 
   @@unique([tmdbId, type])
 }
 
-// egy kereshető/letölthető dolog: a film egy unit, a sorozat epizódonként egy
+// egy kereshető/letölthető dolog: a film egy unit, a sorozat epizódonként egy.
+// Sor csak arra van, ami figyelt vagy már megvan — a többi epizód a TMDB dolga.
 model WatchlistUnit {
   id          Int       @id @default(autoincrement())
   watchlistId Int
@@ -154,12 +161,14 @@ Amit az egységesítés hozott:
 - Ára: a film unitja `seasonNumber = null, episodeNumber = null`, és mivel a NULL az egyedi indexben soha nem ütközik, az „egy film = egy unit" szabályt kód tartja (`ensureMovieUnit`), nem a DB.
 - Szintén ára: az évad már nem tárolt entitás, tehát egy epizód nélküli (bejelentett, de üres) évadhoz nem tapad monitorozási beállítás.
 
-**Öröklési szabály (`inheritedMonitored`)** — ez pótolja a `WatchlistSeason.monitored @default(true)`-t. Egy új unit létrehozásakor:
-1. ha az évadnak már van unitja → azt követi;
-2. ha nincs, de a sorozatnak van → a legmagasabb sorszámú meglévő évadot követi;
-3. ha a sorozatnak egyáltalán nincs unitja → `true`.
+**Öröklési szabály (`syncTvSeasons`, 2026-08-09-i alak).** Ami újonnan jelenik meg a TMDB-n:
+1. **új epizód egy figyelt évadban** → figyelt lesz, de **csak ha a sorszáma nagyobb a benne tárolt legnagyobbnál**. Ami az alatt van, azt egyszer már felkínáltuk, és azért nincs sora, mert nem kellett;
+2. **új évad** → csak akkor, ha `monitorNewSeasons` be van kapcsolva **és** az évad újabb minden tároltnál;
+3. **minden más** → nem jön létre sor, csak a meglévők `airDate`-je frissül.
 
-A 2. pont egy régi furcsaságot is javít: eddig egy később bejelentett évad `monitored = true`-val jött létre akkor is, ha a sorozat csak egyetlen kézi letöltés miatt került a listára (ilyenkor minden évada `monitored = false`). Mostantól az ilyen sorozat új évada sem indul el magától.
+Az 1. és 2. pont korlátja ugyanaz: sor nélkül a „nem lett bejelentve" és a „nem kérted" egyformán néz ki, és a sorszám az egyetlen, ami megkülönbözteti őket. Ezért kellett a `monitorNewSeasons` mező — évad-szinten a sorszám nem elég, mert a régi évadok is ott vannak a TMDB listáján.
+
+Mellékhaszon: a korábbi korlát — „egy olyan évadhoz, aminek még egy epizódja sincs, nem tárolható monitorozási beállítás" (a Silo S4 pont ilyen: `S4(0)`) — **megszűnt**. A szándék a sorozaton ül, nem az évad nem létező unitjain, tehát amikor a S4 megkapja az első epizódjait, azok maguktól figyeltek lesznek.
 
 ---
 
@@ -894,13 +903,47 @@ Plusz a beállítás-út: `PUT` → `INFO setting changed: Log / Keep debug entr
 
 **Ami nyitva marad.** Nincs auth: aki eléri a `/log`-ot, az elolvassa — pontosan annyira, mint a `/settings`-et (ott *írni* lehet, itt *olvasni*). Ezért nem megy titok a naplóba még maszkolatlanul sem. És mint a schedulernél: **egy processzre** épül az azonnali ébresztés; több worker esetén a 15 másodperces tick lenne az egyetlen csatorna, ott Postgres `LISTEN/NOTIFY` a következő lépés.
 
+#### Csak a figyelt részeknek van sora (2026-08-09-i kérdés) ✅
+
+Kérdés: „biztos szükség van minden évad részt felvenni fixen? szerintem elég csak azt ami tényleg monitorozva van". A `WatchlistUnit` eddig a sorozat **teljes** epizódlistáját tükrözte, függetlenül attól, hogy a felhasználó mit követ.
+
+**Mennyiről van szó.** A watchlisten lévő Silo 30 sort tartott, amiből **4** volt figyelt (S03E07–E10); a többi 26 minden metaadat-körben újraíródott anélkül, hogy bármit jelentett volna. Nagyságrendileg: a Grey's Anatomy 466, a The Simpsons 802 epizód — egyetlen sorozat, akkor is, ha az utolsó évadot követed belőle.
+
+**Amit a mérés mutatott: a kód már eddig is így gondolkodott.** A `trackedUnits` mindenhol pontosan a `monitored = false && status = PENDING` sorokat szűrte ki (státusz, `X/Y` számláló, `withMedia`), a `pruneWatchlistItem` megtartási szabálya pedig szó szerint `monitored || DOWNLOADING || DOWNLOADED` volt. Vagyis a rendszer saját definíciója szerint ezek a sorok **nem léteztek** — csak tárolva voltak. Egyetlen dolgot csináltak: horgonyt adtak az `updateMany`-nek.
+
+**Az új szabály.** Egy unit akkor van, ha **figyeled vagy már megvan**. Ebből következik minden más:
+- **A monitorozás nem flag-billentés, hanem sor-létrehozás és -törlés.** Bepipálás → a unitok létrejönnek a TMDB dátumaival (`ensureEpisodeUnits` / `ensureSeasonUnits`), kivétel → a `pruneWatchlistItem` eldobja őket, ha nincs mögöttük letöltés.
+- **A letöltés is „megvan"-nak számít.** Az azonnali letöltés (`executeSeasonGrab`) ott hozza létre a sorokat, ahol eddig készen találta őket, és a több évados pack (`packUnitIds`) ugyanígy létrehozza a lefedett évadokét — enélkül eltűnt volna a védelem, ami megakadályozza, hogy ugyanaz az anyag másodszor is lejöjjön.
+- **A `syncTvSeasons` már nem tükröz, hanem követ**: a meglévő sorok `airDate`-jét frissíti, és csak azt hozza létre, ami az öröklési szabály szerint kell. A Silo köre most **29 ms, 4 sor**, 30 upsert helyett.
+
+**A csapda, ami két javítást kényszerített ki** — sor nélkül a „nem lett bejelentve" és a „nem kérted" egyformán néz ki:
+1. Az első verzió egy figyelt évad *összes* hiányzó epizódját magára vette, tehát a metaadat-kör visszapipálta azt is, amit a felhasználó épp levett (mérve: Silo 4 → 10 sor, egy levett E01 visszajött). Javítás: csak a tárolt legnagyobb sorszám **fölött**.
+2. Ugyanez évad-szinten: egy évad kipipálása után a kör a sorozat összes többi évadát is felvette (mérve: Ted Lasso S1 kipipálva → 43 sor, S2–S4 mind figyelt). Itt a sorszám nem elég, mert a régi évadok is ott vannak a listán — ezért lett a szándék **tárolt mező** (`monitorNewSeasons`), nem következtetés. A migráció a meglévő sorokra egyszer lejátssza a régi döntést (akinek a legfrissebb évada figyelt, az `true`-t kap), tehát a Silo ugyanúgy fogja követni a S4-et, mint eddig.
+
+**Mérve** (a saját adatbázisodon, eldobható sorral a Ted Lassóra, ami utána törlődött):
+
+```
+1. a te sorod                        4 sor, új évadok: igen   S3: 4/4 figyelt   (metaadat-kör után változatlan)
+2. azonnali letöltés, semmi kipipálva 0 sor
+3. S1 kipipálva -> E01 levéve        10 -> 9 sor, a metaadat-kör nem nyúl hozzá
+4. E10 „most jelent be"              8 -> 9 sor, felveszi
+5. S02E01-E02 letöltve               a sor létrejön figyelés nélkül, az évad többi része nem
+6. S01-S03 pack                      3 évad, 22 unit lefoglalva, a sorok létrejönnek
+7. stop watching                     csak a 2 letöltött marad, a tétel a listán marad
+8. „ezt a sorozatot nézem"           44 sor, új évadok: igen; a törölt S4 a következő körben visszajön
+```
+
+Migráció: `20260809120000_drop_unwatched_units` (a te 26 felesleges Silo-sorod, plusz a unit nélkül maradt tételek) és `20260809130000_monitor_new_seasons`.
+
+**Ami nyitva marad.** A bepipálás mostantól TMDB-hívást igényel (cache-elt, 12 óra), tehát TMDB-kiesésnél nem lehet évadot felvenni — eddig a sorok már ott voltak, csak billenni kellett. Cserébe TMDB nélkül az adatlap sem jelenik meg, tehát a gyakorlatban nem új korlát. A `monitorNewSeasons`-nek nincs saját kapcsolója a felületen: a „watchlistre teszem" gomb kapcsolja be, az évadonkénti pipálás nem, a `Stop watching` pedig kikapcsolja.
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-08):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Ami maradt: **seedelés/utómunka**, auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
+**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"). Ami maradt: **seedelés/utómunka**, auth/több felhasználó, médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
 
 ### Amit legközelebb kézzel meg kell tenni
 1. **Git remote és push** — 2026-08-08 estéjén 43 commit van, mind egyetlen gépen. Ez a legnagyobb kockázat a listán, és nem kód: el kell dönteni, hova. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre.
