@@ -1,3 +1,5 @@
+import { LibraryStatus } from "../../prisma/generated/client";
+import { getPersonalLibrary } from "@/lib/library";
 import { getDiscoverPage } from "@/lib/media";
 import { getWatchlistWithMedia } from "@/lib/watchlist";
 import { Media } from "@/types/media";
@@ -69,29 +71,44 @@ const VIEWS: Record<string, { personal: boolean, sources: Source[] }> = {
     }
 };
 
-// The library rows go first, the same way Overseerr opens with the server's own
-// content: they never overlap the catalog rows, and they push what is already
-// in progress to the top.
-const PERSONAL: { key: string, title: string, description: string, href: string, statuses: WatchlistStatus[] }[] = [
+/**
+ * The library rows go first, the same way Overseerr opens with the server's own
+ * content: they never overlap the catalog rows, and they push what is already in
+ * progress to the top.
+ *
+ * The first two are read from the **library**, not from the watchlist. They used to
+ * come from watchlist rows, which could not work: a download carries its units off,
+ * so a film that has started downloading has no watchlist row left and could never
+ * appear in a row built from them.
+ */
+const PERSONAL: {
+    key: string;
+    title: string;
+    description: string;
+    href: string;
+    from: "downloading" | "available" | "watchlist";
+    statuses?: WatchlistStatus[];
+}[] = [
     {
         key: "downloading",
         title: "Downloading now",
         description: "Already on the way to your client.",
-        href: "/watchlist",
-        statuses: [ "DOWNLOADING" ]
+        href: "/library",
+        from: "downloading"
     },
     {
         key: "downloaded",
         title: "Ready to watch",
         description: "Finished downloads.",
         href: "/library",
-        statuses: [ "DOWNLOADED" ]
+        from: "available"
     },
     {
         key: "watchlisted",
         title: "On your watchlist",
         description: "Waiting for a release to show up.",
         href: "/watchlist",
+        from: "watchlist",
         statuses: [ "PENDING", "UPCOMING", "SEARCHING", "FAILED" ]
     }
 ];
@@ -100,17 +117,31 @@ export const isSectionView = (view: string) => Object.keys(VIEWS).includes(view)
 
 const mediaKey = (media: Media) => `${ media.type }-${ media.id }`;
 
-export const getSections = async (view: string): Promise<SectionsPage> => {
+/**
+ * `userId` is what makes the top of the page somebody's: the personal rows are read
+ * for that person, and for nobody else. Without it they were the whole household's,
+ * under headings that said "your".
+ */
+export const getSections = async (view: string, userId: number): Promise<SectionsPage> => {
     const config = VIEWS[view] || VIEWS.home;
 
-    const [ watchlist, catalog ] = await Promise.all([
-        config.personal
-            ? getWatchlistWithMedia().catch(err => {
-                console.error(err);
+    const personal = async <T>(read: () => Promise<T[]>) => {
+        if (! config.personal) {
+            return [];
+        }
 
-                return [];
-            })
-            : Promise.resolve([]),
+        // one row failing is a row missing, not a page that will not draw
+        return await read().catch(err => {
+            console.error(err);
+
+            return [];
+        });
+    };
+
+    const [ watchlist, downloading, available, catalog ] = await Promise.all([
+        personal(() => getWatchlistWithMedia(userId)),
+        personal(() => getPersonalLibrary(userId, LibraryStatus.DOWNLOADING)),
+        personal(() => getPersonalLibrary(userId, LibraryStatus.AVAILABLE)),
         Promise.all(config.sources.map(async source => {
             const pages = await Promise.all(
                 Array.from({ length: PAGES_PER_ROW }, (_, i) => getDiscoverPage({
@@ -156,9 +187,11 @@ export const getSections = async (view: string): Promise<SectionsPage> => {
     }
 
     for (const row of PERSONAL) {
-        const items = watchlist
-            .filter(item => item.media && row.statuses.includes(item.status))
-            .map(item => item.media as Media);
+        const items = row.from === "watchlist"
+            ? watchlist
+                .filter(item => item.media && (row.statuses || []).includes(item.status))
+                .map(item => item.media as Media)
+            : (row.from === "downloading" ? downloading : available);
 
         add({ key: row.key, title: row.title, description: row.description, href: row.href }, items);
     }

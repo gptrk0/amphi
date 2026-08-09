@@ -50,4 +50,10 @@ export type DownloadPreview = {
      * would have gone on waiting, so starting anyway is a choice somebody makes.
      */
     language: { primary: string, missing: string[] };
+    /**
+     * Lines this person already has in this edition. Episodes are gone from `choices`
+     * — the grab would refuse them anyway — while a film is still offered, because a
+     * second copy is something the grab will really do, and sometimes what is wanted.
+     */
+    held: string[];
 };

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { getSections, isSectionView } from "@/lib/sections";
 import { isTmdbConfigured } from "@/lib/media";
 import { loadSettings } from "@/lib/settings";
-import { refuseUnlessSignedIn } from "@/lib/auth";
+import { currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
     const refusal = await refuseUnlessSignedIn();
@@ -17,7 +17,8 @@ export async function GET(req: NextRequest) {
         return Response.json({ success: false, message: "Unknown view." }, { status: 400 });
     }
 
-    const page = await getSections(view);
+    const me = (await currentUser())!;
+    const page = await getSections(view, me.id);
 
     await loadSettings();
 

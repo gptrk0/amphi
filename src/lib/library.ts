@@ -371,6 +371,46 @@ export const runLibraryCleanup = async () => {
     return due;
 };
 
+/**
+ * What this person has on the way, or on the shelf — for the rows at the top of the
+ * home page.
+ *
+ * It has to come from here rather than from the watchlist: a download takes its units
+ * with it, so the moment one starts the title has no watchlist row left at all, and a
+ * row built from watchlist rows could only ever be empty for a film.
+ *
+ * One card per title, not per torrent: ten episode rows of the same show are one
+ * thing to look at.
+ */
+export const getPersonalLibrary = async (userId: number, status: LibraryStatus) => {
+    const items = await prisma.library.findMany({
+        where: { removedAt: null, status, watchedBy: { has: userId } },
+        orderBy: { startedAt: "desc" }
+    });
+
+    const seen = new Set<string>();
+    const media = [];
+
+    for (const item of items) {
+        const type = toMediaType(item.type);
+        const id = `${ type }:${ item.tmdbId }`;
+
+        if (seen.has(id)) {
+            continue;
+        }
+
+        seen.add(id);
+
+        const metadata = await getMediaMetadata(type, item.tmdbId);
+
+        if (metadata) {
+            media.push(metadata.media);
+        }
+    }
+
+    return media;
+};
+
 const toDownload = (torrent: TorrentStatus): WatchlistDownload => ({
     name: torrent.name,
     state: torrent.state,

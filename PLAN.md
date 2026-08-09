@@ -1159,7 +1159,11 @@ takarítás                   nem maradt sor
 
 **Amit ez az install napi működésében jelent, és amiért érdemes szemmel tartani:** a te elsődleges nyelved `hun`, a release-ek túlnyomó része viszont **jelöletlen** (`untagged = eng`). A scanner mostantól ezekhez nem nyúl — ami korábban magától lejött angolul, az ezután a watchlisten marad, és kézzel, a sárga sávot megerősítve indítható. Ha ez sok, két út van: az account oldalon `eng` az első nyelv (a magyar akkor is előrébb pontozódik, csak nem kizárólagos), vagy az `untagged` mező átírása.
 
-**Ami nyitva marad.** A főoldal személyes sorai (`Downloading now`, `Ready to watch`) továbbra is watchlist sorokból épülnek, egy elindult letöltésnek viszont már nincs watchlist sora — filmnél ez a sor gyakorlatilag sosem telik meg. Ez a library táblából jövő tétel lenne, és külön kérés. Szintén nyitott: kézzel el lehet indítani egy olyan letöltést, ami ugyanabban a kiadásban már megvan (a scanner ezt kiszűri, a dialógus nem).
+**A két maradék tétel, utólag megcsinálva (ugyanaznap):**
+
+**A főoldal személyes sorai a libraryból jönnek.** A `Downloading now` és a `Ready to watch` eddig watchlist sorokból épült, egy elindult letöltésnek viszont már nincs watchlist sora — filmnél ez a sor sosem telhetett meg. Most a `getPersonalLibrary(userId, status)` adja őket (címenként egy kártya, nem torrentenként), a `getSections` pedig **megkapta a bejelentkezett felhasználót**: eddig `getWatchlistWithMedia()` hívás ment user nélkül, tehát a „On your watchlist" sor mindenki listáját mutatta, holott a címe az ellenkezőjét ígérte. Mérve a te fiókodra: a `downloaded` sor a két library elemet hozza (`Regular Show: The Lost Tapes`, `Obsession`) — korábban itt nem volt semmi.
+
+**A dialógus megmondja, ha ugyanaz a kiadás már megvan.** Két fél, szándékosan másképp: az **epizódok kikerülnek** a listából (a grab úgyis visszautasítaná őket, tehát egy olyan sor lenne, ami csendben nem csinál semmit), a **film viszont bent marad**, mert egy második példány olyasmi, amit a grab tényleg megcsinál — és néha pont az kell, ha az első egy rossz rip. Sárga sáv írja meg, és a Download gomb tiltva marad, amíg be nem pipálod. Ha az egész kérés megvan már, az ablak ezt mondja („You already have …"), nem azt, hogy az indexereken nincs meg — ez két különböző válasz. Mérve az `Obsession`-re: `choices=1, held=["Movie"]`.
 
 #### Éles telepítés: egy image, egy compose (2026-08-09-i kérés) ✅
 

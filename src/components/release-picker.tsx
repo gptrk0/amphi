@@ -126,19 +126,30 @@ function ChoiceRow({ choice, picked, onPick, single }: {
 export function ReleasePicker({ open, name, preview, isLoading, isStarting, picks, onPick, onCancel, onConfirm }: Props) {
     const [ watchMissing, setWatchMissing ] = useState(false);
     const [ acceptOtherLanguage, setAcceptOtherLanguage ] = useState(false);
+    const [ acceptDuplicate, setAcceptDuplicate ] = useState(false);
 
     const choices = preview?.choices || [];
     const hasMissing = !! preview && (preview.missingMovie || preview.missing.length > 0);
-    const nothingFound = !! preview && choices.length === 0;
+    const held = preview?.held || [];
+
+    // nothing left to offer because it is all already downloaded, which is a different
+    // answer from "your indexers do not have it" and has to read like one
+    const haveItAll = !! preview && choices.length === 0 && held.length > 0;
+    const nothingFound = !! preview && choices.length === 0 && ! haveItAll;
 
     // Nothing here is in the language this account actually wants. Left alone, the
     // scanner would have gone on waiting for one — so starting anyway is a decision,
     // and it is asked for rather than assumed.
-    const wrongLanguage = ! isLoading && ! nothingFound && (preview?.language.missing.length || 0) > 0;
+    const wrongLanguage = ! isLoading && ! nothingFound && ! haveItAll && (preview?.language.missing.length || 0) > 0;
+
+    // a film that is already on the shelf can be fetched again — sometimes the first
+    // copy is a bad rip — but not without saying so
+    const duplicate = ! isLoading && choices.length > 0 && held.length > 0;
 
     const close = () => {
         setWatchMissing(false);
         setAcceptOtherLanguage(false);
+        setAcceptDuplicate(false);
         onCancel();
     };
 
@@ -147,6 +158,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
 
         setWatchMissing(false);
         setAcceptOtherLanguage(false);
+        setAcceptDuplicate(false);
         onConfirm(wanted);
     };
 
@@ -154,14 +166,18 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
         <Dialog open={open} onOpenChange={(next) => { if (! next) { close(); } }}>
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
-                    <DialogTitle>{ nothingFound ? `Nothing available for ${ name }` : `Download ${ name }` }</DialogTitle>
+                    <DialogTitle>
+                        { haveItAll ? `You already have ${ name }` : nothingFound ? `Nothing available for ${ name }` : `Download ${ name }` }
+                    </DialogTitle>
 
                     <DialogDescription>
                         {isLoading && "Searching your indexers..."}
 
+                        {! isLoading && haveItAll && `${ held.join(", ") } — already downloaded in ${ preview!.language.primary.toUpperCase() }, so there is nothing left to fetch.`}
+
                         {! isLoading && nothingFound && `Not on your indexers right now${ preview && preview.filtered > 0 ? ` — ${ preview.filtered } result${ preview.filtered > 1 ? "s were" : " was" } filtered out by your quality profile` : "" }. Add it to your watchlist and it will be downloaded as soon as it shows up?`}
 
-                        {! isLoading && ! nothingFound && "Pick a release for each line. The first one is what your quality profile would have taken."}
+                        {! isLoading && ! nothingFound && ! haveItAll && "Pick a release for each line. The first one is what your quality profile would have taken."}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -179,6 +195,28 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             onPick={(guid) => onPick(choice.key, guid)}
                         />
                     ))}
+                </div>}
+
+                {duplicate && <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                    <div className="flex items-start gap-2 text-sm">
+                        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
+
+                        <span>
+                            You already have <span className="text-muted-foreground">{ held.join(", ") }</span> in{" "}
+                            <b>{ preview!.language.primary.toUpperCase() }</b>. Downloading again means a second
+                            copy on the disk — worth it if the one you have is a bad rip, and wasted otherwise.
+                        </span>
+                    </div>
+
+                    <label className="flex cursor-pointer items-start gap-2 pl-6 text-sm">
+                        <Checkbox
+                            checked={acceptDuplicate}
+                            onCheckedChange={(value) => setAcceptDuplicate(value === true)}
+                            className="mt-0.5"
+                        />
+
+                        <span>I know, download it again.</span>
+                    </label>
                 </div>}
 
                 {wrongLanguage && <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
@@ -223,10 +261,12 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
 
                 <DialogFooter>
                     <Button variant="outline" className="cursor-pointer" onClick={close}>
-                        { nothingFound ? "No thanks" : "Cancel" }
+                        { nothingFound ? "No thanks" : haveItAll ? "Close" : "Cancel" }
                     </Button>
 
-                    {nothingFound
+                    {haveItAll
+                        ? null
+                        : nothingFound
                         ? <Button
                             className="cursor-pointer"
                             disabled={isStarting}
@@ -237,7 +277,11 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                         </Button>
                         : <Button
                             className="cursor-pointer"
-                            disabled={isLoading || isStarting || choices.length === 0 || (wrongLanguage && ! acceptOtherLanguage)}
+                            disabled={isLoading
+                                || isStarting
+                                || choices.length === 0
+                                || (wrongLanguage && ! acceptOtherLanguage)
+                                || (duplicate && ! acceptDuplicate)}
                             onClick={confirm}
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isStarting })} />

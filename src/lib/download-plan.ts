@@ -1,5 +1,7 @@
 import { IndexerResult } from "@/lib/indexer";
+import { hasLibraryItem, heldEpisodes } from "@/lib/library";
 import {
+    audience,
     executeMovieGrab,
     executeSeasonGrab,
     GrabContext,
@@ -206,6 +208,10 @@ export const buildPreview = async (
 
     remember(stored);
 
+    // this person's shelf, in this edition — somebody else's copy in another language
+    // is not an answer, and the dialog must not pretend it is
+    const held = audience(context);
+
     const choices: GrabChoice[] = stored.movie
         ? (stored.movie.candidates.length > 0 ? [ {
             key: "movie",
@@ -218,6 +224,39 @@ export const buildPreview = async (
         } ] : [])
         : stored.seasons.flatMap(season => seasonChoices(season, context.profile));
 
+    /**
+     * What this person already has in this edition.
+     *
+     * The two halves behave differently on purpose. **Episodes are dropped from the
+     * dialog**: the grab refuses to fetch a held episode anyway, so offering it would
+     * be a line that quietly does nothing. **A film is kept**, because a second copy
+     * is a thing the grab will actually do — and sometimes wanted, when the first one
+     * is a bad rip. It is only stated plainly first.
+     */
+    const heldKeys = new Set<string>();
+
+    if (stored.movie) {
+        if (await hasLibraryItem(tmdbId, held)) {
+            heldKeys.add("movie");
+        }
+
+    } else {
+        const episodes = await heldEpisodes(tmdbId, held);
+
+        for (const choice of choices) {
+            const covered = choice.isPack
+                ? stored.seasons.find(season => season.plan.seasonNumber === choice.seasonNumber)?.plan.episodes.map(episode => episode.episodeNumber) || []
+                : choice.episodeNumbers;
+
+            if (covered.length > 0 && covered.every(number => episodes.has(`${ choice.seasonNumber }:${ number }`))) {
+                heldKeys.add(choice.key);
+            }
+        }
+    }
+
+    const heldLabels = choices.filter(choice => heldKeys.has(choice.key)).map(choice => choice.label);
+    const offered = stored.movie ? choices : choices.filter(choice => ! heldKeys.has(choice.key));
+
     const filtered = stored.movie
         ? stored.movie.filtered
         : stored.seasons.reduce((sum, season) => {
@@ -229,20 +268,21 @@ export const buildPreview = async (
     // Asked of every line, not of the request as a whole: an episode that exists in
     // your language and one that does not are two different answers, and taking the
     // second is a decision. The dialog turns this into the question it deserves.
-    const short = choices.filter(choice => ! choice.options.some(option => option.languages.includes(context.language)));
+    const short = offered.filter(choice => ! choice.options.some(option => option.languages.includes(context.language)));
 
     return {
         planId: stored.id,
         type,
         tmdbId,
-        choices,
+        choices: offered,
         missing: stored.missing,
         missingMovie: stored.missingMovie,
         filtered,
         language: {
             primary: context.language,
             missing: short.map(choice => choice.label)
-        }
+        },
+        held: heldLabels
     };
 };
 
