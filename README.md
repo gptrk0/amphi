@@ -1,36 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# aioseerr
 
-## Getting Started
+Browse films and series, put them on a watchlist, and let the box fetch them on its own. It
+searches your indexers through Jackett or Prowlarr, scores what comes back — resolution,
+language, indexer, seeders, codec — hands the winner to qBittorrent, and keeps watching a
+series episode by episode as new ones air. Metadata comes from TMDB; nothing about your
+library leaves the machine.
 
-First, run the development server:
+No media server integration and none needed: what has been downloaded is the app's own
+answer, kept in its own database.
+
+## Install
+
+Two containers, one file, no configuration:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+curl -O https://raw.githubusercontent.com/gptrk0/aioseerr/main/docker-compose.yml
+docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **The first person to open a fresh install becomes its administrator.** The window closes
+   the moment one account exists, so do this before the port is reachable from anywhere you
+   do not trust.
+2. **Settings → General**: a [TMDB API key](https://www.themoviedb.org/settings/api). Nothing
+   can be shown without it.
+3. **Settings → Indexer**: the Jackett or Prowlarr URL, its api key, and the indexer ids you
+   want, in priority order.
+4. **Settings → Download client**: the qBittorrent URL, user and password.
+5. **Settings → Quality / Language**: what a good release looks like to you. The defaults
+   prefer 1080p, then 720p, and Hungarian over English — both are lists you reorder.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+That is the whole setup. Everything above lives in the database and is edited in the browser;
+the container itself has no configuration file.
 
-## Learn More
+### Upgrading
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+docker compose pull && docker compose up -d
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Migrations are applied at start, by the container, before the server accepts a request. The
+database volume is the only thing that has to survive.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Configuration outside the app
 
-## Deploy on Vercel
+Three environment variables exist, and only because they have to be known before the
+database can be read:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Variable | What it is |
+|---|---|
+| `DATABASE_URL` | The Postgres connection string. Set in the compose file. |
+| `SCAN_DISABLED` | `1` and the background scanner never starts — nothing is searched or downloaded on its own. Deliberately not a setting in the database: an emergency brake must not live somewhere the app can talk itself out of it. |
+| `TZ` | The timezone of the log and the notifications. UTC without it. |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Everything else — 50-odd settings with their defaults, groups and help text — is in
+[src/lib/settings.ts](src/lib/settings.ts) and on the `/settings` page.
+
+## Development
+
+The development stack bind mounts the repository and rebuilds on every start, which is the
+opposite of what the released image does:
+
+```bash
+cp .env.example .env      # APP_ENV=development, and a database password
+docker compose up -d      # COMPOSE_FILE in .env points at .docker/docker-compose.yml
+```
+
+The dev container also runs Prisma Studio on port 5555. Prisma commands go through it, since
+the database is only reachable on the docker network:
+
+```bash
+docker exec -w /home/bun/app aioseerr_app bunx prisma migrate status
+```
+
+The plan document, the measurements behind every decision and the operational notes are in
+[PLAN.md](PLAN.md) — in Hungarian.

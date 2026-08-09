@@ -1116,16 +1116,55 @@ guard vissza     localhost -> elutasítva, 192.168.1.10 -> elutasítva
                  "not a url" -> elutasítva, file:///etc/passwd -> elutasítva
 ```
 
+#### Éles telepítés: egy image, egy compose (2026-08-09-i kérés) ✅
+
+Kérés: „Komodóban akarom futtatni dockerrel, a lehető legegyszerűbb beüzemeléssel, hogy más felhasználók is meg tudják oldani — egy image és egy compose fájl, ami mindent tartalmaz".
+
+**Amiből indultunk.** A `.docker/` fejlesztésre van szabva: az egész repo bind mountolva, és minden induláskor `bun install` + `prisma generate` + `next build`. Ez idegen gépre nem adható oda — forráskód kell hozzá, és percekbe telik minden restart.
+
+**Ami viszont kedvezett.** A kód mindössze három env-változót olvas (`DATABASE_URL`, `SCAN_DISABLED`, `NODE_ENV`), és **semmit nem ír a fájlrendszerre** — a payload-ellenőrzés is a qBittorrent API-jából dolgozik. Az 52 beállítás a `Setting` táblából jön a `/settings` oldalról, az első admin a `/setup`-on készül. Egy idegen felhasználónak tehát **nulla konfigot** kell fájlban szerkesztenie.
+
+**A döntés: két konténer, nem egy.** Az app és a Postgres külön service ugyanabban a compose fájlban, named volume-mal. A „mindent tartalmaz" a compose fájlra vonatkozik, nem az image-re: a Postgres beépítése egy image-be nagyobb image-t, kézzel megoldandó major upgrade-et és több üzemeltetési kockázatot jelentett volna, az SQLite-ra váltás pedig provider-cserét és mind a 17 migráció újraírását. A Komodo ezt a formát natívan kezeli (Stack), és a `docker compose pull && up -d` marad a frissítés.
+
+**[Dockerfile](Dockerfile), négy fázisban.** `deps` (bun install) → `builder` (`prisma generate` + `next build`) → `migrator` (a Prisma CLI külön telepítve) → `runner` (`node:22-bookworm-slim`). A [next.config.ts](next.config.ts) `output: "standalone"`-ja miatt a futtató image-be nem a 845 MB-os `node_modules` kerül, hanem az, amit a szerver ténylegesen importál. A `runner` **node**, nem bun, és ugyanaz a debian kiadás, amin a build futott: a Prisma engine binárisokat a `bun install` az adott libc-hez és openssl-hez választotta ki.
+
+**Négy dolog derült ki menet közben, mind javítva:**
+1. **A `next build` éles módban még sosem futott le.** A dev turbopackkel megy, a build viszont webpackkel: a `pg` a middleware miatt az **edge** bundle-be is bekerült (`instrumentation.ts` → `log.ts` → `prisma.ts` → `@prisma/adapter-pg` → `pg`), és ott nincs `fs`, `net`, `string_decoder`. A kód oda soha nem jut el (`register()` visszatér, ha a runtime nem `nodejs`), de a fordítónak fel kell oldania. Megoldás: `serverExternalPackages: ["pg", "@prisma/adapter-pg"]`, és az edge fordításnál a `pg` semmire aliasolva — builtin-shimek listája helyett, mert azok mind halott súly lettek volna.
+2. **A `prisma.config.ts` a `generate`-hez is kéri a `DATABASE_URL`-t**, pedig az nem nyit kapcsolatot — a builder fázisban egy placeholder áll benne, ami nem kerül tovább.
+3. **A `bun install` a build sandboxban elhasal** („Fail extracting tarball for next"), miközben sima konténerben ugyanaz lefut — a hardlink backend és az overlay fs nem barátok. `--backend=copyfile`.
+4. **A Prisma CLI-t nem lehet fájlonként kimazsolázni**: a `prisma` a `@prisma/dev`-et betöltéskor húzza be, az pedig `valibot`-ot, pglite-ot, hono-t. Ezért kapott saját fázist, ahol npm telepíti a *futtató* image alapjára, az app által pinelt verzióval. Első nekifutásra 977 MB lett az image: a fázisban ott maradt az app `package.json`-je, és az npm mellé telepítette a `next`-et meg a Reactet is. Átnevezve (`version-source.json`) **541 MB**.
+
+**Mérve, friss adatbázison** (`aioseerr:test`, külön compose projekt, 3999-es port, a fejlesztői példány érintése nélkül):
+
+```
+migrate deploy    mind a 17 migráció lefutott üres DB-n
+next              ✓ Ready in 89ms
+scheduler         started, scanning every 15 minutes + a négy „nincs beállítva" figyelmeztetés
+healthcheck       healthy
+/api/auth/state   200, needsSetup: true
+POST /api/auth/setup  {"success":true} → needsSetup: false, ADMIN, session cookie
+/api/settings     200 sütivel, 401 anélkül
+/_next/static/…   200 (a statikus fájlok a standalone mellől mennek ki)
+restart           a migráció no-op, a szerver 18s alatt újra healthy
+memória           app 97 MB, postgres 46 MB
+```
+
+**A végfelhasználói [docker-compose.yml](docker-compose.yml)** a repo gyökerében: `ghcr.io/gptrk0/aioseerr:latest` + `postgres:17.7` + egy volume. A DB-nek nincs publikált portja, ezért a fix jelszó benne ártalmatlan — ez a fájlban is oda van írva, mert a port megnyitásával megszűnik. A `.docker/` compose változatlanul a fejlesztői stack, a `.env`-ben lévő `COMPOSE_FILE` miatt a `docker compose` itt továbbra is azt találja meg.
+
+**A publikálás** [.github/workflows/image.yml](.github/workflows/image.yml): push `main`-re mozdítja a `latest`-et, egy `v1.2.3` tag pedig `1.2.3` és `1.2` tageket is kirak. `linux/amd64` + `linux/arm64` — az arm QEMU-val emulálva készül, ez a job lassú fele, és kivehető, ha nem kell.
+
+**Ami nyitva marad.** A fájlok rendezése (átnevezés, hardlinkelt könyvtár) még nincs meg; amikor lesz, az app először fog fájlrendszert érinteni, és akkor a compose-ba kell egy médiakönyvtár mount **ugyanazon az útvonalon, ahol a qBittorrent látja** — enélkül a hardlink nem működik. Addig a konténernek nincs mit mountolni.
+
 ---
 
 ## 5. Javasolt sorrend
 
 A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöltés), ez adja a legtöbb értéket, ezért ezekkel érdemes kezdeni. A Fázis 4 (keresés) és 5 (discover bővítés) UX-javítás a meglévő böngészésen, ezek függetlenek és bármikor közbeilleszthetők. A Fázis 6 (torrent-kiválasztás) érdemben a Fázis 2 scannerére épül, azzal együtt vagy közvetlenül utána logikus. A Fázis 7-8 folyamatosan/végén.
 
-**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Az app **be van zárva**: bejelentkezés, admin/user szerepkör és OpenID Connect (ld. „Bejelentkezés, szerepkörök, Authentik"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord).
+**Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Az app **be van zárva**: bejelentkezés, admin/user szerepkör és OpenID Connect (ld. „Bejelentkezés, szerepkörök, Authentik"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord). Az **éles telepítés** megvan: kiadott image és egy compose fájl (ld. „Éles telepítés: egy image, egy compose").
 
 ### Amit legközelebb kézzel meg kell tenni
-1. **Git remote és push** — 2026-08-08 estéjén 43 commit van, mind egyetlen gépen. Ez a legnagyobb kockázat a listán, és nem kód: el kell dönteni, hova. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre.
+1. **Push** — a remote megvan (`github.com/gptrk0/aioseerr`), a commitok viszont még mindig egyetlen gépen. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre. Ez egyben a kiadás feltétele is: a GHCR image az első push után épül meg magától, és amíg nincs image, a végfelhasználói compose fájlnak nincs mit lehúznia.
 2. **Indítás**: `docker compose up -d` — a konténer magától felteszi a függőségeket, generálja a Prisma klienst, felviszi a migrációkat, majd elindítja a dev szervert (és vele a schedulert az `instrumentation.ts`-ből). Ez a sor jelzi, hogy megvan: `[scheduler] started, scanning every 15 minutes, reading the client back every 1` — ugyanez a `/log` oldalon is ott van. `entrypoint.sh` módosítása után `--build` kell.
 3. **A dry run ki van** (Settings / Scanner), tehát a scanner valódi letöltéseket indíthat. A kézi letöltés ettől függetlenül mindig valódi volt — 2026-08-08-án az *Obsession* így jött le. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
 4. **A watchlisten két elem van** (2026-08-08, 21:00): egy `UPCOMING` sorozat és egy `DOWNLOADED` film. Egy scan-kör tehát ma nem keres semmit — az `UPCOMING` epizódjait a megjelenési dátum tartja vissza, és ez így helyes.
@@ -1178,6 +1217,21 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
 </details>
 
 A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (2026-08-07 óta).
+
+**Éles műveletek (a kiadott image).** Ott nincs bun és nincs forráskód, a Prisma CLI viszont ott van — a saját `node_modules`-ában, node-dal hívva:
+
+```bash
+docker compose pull && docker compose up -d                       # frissítés
+docker exec aioseerr node node_modules/prisma/build/index.js migrate status
+docker logs -f aioseerr                                           # ugyanaz, ami a /log oldalon
+```
+
+Az image kipróbálása push nélkül, a fejlesztői stack érintése nélkül (a `-p` és a port-override miatt nem ütközik vele):
+
+```bash
+docker build -t aioseerr:test .
+docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {aioseerr: {image: aioseerr:test, ports: !override ["3999:3000"]}}') up -d
+```
 
 **Nyelv:** a kód, a kommentek és a felület angol. A TMDB metaadat is angolul jön (`TMDB_LANGUAGE`, default `en-US`) — `hu-HU`-ra állítva visszakapható a magyar cím/leírás anélkül, hogy a felület nyelve változna. Ez a terv-dokumentum marad magyar.
 

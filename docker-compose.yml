@@ -1,0 +1,56 @@
+# aioseerr — the whole install.
+#
+# Save this file, run `docker compose up -d`, open http://localhost:3000. The first person
+# to open a fresh install becomes its administrator, and everything else — the TMDB key, the
+# indexers, qBittorrent, the quality profile — is set on the /settings page in the browser.
+# There is nothing else to edit here, and no configuration file to write.
+
+services:
+    aioseerr:
+        image: ghcr.io/gptrk0/aioseerr:latest
+        container_name: aioseerr
+        restart: unless-stopped
+        ports:
+            - "3000:3000"
+        environment:
+            # the only setting that has to be known before the database can be read, which is
+            # why it is the only one that lives out here
+            DATABASE_URL: postgresql://aioseerr:aioseerr@aioseerr-db:5432/aioseerr?schema=public
+
+            # timestamps in the log and in the notifications; UTC without it
+            TZ: Europe/Budapest
+
+            # the emergency brake. 1 = the background scanner does not start at all, so
+            # nothing is searched or downloaded on its own. Deliberately not a setting in the
+            # database: a brake must not live somewhere the app can talk itself out of it.
+            # SCAN_DISABLED: "1"
+        depends_on:
+            aioseerr-db:
+                condition: service_healthy
+
+    aioseerr-db:
+        image: postgres:17.7
+        container_name: aioseerr-db
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: aioseerr
+            # this database has no published port: it is reachable from the app container and
+            # from nowhere else, which is what makes a fixed password here harmless. Publish
+            # the port and it stops being harmless.
+            POSTGRES_PASSWORD: aioseerr
+            POSTGRES_DB: aioseerr
+        volumes:
+            - aioseerr-db-data:/var/lib/postgresql/data
+        healthcheck:
+            # the container is up long before postgres is listening, and on a first run it
+            # restarts itself once while it creates the cluster
+            test: [ "CMD-SHELL", "pg_isready -U aioseerr -d aioseerr" ]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+
+volumes:
+    # everything the install remembers is in here: the accounts, the watchlists, the library,
+    # the settings and the log. Nothing is stored in the container itself, so an upgrade is
+    # `docker compose pull && docker compose up -d` and nothing else.
+    aioseerr-db-data:

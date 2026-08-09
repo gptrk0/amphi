@@ -1,0 +1,58 @@
+# Builds and publishes the image anyone installs. Pushing to main moves `latest`; pushing a
+# `v1.2.3` tag publishes `1.2.3`, `1.2` and `latest` alongside it, so a compose file can pin
+# a version if it wants to and follow the head if it does not.
+
+name: image
+
+on:
+    push:
+        branches: [ main ]
+        tags: [ "v*" ]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    # what lets GITHUB_TOKEN push to ghcr.io — no separate secret to keep
+    packages: write
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            # arm64 is emulated on a x86 runner. It is the slow half of this job by a wide
+            # margin; drop it from `platforms` below if a build every push matters more than
+            # the Raspberry Pi and the arm Macs.
+            - uses: docker/setup-qemu-action@v3
+
+            - uses: docker/setup-buildx-action@v3
+
+            - uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ghcr.io/${{ github.repository }}
+                  tags: |
+                      type=semver,pattern={{version}}
+                      type=semver,pattern={{major}}.{{minor}}
+                      type=raw,value=latest,enable={{is_default_branch}}
+                      type=sha,format=short
+
+            - uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  # the dependency install and the compile are the whole cost of this build,
+                  # and neither changes on most pushes
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
