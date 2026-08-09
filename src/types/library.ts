@@ -14,6 +14,8 @@ export type LibraryEntry = {
     type: "movie" | "tv";
     status: LibraryStatus;
     releaseTitle: string;
+    // which edition this is. Empty for rows from before downloads had one
+    language: string;
     // "S03E07", "S01 — 10 episodes", empty for a film
     covers: string;
     episodeCount: number;

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { currentUser, refuseUnlessSignedIn, signInWithPassword, startSession } from "@/lib/auth";
+import { LANGUAGE_DEFAULTS, parseLanguageList } from "@/lib/language";
 import { logInfo } from "@/lib/log";
 import { loadSettings } from "@/lib/settings";
 import { updateUser, UserError } from "@/lib/users";
@@ -26,7 +27,13 @@ export async function GET() {
             hasPassword: me.hasPassword,
             linkedToProvider: me.linkedToProvider,
             webhookUrl: row?.webhookUrl || "",
-            notifyEvents: row?.notifyEvents || ""
+            notifyEvents: row?.notifyEvents || "",
+            // the language rules are the person's now, and this is where they live
+            preferredLanguages: row?.preferredLanguages || "",
+            excludeLanguages: row?.excludeLanguages || "",
+            defaultLanguage: row?.defaultLanguage || LANGUAGE_DEFAULTS.untagged,
+            languageBonus: row?.languageBonus ?? LANGUAGE_DEFAULTS.bonus,
+            languageFirst: row?.languageFirst ?? LANGUAGE_DEFAULTS.first
         }
     });
 }
@@ -74,6 +81,38 @@ export async function PATCH(req: Request) {
         }
 
         await updateUser(me.id, { name, password });
+
+        // Which languages this person wants, in order. The first one is the only one
+        // the scanner will fetch on its own, so an empty list is refused rather than
+        // silently meaning "anything": that would be a person who never gets anything
+        // downloaded for them, and nothing on screen would say why.
+        if (typeof body?.preferredLanguages === "string") {
+            const preferred = parseLanguageList(body.preferredLanguages);
+
+            if (preferred.length === 0) {
+                return Response.json({
+                    success: false,
+                    message: "Name at least one language — the first one is what gets downloaded for you."
+                }, { status: 400 });
+            }
+
+            const bonus = Number(body.languageBonus);
+
+            await prisma.user.update({
+                where: { id: me.id },
+                data: {
+                    preferredLanguages: preferred.join(","),
+                    ...(typeof body.excludeLanguages === "string"
+                        ? { excludeLanguages: parseLanguageList(body.excludeLanguages).join(",") }
+                        : {}),
+                    ...(typeof body.defaultLanguage === "string" && body.defaultLanguage.trim()
+                        ? { defaultLanguage: body.defaultLanguage.trim().toLowerCase() }
+                        : {}),
+                    ...(Number.isFinite(bonus) && bonus >= 0 ? { languageBonus: Math.round(bonus) } : {}),
+                    ...(typeof body.languageFirst === "boolean" ? { languageFirst: body.languageFirst } : {})
+                }
+            });
+        }
 
         // Not through `updateUser`: these are nobody's business but their own, so an
         // administrator has no way to set them and this is the only place they change.

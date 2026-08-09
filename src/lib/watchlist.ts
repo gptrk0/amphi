@@ -5,6 +5,7 @@ import {
     WatchStatus as PrismaWatchStatus
 } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
+import { audienceForUser, LibraryAudience, libraryFilter } from "@/lib/audience";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { WatchlistEntry, WatchlistItem, WatchlistRowItem, WatchlistSeasonItem, WatchlistStatus } from "@/types/watchlist";
 
@@ -131,8 +132,14 @@ const EMPTY_STATE: LibraryState = { items: 0, downloading: 0, held: 0, available
 
 const key = (type: ContentType, tmdbId: number) => `${ toMediaType(type) }:${ tmdbId }`;
 
-const libraryState = async (): Promise<Map<string, LibraryState>> => {
-    const items = await prisma.library.findMany({ where: { removedAt: null } });
+/**
+ * `audience` is what makes this personal: a download counts for the people whose
+ * edition it is, so an English copy of a film does not put an "Available" badge on a
+ * poster for somebody who is still waiting for the Hungarian one. `null` is the whole
+ * shelf, which is what a list of everybody's rows is drawn from.
+ */
+const libraryState = async (audience: LibraryAudience | null): Promise<Map<string, LibraryState>> => {
+    const items = await prisma.library.findMany({ where: libraryFilter(audience) });
 
     const map = new Map<string, LibraryState>();
 
@@ -187,7 +194,7 @@ export const toWatchlistEntry = (item: WatchlistRow | null, state: LibraryState,
  */
 export const getWatchlistSlim = async (userId: number): Promise<WatchlistEntry[]> => {
     const items = await getWatchlist(userId);
-    const state = await libraryState();
+    const state = await libraryState(await audienceForUser(userId));
 
     const entries = items.map(item => toWatchlistEntry(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE, key(item.type, item.tmdbId)));
     const watched = new Set(items.map(item => key(item.type, item.tmdbId)));
@@ -206,9 +213,9 @@ export const getWatchlistSlim = async (userId: number): Promise<WatchlistEntry[]
  * Where every episode of a title is, as far as the library knows. A season with no
  * units left is still a season on the details page, so this is what draws it.
  */
-const libraryEpisodes = async (tmdbId: number) => {
+const libraryEpisodes = async (tmdbId: number, audience: LibraryAudience | null) => {
     const items = await prisma.library.findMany({
-        where: { tmdbId, removedAt: null },
+        where: { tmdbId, ...libraryFilter(audience) },
         select: { status: true, episodes: true }
     });
 
@@ -285,7 +292,9 @@ export const withMedia = async (item: WatchlistRow, state: LibraryState, withEpi
     const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
     const units = item.units;
     const checked = units.map(unit => unit.lastCheckedAt).filter((v): v is Date => !! v);
-    const held = await libraryEpisodes(item.tmdbId);
+    // the row's owner, not whoever is looking: the ticks on a row say where *their*
+    // copy is, and a row is always somebody's
+    const held = await libraryEpisodes(item.tmdbId, await audienceForUser(item.userId));
 
     return {
         ...toWatchlistEntry(item, state, key(item.type, item.tmdbId)),
@@ -306,7 +315,7 @@ export const withMedia = async (item: WatchlistRow, state: LibraryState, withEpi
  */
 export const getWatchlistWithMedia = async (userId?: number): Promise<WatchlistRowItem[]> => {
     const items = await getWatchlist(userId);
-    const state = await libraryState();
+    const state = await libraryState(userId === undefined ? null : await audienceForUser(userId));
 
     return await Promise.all(items.map(item => withMedia(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE)));
 };
@@ -318,7 +327,7 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistRo
         return null;
     }
 
-    const state = await libraryState();
+    const state = await libraryState(await audienceForUser(item.userId));
 
     return await withMedia(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE, true);
 };
@@ -330,7 +339,8 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistRo
  */
 export const getTitleState = async (userId: number, type: ContentType, tmdbId: number): Promise<WatchlistItem | null> => {
     const row = await getWatchlistItemByTmdbId(userId, tmdbId, type);
-    const state = (await libraryState()).get(key(type, tmdbId)) || EMPTY_STATE;
+    const audience = await audienceForUser(userId);
+    const state = (await libraryState(audience)).get(key(type, tmdbId)) || EMPTY_STATE;
 
     if (row) {
         return await withMedia(row, state, true);
@@ -340,7 +350,7 @@ export const getTitleState = async (userId: number, type: ContentType, tmdbId: n
         return null;
     }
 
-    const held = await libraryEpisodes(tmdbId);
+    const held = await libraryEpisodes(tmdbId, audience);
 
     const metadata = await getMediaMetadata(toMediaType(type), tmdbId);
 

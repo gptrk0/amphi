@@ -61,6 +61,22 @@ model User {
   webhookUrl   String?
   notifyEvents String  @default("ready")
 
+  /// The language rules belong to the person, not to the install: two people who want
+  /// the same film in different languages get two downloads, two library rows and two
+  /// separate lives for them from there on.
+  ///
+  /// `preferredLanguages` is ordered and its **first entry is the primary** — the only
+  /// one the scanner will ever grab on its own. The rest is what may be offered when a
+  /// download is started by hand, and taking one of those is a question the person has
+  /// to answer, not something that happens quietly.
+  preferredLanguages String  @default("hun,eng")
+  excludeLanguages   String  @default("")
+  /// what a release with no language tag at all is taken to be
+  defaultLanguage    String  @default("eng")
+  languageBonus      Int     @default(1000000)
+  /// on: a 720p release in the right language beats a 1080p one in the wrong one
+  languageFirst      Boolean @default(false)
+
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
 
@@ -143,6 +159,14 @@ model Library {
   /// Empty only in the window between the grab and the first read back.
   releaseTitle String  @default("")
   torrentHash  String?
+
+  /// Which edition this is. A download answers the people whose primary language it
+  /// was fetched for, and nobody else: the same film wanted in Hungarian and in
+  /// English is two rows here, two torrents and two things to delete.
+  ///
+  /// Empty means a row from before this existed. Unknown counts for everybody, so an
+  /// install that upgrades does not fetch its whole library a second time.
+  language String @default("")
 
   status LibraryStatus @default(DOWNLOADING)
 

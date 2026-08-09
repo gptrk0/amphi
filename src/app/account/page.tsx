@@ -23,6 +23,11 @@ type Account = {
     linkedToProvider: boolean;
     webhookUrl: string;
     notifyEvents: string;
+    preferredLanguages: string;
+    excludeLanguages: string;
+    defaultLanguage: string;
+    languageBonus: number;
+    languageFirst: boolean;
 };
 
 const EVENTS = "ready, started, dropped";
@@ -51,6 +56,11 @@ export default function Page() {
     const [ name, setName ] = useState("");
     const [ webhook, setWebhook ] = useState("");
     const [ events, setEvents ] = useState("");
+    const [ languages, setLanguages ] = useState("");
+    const [ excluded, setExcluded ] = useState("");
+    const [ untagged, setUntagged ] = useState("");
+    const [ bonus, setBonus ] = useState("");
+    const [ languageFirst, setLanguageFirst ] = useState(false);
     const [ current, setCurrent ] = useState("");
     const [ next, setNext ] = useState("");
     const [ isSaving, setSaving ] = useState(false);
@@ -62,6 +72,11 @@ export default function Page() {
         setName(data.name);
         setWebhook(data.webhookUrl);
         setEvents(data.notifyEvents);
+        setLanguages(data.preferredLanguages);
+        setExcluded(data.excludeLanguages);
+        setUntagged(data.defaultLanguage);
+        setBonus(String(data.languageBonus));
+        setLanguageFirst(data.languageFirst);
     };
 
     useEffect(() => {
@@ -74,7 +89,16 @@ export default function Page() {
         setSaving(true);
 
         try {
-            await axios.patch("/api/auth/me", { name, webhookUrl: webhook, notifyEvents: events });
+            await axios.patch("/api/auth/me", {
+                name,
+                webhookUrl: webhook,
+                notifyEvents: events,
+                preferredLanguages: languages,
+                excludeLanguages: excluded,
+                defaultLanguage: untagged,
+                languageBonus: Number(bonus),
+                languageFirst
+            });
 
             const res = await axios.get("/api/auth/me");
 
@@ -212,6 +236,77 @@ export default function Page() {
 
                     <p className="text-xs text-muted-foreground">
                         { EVENTS } — or <code>*</code> for all of them. Empty sends nothing.
+                    </p>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Languages you want, best first</label>
+
+                    <TagInput value={languages} onChange={setLanguages} ordered placeholder="hun" />
+
+                    <p className="text-xs text-muted-foreground">
+                        <b>The first one is the only language downloaded for you on its own.</b> If a release
+                        in it does not exist yet, the title stays on your watchlist and is looked for again —
+                        the rest of the list is only offered when you start a download by hand, and taking one
+                        of those is a question you have to answer. Somebody else&apos;s copy in another language
+                        does not count as yours: you each get your own file.
+                    </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Untagged release counts as</label>
+
+                        <Input value={untagged} onChange={event => setUntagged(event.target.value)} placeholder="eng" />
+
+                        <p className="text-xs text-muted-foreground">
+                            Most releases carry no language tag at all. This is what they are taken to be —
+                            and with a first language that is not this, an untagged release is not yours.
+                        </p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Language bonus</label>
+
+                        <Input
+                            value={bonus}
+                            inputMode="numeric"
+                            onChange={event => setBonus(event.target.value)}
+                            placeholder="1000000"
+                        />
+
+                        <p className="text-xs text-muted-foreground">
+                            How much a better language is worth when two releases are otherwise equal.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="space-y-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                        <input
+                            type="checkbox"
+                            className="cursor-pointer"
+                            checked={languageFirst}
+                            onChange={event => setLanguageFirst(event.target.checked)}
+                        />
+                        Language outranks resolution
+                    </label>
+
+                    <p className="text-xs text-muted-foreground">
+                        On: a 720p release in your language beats a 1080p one that is not.
+                    </p>
+                </div>
+
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Languages you never want</label>
+
+                    <TagInput value={excluded} onChange={setExcluded} placeholder="ita" />
+
+                    <p className="text-xs text-muted-foreground">
+                        Only applies to what you start by hand, and never to a release in the title&apos;s own
+                        original language — otherwise a Japanese film would become unobtainable.
                     </p>
                 </div>
 

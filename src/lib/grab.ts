@@ -2,9 +2,12 @@ import { ContentType } from "../../prisma/generated/client";
 import { refreshBlocklist } from "@/lib/blocklist";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
+import { languageProfileOf, primaryLanguage } from "@/lib/language";
 import {
     getQualityProfile,
     parseNumbering,
+    QualityProfile,
+    releaseLanguage,
     ReleaseSelection,
     selectEpisodeRelease,
     selectRelease,
@@ -12,6 +15,7 @@ import {
 } from "@/lib/release";
 import { settingNumber, settingText } from "@/lib/settings";
 import { addRelease } from "@/lib/torrent";
+import { LibraryAudience } from "@/lib/audience";
 import {
     GrabbedEpisode,
     heldEpisodes,
@@ -55,6 +59,47 @@ export type MoviePlan = ReleaseOptions & {
     resultCount: number;
 };
 
+/**
+ * Whose search this is, which is now half of what a search *is*.
+ *
+ * A title is no longer looked for once for the whole house: it is looked for once per
+ * language somebody wants it in, and what comes back belongs to the people who wanted
+ * that edition. `userIds` is who those people are — whose watchlist units this grab
+ * may carry off — and `language` is the edition it is looking for.
+ *
+ * The scanner builds this with a profile that **rejects** every other language, so it
+ * can only ever take what was asked for. The download dialog builds it open, because a
+ * person looking at the list may knowingly take something else.
+ */
+export type GrabContext = {
+    userIds: number[];
+    language: string;
+    profile: QualityProfile;
+};
+
+/**
+ * The context for a group of people who agree on a primary language. The first one's
+ * profile stands for the group: they agree on the language, which is what a search is
+ * shaped by, and the rest — the bonus weights, the exclusions — only reorders what is
+ * already in the right language.
+ */
+export const grabContext = async (userIds: number[], options: { strict: boolean }): Promise<GrabContext> => {
+    const language = await languageProfileOf(userIds[0]);
+    const primary = primaryLanguage(language);
+
+    return {
+        userIds,
+        language: primary,
+        profile: getQualityProfile(language, options.strict ? primary : null)
+    };
+};
+
+/** What a library query means for this search: this edition, or this person's own. */
+export const audience = (context: GrabContext): LibraryAudience => ({
+    language: context.language,
+    userIds: context.userIds
+});
+
 // how many releases a download dialog offers to choose from
 const optionCount = () => settingNumber("DOWNLOAD_OPTION_COUNT");
 
@@ -86,7 +131,7 @@ export type PlannedGrab = {
     isPack: boolean;
 };
 
-export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> => {
+export const planMovieGrab = async (tmdbId: number, context: GrabContext): Promise<MoviePlan | null> => {
     // scoring reads the blocklist synchronously, so it has to be in memory by then
     await refreshBlocklist();
 
@@ -102,7 +147,7 @@ export const planMovieGrab = async (tmdbId: number): Promise<MoviePlan | null> =
         year: metadata.year
     });
 
-    const selection = selectRelease(releases, getQualityProfile(), {
+    const selection = selectRelease(releases, context.profile, {
         titles: [ metadata.original_name, metadata.media.name ],
         kind: "movie",
         year: metadata.year,
@@ -145,6 +190,7 @@ const mapLimited = async <T, R>(items: T[], limit: number, fn: (item: T) => Prom
 export const planSeasonGrab = async (
     tmdbId: number,
     seasonNumber: number,
+    context: GrabContext,
     options: { episodeNumbers?: number[] } = {}
 ): Promise<SeasonPlan | null> => {
     await refreshBlocklist();
@@ -165,7 +211,7 @@ export const planSeasonGrab = async (
         season: seasonNumber
     });
 
-    const profile = getQualityProfile();
+    const profile = context.profile;
     const titles = [ metadata.original_name, metadata.media.name ];
     const now = Date.now();
 
@@ -227,6 +273,7 @@ export const planSeasonGrab = async (
 export const executeMovieGrab = async (
     tmdbId: number,
     release: IndexerResult,
+    context: GrabContext,
     // null when the scanner did it: then the people it belongs to are the ones whose
     // units it carries off
     requestedBy: number | null = null
@@ -236,6 +283,11 @@ export const executeMovieGrab = async (
         type: ContentType.MOVIE,
         releaseTitle: release.title,
         episodes: [],
+        // read off the release rather than taken from the search: unattended the two
+        // are the same, but a person who accepted an English file at the dialog has an
+        // English row, and their Hungarian search is not ended by it for anybody else
+        language: releaseLanguage(release.title, context.profile),
+        forUsers: context.userIds,
         requestedBy
     });
 
@@ -354,12 +406,14 @@ export const shouldUsePack = (plan: SeasonPlan, requested: number[], started: bo
 export const planSeasonGrabs = async (
     tmdbId: number,
     plan: SeasonPlan,
+    context: GrabContext,
     options: { episodeNumbers?: number[], usePack?: boolean } = {}
 ) => {
     // What is already had or on its way is not searched for again. The watchlist no
     // longer answers this — a download takes its units with it — so the library is
-    // the only record of what has been obtained.
-    const held = await heldEpisodes(tmdbId);
+    // the only record of what has been obtained. In this edition: somebody else's
+    // English copy is not an answer to a Hungarian list.
+    const held = await heldEpisodes(tmdbId, audience(context));
     const wanted = options.episodeNumbers;
 
     const grabbable = plan.episodes
@@ -368,7 +422,7 @@ export const planSeasonGrabs = async (
 
     const requested = wanted ? grabbable.filter(episodeNumber => wanted.includes(episodeNumber)) : grabbable;
 
-    const started = await seasonStarted(tmdbId, plan.seasonNumber);
+    const started = await seasonStarted(tmdbId, plan.seasonNumber, audience(context));
     const usePack = options.usePack ?? shouldUsePack(plan, requested, started);
 
     // one pack torrent brings the whole season, so it claims every episode still to
@@ -398,7 +452,12 @@ const label = (seasonNumber: number, grab: PlannedGrab, packSeasons: number[]) =
  * are on disk either way, and a second torrent for them would be the same data
  * again. What is already had is left out of the claim.
  */
-export const grabbedEpisodes = async (tmdbId: number, plan: SeasonPlan, grab: PlannedGrab): Promise<GrabbedEpisode[]> => {
+export const grabbedEpisodes = async (
+    tmdbId: number,
+    plan: SeasonPlan,
+    grab: PlannedGrab,
+    context: GrabContext
+): Promise<GrabbedEpisode[]> => {
     const own = grab.episodeNumbers.map(episodeNumber => ({ seasonNumber: plan.seasonNumber, episodeNumber }));
 
     if (! grab.isPack) {
@@ -411,7 +470,7 @@ export const grabbedEpisodes = async (tmdbId: number, plan: SeasonPlan, grab: Pl
         return own;
     }
 
-    const held = await heldEpisodes(tmdbId);
+    const held = await heldEpisodes(tmdbId, audience(context));
     const seasons = await getTvSeasons(tmdbId);
 
     const carried = seasons
@@ -433,19 +492,22 @@ export const grabbedEpisodes = async (tmdbId: number, plan: SeasonPlan, grab: Pl
 export const executeSeasonGrab = async (
     tmdbId: number,
     plan: SeasonPlan,
+    context: GrabContext,
     options: { episodeNumbers?: number[], usePack?: boolean, requestedBy?: number | null } = {}
 ): Promise<StartedDownload[]> => {
-    const { grabs } = await planSeasonGrabs(tmdbId, plan, options);
+    const { grabs } = await planSeasonGrabs(tmdbId, plan, context, options);
     const started: StartedDownload[] = [];
 
     for (const grab of grabs) {
-        const episodes = await grabbedEpisodes(tmdbId, plan, grab);
+        const episodes = await grabbedEpisodes(tmdbId, plan, grab, context);
 
         const item = await moveToLibrary({
             tmdbId,
             type: ContentType.TV,
             releaseTitle: grab.release.title,
             episodes,
+            language: releaseLanguage(grab.release.title, context.profile),
+            forUsers: context.userIds,
             requestedBy: options.requestedBy ?? null
         });
 

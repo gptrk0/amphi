@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 
 import { actorText, currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
-import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
+import { executeMovieGrab, executeSeasonGrab, grabContext, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
 import { isIndexerConfigured } from "@/lib/indexer";
 import { errorText, logError, logInfo, logWarn } from "@/lib/log";
 import { isClientConfigured } from "@/lib/torrent";
@@ -127,8 +127,12 @@ export async function POST(req: NextRequest) {
             return Response.json({ success: false, message: "Invalid type or id!" }, { status: 400 });
         }
 
+        // by hand, so the whole list is on offer rather than the primary language
+        // alone — but it is still this person's list, and what comes of it is theirs
+        const context = await grabContext([ me!.id ], { strict: false });
+
         if (type === "movie") {
-            const plan = await planMovieGrab(id);
+            const plan = await planMovieGrab(id, context);
 
             if (! plan) {
                 return Response.json({ success: false, message: "Media not found on tmdb!" }, { status: 404 });
@@ -145,7 +149,7 @@ export async function POST(req: NextRequest) {
                 });
             }
 
-            const started = await executeMovieGrab(id, plan.release, me?.id ?? null);
+            const started = await executeMovieGrab(id, plan.release, context, me!.id);
 
             await logStarted(started ? [ started ] : [], who);
 
@@ -176,14 +180,14 @@ export async function POST(req: NextRequest) {
 
         for (const { seasonNumber, episodeNumbers } of seasons) {
             const wanted = episodeNumbers.length > 0 ? episodeNumbers : undefined;
-            const plan = await planSeasonGrab(id, seasonNumber, { episodeNumbers: wanted });
+            const plan = await planSeasonGrab(id, seasonNumber, context, { episodeNumbers: wanted });
 
             if (! plan) {
                 continue;
             }
 
             if (plan.pack || plan.episodes.some(episode => episode.release)) {
-                started.push(...await executeSeasonGrab(id, plan, { episodeNumbers: wanted, requestedBy: me?.id ?? null }));
+                started.push(...await executeSeasonGrab(id, plan, context, { episodeNumbers: wanted, requestedBy: me!.id }));
             }
 
             // only report what was actually asked for as missing

@@ -99,23 +99,9 @@ export const SETTINGS: SettingDef[] = [
     { key: "QUALITY_MIN_SIZE_MOVIE", group: "Quality", label: "Minimum film size per resolution", type: "table", default: "2160p:8,1080p:2,720p:0.8,480p:0.3", help: "A file this much smaller than the resolution it claims is not that video. GB per entry." },
     { key: "QUALITY_MIN_SIZE_EPISODE", group: "Quality", label: "Minimum episode size per resolution", type: "table", default: "2160p:1.5,1080p:0.4,720p:0.15,480p:0.05" },
 
-    // Language
-    { key: "QUALITY_PREFERRED_LANGUAGES", group: "Language", label: "Preferred languages", type: "list", ordered: true, default: "hun,eng", help: "First one wins." },
-    { key: "QUALITY_DEFAULT_LANGUAGE", group: "Language", label: "Untagged release counts as", type: "string", default: "eng" },
-    {
-        key: "QUALITY_EXCLUDE_LANGUAGES",
-        group: "Language",
-        label: "Excluded languages",
-        type: "list",
-        default: [
-            "ita", "ger", "fre", "spa", "por", "rus", "pol", "cze", "slo", "tur", "ara",
-            "hin", "tam", "tel", "kor", "jpn", "chi", "tha", "vie", "ukr", "rum", "bul",
-            "dut", "swe", "nor", "dan", "fin", "gre", "heb", "per", "ind"
-        ].join(","),
-        help: "Only applies when the release is neither preferred nor in the title's own original language — otherwise foreign films would become unobtainable."
-    },
-    { key: "QUALITY_LANGUAGE_BONUS", group: "Language", label: "Language bonus", type: "number", default: "1000000" },
-    { key: "QUALITY_LANGUAGE_FIRST", group: "Language", label: "Language outranks resolution", type: "boolean", default: "0", help: "On: a 720p Hungarian release beats a 1080p English one." },
+    // Language is not here any more: it is on the account page, one set per person.
+    // Two people wanting the same film in different languages get two downloads, and a
+    // single house-wide list could not express that. See src/lib/language.ts.
 
     // Scanner
     { key: "WATCHLIST_SCAN_INTERVAL_MINUTES", group: "Scanner", label: "Scan every (minutes)", type: "number", default: "15" },

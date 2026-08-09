@@ -2,6 +2,7 @@ import { IndexerResult } from "@/lib/indexer";
 import {
     executeMovieGrab,
     executeSeasonGrab,
+    GrabContext,
     MoviePlan,
     planMovieGrab,
     planSeasonGrab,
@@ -9,7 +10,7 @@ import {
     SeasonPlan,
     StartedDownload
 } from "@/lib/grab";
-import { parseResolution } from "@/lib/release";
+import { effectiveLanguages, parseResolution, QualityProfile } from "@/lib/release";
 import { settingNumber } from "@/lib/settings";
 import { DownloadPreview, GrabChoice, GrabOption, MissingSeason } from "@/types/download";
 
@@ -57,6 +58,9 @@ type StoredPlan = {
     seasons: StoredSeason[];
     missing: MissingSeason[];
     missingMovie: boolean;
+    // whose search this was: kept so that answering the dialog cannot land in a
+    // different person's library than the one the releases were found for
+    context: GrabContext;
 };
 
 // A search costs tens of seconds, so the plan behind a dialog is kept instead of
@@ -92,13 +96,16 @@ export const getStoredPlan = (id: string) => {
     return plan.createdAt + ttlMs() < Date.now() ? null : plan;
 };
 
-const toOption = (release: IndexerResult): GrabOption => {
+const toOption = (release: IndexerResult, profile: QualityProfile): GrabOption => {
     return {
         guid: release.guid || release.link,
         title: release.title,
         size: release.size,
         seeders: release.seeders,
         resolution: parseResolution(release.title),
+        // the release name is the only place this exists, and it is the difference
+        // between the film somebody wanted and the same film they cannot watch
+        languages: effectiveLanguages(release.title, profile),
         indexer: release.indexerId
     };
 };
@@ -112,7 +119,7 @@ const episodeLabel = (seasonNumber: number, episodeNumber: number) => {
  * one torrent, otherwise every episode that has something to offer. Episodes with
  * nothing found are not lines to choose from, they are the missing list.
  */
-const seasonChoices = (season: StoredSeason): GrabChoice[] => {
+const seasonChoices = (season: StoredSeason, profile: QualityProfile): GrabChoice[] => {
     const { plan, usePack } = season;
 
     if (usePack && plan.pack) {
@@ -122,7 +129,7 @@ const seasonChoices = (season: StoredSeason): GrabChoice[] => {
             seasonNumber: plan.seasonNumber,
             episodeNumbers: [],
             isPack: true,
-            options: plan.packOptions.candidates.map(toOption),
+            options: plan.packOptions.candidates.map(release => toOption(release, profile)),
             filtered: plan.packOptions.filtered
         } ];
     }
@@ -138,7 +145,7 @@ const seasonChoices = (season: StoredSeason): GrabChoice[] => {
             seasonNumber: plan.seasonNumber,
             episodeNumbers: [ episode.episodeNumber ],
             isPack: false,
-            options: episode.candidates.map(toOption),
+            options: episode.candidates.map(release => toOption(release, profile)),
             filtered: episode.filtered
         }));
 };
@@ -150,7 +157,8 @@ const seasonChoices = (season: StoredSeason): GrabChoice[] => {
 export const buildPreview = async (
     type: "movie" | "tv",
     tmdbId: number,
-    seasons: SeasonRequest[]
+    seasons: SeasonRequest[],
+    context: GrabContext
 ): Promise<DownloadPreview | null> => {
     const stored: StoredPlan = {
         id: crypto.randomUUID(),
@@ -160,11 +168,12 @@ export const buildPreview = async (
         movie: null,
         seasons: [],
         missing: [],
-        missingMovie: false
+        missingMovie: false,
+        context
     };
 
     if (type === "movie") {
-        const plan = await planMovieGrab(tmdbId);
+        const plan = await planMovieGrab(tmdbId, context);
 
         if (! plan) {
             return null;
@@ -176,13 +185,13 @@ export const buildPreview = async (
     } else {
         for (const request of seasons) {
             const wanted = request.episodeNumbers.length > 0 ? request.episodeNumbers : undefined;
-            const plan = await planSeasonGrab(tmdbId, request.seasonNumber, { episodeNumbers: wanted });
+            const plan = await planSeasonGrab(tmdbId, request.seasonNumber, context, { episodeNumbers: wanted });
 
             if (! plan) {
                 continue;
             }
 
-            const { usePack } = await planSeasonGrabs(tmdbId, plan, { episodeNumbers: wanted });
+            const { usePack } = await planSeasonGrabs(tmdbId, plan, context, { episodeNumbers: wanted });
 
             stored.seasons.push({ request, plan, usePack });
 
@@ -204,10 +213,10 @@ export const buildPreview = async (
             seasonNumber: null,
             episodeNumbers: [],
             isPack: false,
-            options: stored.movie.candidates.map(toOption),
+            options: stored.movie.candidates.map(release => toOption(release, context.profile)),
             filtered: stored.movie.filtered
         } ] : [])
-        : stored.seasons.flatMap(seasonChoices);
+        : stored.seasons.flatMap(season => seasonChoices(season, context.profile));
 
     const filtered = stored.movie
         ? stored.movie.filtered
@@ -217,6 +226,11 @@ export const buildPreview = async (
             return sum + episodes + season.plan.packOptions.filtered;
         }, 0);
 
+    // Asked of every line, not of the request as a whole: an episode that exists in
+    // your language and one that does not are two different answers, and taking the
+    // second is a decision. The dialog turns this into the question it deserves.
+    const short = choices.filter(choice => ! choice.options.some(option => option.languages.includes(context.language)));
+
     return {
         planId: stored.id,
         type,
@@ -224,7 +238,11 @@ export const buildPreview = async (
         choices,
         missing: stored.missing,
         missingMovie: stored.missingMovie,
-        filtered
+        filtered,
+        language: {
+            primary: context.language,
+            missing: short.map(choice => choice.label)
+        }
     };
 };
 
@@ -281,7 +299,7 @@ export const executeStoredPlan = async (
             return [];
         }
 
-        const started = await executeMovieGrab(plan.tmdbId, plan.movie.release, requestedBy);
+        const started = await executeMovieGrab(plan.tmdbId, plan.movie.release, plan.context, requestedBy);
 
         return started ? [ started ] : [];
     }
@@ -291,7 +309,7 @@ export const executeStoredPlan = async (
     for (const season of plan.seasons) {
         const wanted = season.request.episodeNumbers.length > 0 ? season.request.episodeNumbers : undefined;
 
-        started.push(...await executeSeasonGrab(plan.tmdbId, season.plan, {
+        started.push(...await executeSeasonGrab(plan.tmdbId, season.plan, plan.context, {
             episodeNumbers: wanted,
             // the dialog was built for this decision, so it must not change under it
             usePack: season.usePack,

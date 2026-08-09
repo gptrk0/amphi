@@ -13,6 +13,9 @@ export type GrabOption = {
     size: number;
     seeders: number;
     resolution: string | null;
+    // what the release name says it is in. An untagged one is shown as whatever the
+    // account says untagged means, because that is how it will be treated
+    languages: string[];
     indexer: string;
 };
 
@@ -41,4 +44,10 @@ export type DownloadPreview = {
     missingMovie: boolean;
     // every release the quality profile threw away, over the whole request
     filtered: number;
+    /**
+     * The account's first language, and the lines that have nothing to offer in it.
+     * A non-empty list is what turns the download button into a question: the scanner
+     * would have gone on waiting, so starting anyway is a choice somebody makes.
+     */
+    language: { primary: string, missing: string[] };
 };

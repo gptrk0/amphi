@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 
-import { refuseUnlessSignedIn } from "@/lib/auth";
+import { currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 import { buildPreview, toSeasonRequests } from "@/lib/download-plan";
+import { grabContext } from "@/lib/grab";
 import { isIndexerConfigured } from "@/lib/indexer";
 import { errorText, logDebug, logError, logWarn } from "@/lib/log";
 import { loadSettings, NotConfiguredError } from "@/lib/settings";
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest) {
 
     try {
         const body = await req.json();
+        const me = await currentUser();
 
         const type = body?.type;
         const id = Number(body?.id);
@@ -54,7 +56,9 @@ export async function POST(req: NextRequest) {
             seasons.length > 0 ? `seasons ${ seasons.map(season => season.seasonNumber).join(", ") }` : undefined
         );
 
-        const preview = await buildPreview(type, id, seasons);
+        // the whole preferred list, not the primary alone: this is the one place where
+        // another language may be taken, and it can only be taken knowingly
+        const preview = await buildPreview(type, id, seasons, await grabContext([ me!.id ], { strict: false }));
 
         if (! preview) {
             return Response.json({ success: false, message: "Media not found on tmdb!" }, { status: 404 });

@@ -1,5 +1,6 @@
 import { ContentType, Library as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
+import { LibraryAudience, libraryFilter } from "@/lib/audience";
 import { getMediaMetadata } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
 import { removeTorrent, TorrentStatus } from "@/lib/torrent";
@@ -78,13 +79,18 @@ export const moveToLibrary = async (input: {
     type: ContentType;
     releaseTitle: string;
     episodes: GrabbedEpisode[];
+    /// the edition this is, which is what decides whose search it ends
+    language: string;
+    /// whose lists this answers: the people it was searched for, and nobody else
+    forUsers: number[];
     /// whoever pressed the button, for a download nobody had on a list yet
     requestedBy?: number | null;
 }): Promise<LibraryRow> => {
-    // everybody's, not one person's: one file arrives, and it answers every list that
-    // was waiting for it. Leaving the others behind would have them searching for
-    // something that is already on the disk.
-    const rows = await rowsForTitle(input.tmdbId, input.type);
+    // Not everybody who is waiting for the title — everybody who is waiting for *this
+    // edition* of it. One file answers the lists it is in the right language for, and
+    // the others go on being searched for, because to them it is a different film.
+    const all = await rowsForTitle(input.tmdbId, input.type);
+    const rows = all.filter(row => input.forUsers.includes(row.userId));
     const ids = rows.map(row => row.id);
 
     const where = input.episodes.length === 0
@@ -111,6 +117,7 @@ export const moveToLibrary = async (input: {
             tmdbId: input.tmdbId,
             type: input.type,
             releaseTitle: input.releaseTitle,
+            language: input.language,
             watchedBy,
             episodes: input.episodes.map(episodeKey)
         }
@@ -126,6 +133,70 @@ export const moveToLibrary = async (input: {
     }
 
     return item;
+};
+
+/**
+ * The other half of `moveToLibrary`, for the people who were not in the round.
+ *
+ * A grab only carries off the units of the people it was searched for — everybody
+ * else goes on looking, which is the point when the language differs. But somebody
+ * whose language is the *same* and who simply was not due this round would then wait
+ * for a file that is already on the disk: the scanner sees the edition is held and
+ * skips, so their unit is never taken by anything and never expires.
+ *
+ * So before a search is skipped, whoever it would have been for is written onto the
+ * download that already answers them, and their units go the same way they would have
+ * gone had they been in the round.
+ */
+export const claimHeldUnits = async (tmdbId: number, type: ContentType, audience: LibraryAudience) => {
+    const items = await prisma.library.findMany({ where: { tmdbId, type, ...libraryFilter(audience) } });
+
+    if (items.length === 0) {
+        return 0;
+    }
+
+    const rows = (await rowsForTitle(tmdbId, type)).filter(row => audience.userIds.includes(row.userId));
+
+    if (rows.length === 0) {
+        return 0;
+    }
+
+    const ids = rows.map(row => row.id);
+    const owner = new Map(rows.map(row => [ row.id, row.userId ]));
+    let claimed = 0;
+
+    for (const item of items) {
+        const where = item.episodes.length === 0
+            ? { seasonNumber: null }
+            : { OR: item.episodes.map(toEpisode) };
+
+        const units = await prisma.watchlistUnit.findMany({ where: { watchlistId: { in: ids }, ...where } });
+
+        if (units.length === 0) {
+            continue;
+        }
+
+        const waiting = [ ...new Set(units.map(unit => owner.get(unit.watchlistId)!)) ];
+
+        await prisma.library.update({
+            where: { id: item.id },
+            // they were waiting for exactly this, so they are told when it lands and it
+            // goes back on their list if it never does
+            data: { watchedBy: [ ...new Set([ ...item.watchedBy, ...waiting ]) ] }
+        });
+
+        await prisma.watchlistUnit.deleteMany({ where: { id: { in: units.map(unit => unit.id) } } });
+
+        claimed += units.length;
+    }
+
+    if (claimed > 0) {
+        for (const id of ids) {
+            await pruneWatchlistItem(id);
+        }
+    }
+
+    return claimed;
 };
 
 export const setTorrentHash = async (id: number, torrentHash: string) => {
@@ -224,13 +295,13 @@ export const forgetLibraryItem = async (item: LibraryRow) => {
 };
 
 /**
- * Every episode this title has or is getting. The scanner asks before it searches,
- * and a manual download asks before it starts — a removed one is not in here, so
- * asking for it again is allowed.
+ * Every episode this title has or is getting **in this edition**. The scanner asks
+ * before it searches, and a manual download asks before it starts — a removed one is
+ * not in here, so asking for it again is allowed.
  */
-export const heldEpisodes = async (tmdbId: number) => {
+export const heldEpisodes = async (tmdbId: number, audience: LibraryAudience) => {
     const items = await prisma.library.findMany({
-        where: { tmdbId, removedAt: null },
+        where: { tmdbId, ...libraryFilter(audience) },
         select: { episodes: true }
     });
 
@@ -241,15 +312,15 @@ export const heldEpisodes = async (tmdbId: number) => {
  * Whether the title has anything in the library at all. A film has no episodes, so
  * `heldEpisodes` cannot answer this for one.
  */
-export const hasLibraryItem = async (tmdbId: number) => {
-    return await prisma.library.count({ where: { tmdbId, removedAt: null } }) > 0;
+export const hasLibraryItem = async (tmdbId: number, audience: LibraryAudience) => {
+    return await prisma.library.count({ where: { tmdbId, ...libraryFilter(audience) } }) > 0;
 };
 
 /** Whether anything of this season is already downloading or on disk. */
-export const seasonStarted = async (tmdbId: number, seasonNumber: number) => {
-    const held = await heldEpisodes(tmdbId);
+export const seasonStarted = async (tmdbId: number, seasonNumber: number, audience: LibraryAudience) => {
+    const episodes = await heldEpisodes(tmdbId, audience);
 
-    return [ ...held ].some(key => toEpisode(key).seasonNumber === seasonNumber);
+    return [ ...episodes ].some(key => toEpisode(key).seasonNumber === seasonNumber);
 };
 
 export const getLibraryItem = async (id: number) => {
@@ -316,6 +387,7 @@ export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = ne
     type: toMediaType(item.type),
     status: item.status,
     releaseTitle: item.releaseTitle,
+    language: item.language,
     covers: coverText(item.episodes),
     episodeCount: item.episodes.length,
     startedAt: item.startedAt.toISOString(),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, TriangleAlert } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
@@ -36,8 +36,13 @@ const size = (bytes: number) => {
     return bytes >= GB ? `${ (bytes / GB).toFixed(1) } GB` : `${ Math.round(bytes / (1024 * 1024)) } MB`;
 };
 
+/**
+ * The language goes first, before the resolution: it is the one thing on this line
+ * that decides whether the file is watchable at all, and the only one the release
+ * name is the sole record of.
+ */
 const details = (option: GrabOption) => {
-    return [ option.resolution, size(option.size), `${ option.seeders } seeders`, option.indexer ]
+    return [ option.languages.join("/").toUpperCase(), option.resolution, size(option.size), `${ option.seeders } seeders`, option.indexer ]
         .filter(Boolean)
         .join(" · ");
 };
@@ -120,13 +125,20 @@ function ChoiceRow({ choice, picked, onPick, single }: {
  */
 export function ReleasePicker({ open, name, preview, isLoading, isStarting, picks, onPick, onCancel, onConfirm }: Props) {
     const [ watchMissing, setWatchMissing ] = useState(false);
+    const [ acceptOtherLanguage, setAcceptOtherLanguage ] = useState(false);
 
     const choices = preview?.choices || [];
     const hasMissing = !! preview && (preview.missingMovie || preview.missing.length > 0);
     const nothingFound = !! preview && choices.length === 0;
 
+    // Nothing here is in the language this account actually wants. Left alone, the
+    // scanner would have gone on waiting for one — so starting anyway is a decision,
+    // and it is asked for rather than assumed.
+    const wrongLanguage = ! isLoading && ! nothingFound && (preview?.language.missing.length || 0) > 0;
+
     const close = () => {
         setWatchMissing(false);
+        setAcceptOtherLanguage(false);
         onCancel();
     };
 
@@ -134,6 +146,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
         const wanted = watchMissing;
 
         setWatchMissing(false);
+        setAcceptOtherLanguage(false);
         onConfirm(wanted);
     };
 
@@ -166,6 +179,29 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             onPick={(guid) => onPick(choice.key, guid)}
                         />
                     ))}
+                </div>}
+
+                {wrongLanguage && <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+                    <div className="flex items-start gap-2 text-sm">
+                        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
+
+                        <span>
+                            Nothing in <b>{ preview!.language.primary.toUpperCase() }</b> for{" "}
+                            <span className="text-muted-foreground">{ preview!.language.missing.join(", ") }</span>.
+                            Left alone, this would stay on your watchlist until a release in your language turns
+                            up — downloading now means watching it in another one.
+                        </span>
+                    </div>
+
+                    <label className="flex cursor-pointer items-start gap-2 pl-6 text-sm">
+                        <Checkbox
+                            checked={acceptOtherLanguage}
+                            onCheckedChange={(value) => setAcceptOtherLanguage(value === true)}
+                            className="mt-0.5"
+                        />
+
+                        <span>That is fine, download it anyway.</span>
+                    </label>
                 </div>}
 
                 {! isLoading && hasMissing && ! nothingFound && <>
@@ -201,7 +237,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                         </Button>
                         : <Button
                             className="cursor-pointer"
-                            disabled={isLoading || isStarting || choices.length === 0}
+                            disabled={isLoading || isStarting || choices.length === 0 || (wrongLanguage && ! acceptOtherLanguage)}
                             onClick={confirm}
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isStarting })} />

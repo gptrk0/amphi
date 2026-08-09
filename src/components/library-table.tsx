@@ -33,7 +33,11 @@ type Column = {
     className?: string;
 };
 
+// while something is downloading the percentages move, so the table has to keep up.
+// The slow one is for everything else: the library is shared, and a download somebody
+// else starts has to turn up here without the page being reloaded.
 const POLL_MS = 5000;
+const IDLE_POLL_MS = 20000;
 
 const FILTERS: { label: string, value: "ALL" | "DOWNLOADING" | "AVAILABLE" }[] = [
     { label: "All", value: "ALL" },
@@ -117,13 +121,11 @@ export function LibraryTable() {
         load();
     }, [])
 
-    // percentages only move while something is downloading, so the poll stops with it
+    // it never stops: this table is the whole household's, and the row that appears is
+    // as often somebody else's new download as it is a percentage of your own
     useEffect(() => {
-        if (! items?.some(item => item.status === "DOWNLOADING")) {
-            return;
-        }
-
-        const timer = setInterval(load, POLL_MS);
+        const busy = items?.some(item => item.status === "DOWNLOADING");
+        const timer = setInterval(load, busy ? POLL_MS : IDLE_POLL_MS);
 
         return () => clearInterval(timer);
     }, [ items ])
@@ -203,6 +205,18 @@ export function LibraryTable() {
             render: item => (
                 <span className="block max-w-[22rem] truncate text-xs text-muted-foreground" title={item.releaseTitle}>
                     { item.releaseTitle || "—" }
+                </span>
+            )
+        },
+        {
+            key: "language",
+            label: "Language",
+            value: item => item.language,
+            // the same film can be here twice, once per language, and then this column
+            // is the only thing telling the two rows apart
+            render: item => (
+                <span className="text-xs text-muted-foreground">
+                    { item.language ? item.language.toUpperCase() : "—" }
                 </span>
             )
         },

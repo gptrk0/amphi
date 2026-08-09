@@ -1116,6 +1116,51 @@ guard vissza     localhost -> elutasítva, 192.168.1.10 -> elutasítva
                  "not a url" -> elutasítva, file:///etc/passwd -> elutasítva
 ```
 
+#### Mindenkinek saját nyelve, és a nyelv külön kiadás (2026-08-09-i kérés) ✅
+
+Négy bejelentés egyszerre: (1) más épp futó letöltése nem látszik a libraryban, csak ha kész; (2) a preferált nyelv felhasználónként állítható legyen, a globális settingsből ki is kerülhet; (3) a letöltési listában látszódjon a torrent nyelve; (4) ha az elsődleges nyelven nincs kiadás, arra kérdezzen rá.
+
+**1. A library tábla nem frissült magától.** A sor mindig is a letöltés *indításakor* jött létre `DOWNLOADING`-gal, és a `getLibrary()` sosem szűrt felhasználóra — a hiba a felületen volt: a poll csak akkor indult el, ha a tábla **már látott** egy `DOWNLOADING` sort. Nyitva hagyott oldalon tehát más letöltése sosem bukkant fel. Most mindig frissül, két sebességgel: 5 mp, amíg megy valami (a százalékok miatt), egyébként 20 mp — mert ez a tábla a háztartásé, és az új sor ugyanolyan gyakran más letöltése, mint a saját százalékod.
+
+**2–4. A nyelv nem beállítás lett, hanem kiadás.** A válaszaid alapján: két ember két nyelve **két külön letöltés, két library sor, végig külön kezelve**; egy ember listája viszont marad rangsor (elsődleges + tartalék); a scanner pedig **csak az elsődlegest** tölti le magától, tartalékra sosem vált át magától.
+
+Ebből következik a modell:
+
+- **A `User` megkapta az egész Language csoportot** (`preferredLanguages`, `excludeLanguages`, `defaultLanguage`, `languageBonus`, `languageFirst`), a `Setting` registryből pedig kikerült mind az öt. A migráció (`20260809260000_personal_languages`) **átmásolja az eddigi globális értékeket minden meglévő userre**, tehát a bevezetés napján semmi nem változik: mérve, mindkét fiók `hun,eng`-gel indult, és az öt `Setting` sor eltűnt.
+- **A `Library` sor kapott `language` mezőt.** Üres = a bevezetés előtti letöltés: az *ismeretlen mindenkié*, különben egy frissítés az egész könyvtárat újra letöltötte volna.
+- **„Megvan-e már" kérdés nincs többé önmagában** — csak „megvan-e *neki*". Ezt a [audience.ts](src/lib/audience.ts) mondja meg: egy sor akkor számít a tiédnek, ha (a) ugyanaz a kiadás, vagy (b) *érted* töltötték le (a kézzel elfogadott másik nyelv), vagy (c) a bevezetés előttről való. Erre épül a `heldEpisodes`, a `hasLibraryItem`, a `seasonStarted`, és a poszterek jelvényét adó `libraryState` is — utóbbi nélkül a más nyelvén letöltött film „Available"-nek látszott volna nálad is.
+- **A `moveToLibrary` már nem viszi el mindenki unitját**, csak azokét, akikért a keresés ment (`forUsers`). Aki más nyelvet vár, az tovább keres — neki ez egy másik film.
+- **A scanner nyelvenként csoportosít** (`tmdbId:nyelv`, sorozatnál `tmdbId:évad:nyelv`), és a profilja **szigorú**: ami nincs az elsődleges nyelven, az nem rosszabb találat, hanem nem találat (`requireLanguage`). A kézi letöltés ugyanezt a réteget nyitott profillal hívja, tehát ott minden ott van a listában.
+
+**Egy lyuk a saját tervemben, menet közben javítva.** Ha valaki *ugyanazt* a nyelvet várja, de a köre épp nem esedékes (backoff), akkor a letöltés nem viszi el a unitját, a következő körben viszont a scanner látja, hogy a kiadás megvan, és nem keres — a unit örökre `PENDING` maradt volna, miközben a fájl ott van a lemezen. Ezért van a `claimHeldUnits`: keresés helyett rácsatolja a várakozókat a meglévő sorra (`watchedBy`), és a unitjaik ugyanúgy elmennek, mintha a körben lettek volna.
+
+**Felületen:** a kiadásválasztóban a nyelv a sor **első** adata (a felbontás elé került — ez az egy dolog dönti el, hogy egyáltalán nézhető-e), a library táblában külön oszlop (ugyanaz a film kétszer szerepelhet, és csak ez különbözteti meg őket), az account oldalon pedig ott a teljes Language csoport, húzható sorrenddel.
+
+**A 4. tétel a kiadásválasztóban van, és tényleg megerősítés:** ha egyetlen sorra sincs az elsődleges nyelveden kiadás, sárga sáv írja meg, mit hagynál ki („magára hagyva ez a watchlistedre kerülne, amíg meg nem jelenik"), és a **Download gomb tiltva marad**, amíg be nem pipálod, hogy így is jó. Azért itt, mert 2026-08-08 óta *minden* letöltés ezen az ablakon megy keresztül — külön „azonnali letöltés" út nincs.
+
+**Mérve, a te adatbázisodon** (eldobható szkript, kamu felhasználókkal és a `550`-es tmdb id-vel, amit előtte ellenőrzött, hogy nincs az installban; a végén mindent törölt):
+
+```
+units before                hu=1 en=1 late=1
+a hun kör lefut             library row: language=hun watchedBy=[hu]
+units after                 hu=0 en=1 late=1      ← az angolos tovább keres, helyesen
+claimHeldUnits(late)        claimed=1 → watchedBy=[hu,late], late unitja elment
+claimHeldUnits(en)          claimed=0             ← a magyar fájl nem az övé
+takarítás                   nem maradt sor
+```
+
+És a szigorú szűrő ugyanott, `primary=hun`-nal:
+
+```
+…H264 HUN-GROUP    scanner: TAKEN            dialog: offered
+…H264-GROUP        scanner: not in hun       dialog: offered
+…H264 ITA-GROUP    scanner: not in hun       dialog: offered
+```
+
+**Amit ez az install napi működésében jelent, és amiért érdemes szemmel tartani:** a te elsődleges nyelved `hun`, a release-ek túlnyomó része viszont **jelöletlen** (`untagged = eng`). A scanner mostantól ezekhez nem nyúl — ami korábban magától lejött angolul, az ezután a watchlisten marad, és kézzel, a sárga sávot megerősítve indítható. Ha ez sok, két út van: az account oldalon `eng` az első nyelv (a magyar akkor is előrébb pontozódik, csak nem kizárólagos), vagy az `untagged` mező átírása.
+
+**Ami nyitva marad.** A főoldal személyes sorai (`Downloading now`, `Ready to watch`) továbbra is watchlist sorokból épülnek, egy elindult letöltésnek viszont már nincs watchlist sora — filmnél ez a sor gyakorlatilag sosem telik meg. Ez a library táblából jövő tétel lenne, és külön kérés. Szintén nyitott: kézzel el lehet indítani egy olyan letöltést, ami ugyanabban a kiadásban már megvan (a scanner ezt kiszűri, a dialógus nem).
+
 #### Éles telepítés: egy image, egy compose (2026-08-09-i kérés) ✅
 
 Kérés: „Komodóban akarom futtatni dockerrel, a lehető legegyszerűbb beüzemeléssel, hogy más felhasználók is meg tudják oldani — egy image és egy compose fájl, ami mindent tartalmaz".
@@ -1208,7 +1253,7 @@ docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
 
 **`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még nem is ismeri az új modellt). 2026-08-08 óta viszont **elég a `docker restart aioseerr_app`**: az `entrypoint.sh` minden induláskor generál és migrál, tehát a fenti két lépést nem kell külön kiadni — csak akkor, ha a szervert nem akarod újraindítani.
 
-**Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind az 52, a csoportjával, a típusával és a súgójával együtt. A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
+**Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind, a csoportjával, a típusával és a súgójával együtt. Egy kivétellel: a **nyelvi szabályok nincsenek itt**, azok a felhasználó sorában élnek (ld. „Mindenkinek saját nyelve"). A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
 
 <details><summary>A korábbi env-lista (2026-08-08 előtt) — már csak referencia</summary>
 
@@ -1251,7 +1296,9 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
 | [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
-| [src/lib/settings.ts](src/lib/settings.ts) | az 52 beállítás registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
+| [src/lib/language.ts](src/lib/language.ts) | egy ember nyelvi szabályai: a sorrendezett lista, az elsődleges nyelv fogalma, és a defaultok, amikkel egy új fiók indul |
+| [src/lib/audience.ts](src/lib/audience.ts) | kinek számít a tiédnek egy letöltés: azonos kiadás, érted letöltött, vagy a kiadások előttről való |
+| [src/lib/settings.ts](src/lib/settings.ts) | a beállítások registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
 | [src/lib/log.ts](src/lib/log.ts) | a napló egyetlen belépési pontja: konzol + `LogEntry` tábla, titok-maszkolás, azonos hibák összecsukása, megőrzés, és az az értesítő, amiből az élő stream él |
 | [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: al-tabok, forrás-badge, tag-es listák, visszaállítás defaultra |
 | [src/app/log/page.tsx](src/app/log/page.tsx) | a log oldal: szint/forrás/szöveg szűrő, élő követés (SSE), `before=<id>` lapozás |
@@ -1289,7 +1336,7 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
-| `GET /api/settings` | az 52 beállítás csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
+| `GET /api/settings` | a beállítások csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
 | `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése; üres titok nem változtat semmit; szám típusra a nem-szám 400 |
 | `DELETE /api/settings?key=` | vissza a registry defaultjára (default nélküli kulcsnál `unset`) — titoknál ez az egyetlen mód a törlésre |
 | `GET /api/log?level&source&q&before` | egy lap napló (200 sor), legújabb elöl, + `hasMore`, a szűrőhöz a tábla forrásai darabszámmal, és a stream indulási pontja (`newestId`, szándékosan szűrés nélkül) |

@@ -2,7 +2,8 @@ import PTT from "parse-torrent-title";
 
 import { getIndexerIds, IndexerResult } from "@/lib/indexer";
 import { isReleaseBlocked } from "@/lib/blocklist";
-import { settingFlag, settingList, settingNumber, settingText } from "@/lib/settings";
+import { LanguageProfile } from "@/lib/language";
+import { settingList, settingNumber, settingText } from "@/lib/settings";
 
 export type QualityProfile = {
     resolutions: string[];
@@ -20,6 +21,14 @@ export type QualityProfile = {
     defaultLanguage: string;
     languageBonus: number;
     languageFirst: boolean;
+    /**
+     * Set, and a release that is not in this language is not a candidate at all — not
+     * a worse one. This is what the scanner runs with, and it is the whole difference
+     * between the two ways a download starts: unattended it takes the primary language
+     * or nothing, while a person at the dialog sees everything and may knowingly take
+     * something else.
+     */
+    requireLanguage: string | null;
     indexerPriority: string[];
     indexerBonus: number;
 };
@@ -80,8 +89,12 @@ const parseSizeTable = (value: string): Record<string, number> => {
 /**
  * Read fresh on every call rather than captured once — a value saved on the admin page
  * has to take effect on the next search, not on the next restart.
+ *
+ * The quality half is the install's and the language half is the requester's, which is
+ * why the languages are handed in rather than read here: one search runs for one
+ * person's rules, and the same title searched for somebody else is a different search.
  */
-export const getQualityProfile = (): QualityProfile => {
+export const getQualityProfile = (language: LanguageProfile, requireLanguage: string | null = null): QualityProfile => {
     const priority = settingList("INDEXER_PRIORITY").map(v => v.toLowerCase());
 
     return {
@@ -94,11 +107,12 @@ export const getQualityProfile = (): QualityProfile => {
         minSizeEpisode: parseSizeTable(settingText("QUALITY_MIN_SIZE_EPISODE")),
         preferredCodecs: list(settingText("QUALITY_PREFERRED_CODECS")),
         codecBonus: settingNumber("QUALITY_CODEC_BONUS"),
-        preferredLanguages: list(settingText("QUALITY_PREFERRED_LANGUAGES")),
-        excludeLanguages: list(settingText("QUALITY_EXCLUDE_LANGUAGES")),
-        defaultLanguage: settingText("QUALITY_DEFAULT_LANGUAGE").toLowerCase(),
-        languageBonus: settingNumber("QUALITY_LANGUAGE_BONUS"),
-        languageFirst: settingFlag("QUALITY_LANGUAGE_FIRST"),
+        preferredLanguages: language.preferred,
+        excludeLanguages: language.exclude,
+        defaultLanguage: language.untagged,
+        languageBonus: language.bonus,
+        languageFirst: language.first,
+        requireLanguage,
         // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
         indexerPriority: priority.length > 0 ? priority : getIndexerIds(),
         indexerBonus: settingNumber("INDEXER_PRIORITY_BONUS")
@@ -345,13 +359,36 @@ export type LanguageRating = {
 };
 
 /**
+ * What a release is in, as far as anything can tell from its name. An untagged one is
+ * whatever the person says untagged means — usually English, and usually right.
+ */
+export const effectiveLanguages = (title: string, profile: { defaultLanguage: string }) => {
+    const languages = parseLanguages(title);
+
+    return languages.length > 0 ? languages : [ profile.defaultLanguage ];
+};
+
+/**
+ * Which edition a download becomes once it is taken. A release tagged with several
+ * languages counts as the best one the requester wanted — a `HUN.ENG` file is the
+ * Hungarian copy for somebody whose first language is Hungarian, and it is not going
+ * to be fetched a second time for the English in it.
+ */
+export const releaseLanguage = (title: string, profile: QualityProfile) => {
+    const languages = effectiveLanguages(title, profile);
+    const wanted = profile.preferredLanguages.find(language => languages.includes(language));
+
+    return wanted || languages[0];
+};
+
+/**
  * An untagged release is assumed to be in the default language, and a release in
  * the title's own original language is always allowed — otherwise a fixed exclude
  * list would drop every japanese or french film's own release.
  */
 export const rateLanguage = (title: string, profile: QualityProfile, target?: ReleaseTarget): LanguageRating => {
     const languages = parseLanguages(title);
-    const effective = languages.length > 0 ? languages : [ profile.defaultLanguage ];
+    const effective = effectiveLanguages(title, profile);
 
     const original = target?.originalLanguage
         ? ISO_639_1[target.originalLanguage.toLowerCase()] || target.originalLanguage.toLowerCase()
@@ -437,6 +474,13 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
         return { release, reason: `language ${ language.excluded } not wanted` };
     }
 
+    // the unattended path: the wrong language is not a worse release here, it is a
+    // different film to this person, and taking it would end their search for the one
+    // they actually asked for
+    if (profile.requireLanguage && ! effectiveLanguages(release.title, profile).includes(profile.requireLanguage)) {
+        return { release, reason: `not in ${ profile.requireLanguage }` };
+    }
+
     const resolution = parseResolution(release.title);
 
     // an unwanted resolution is dropped, an unknown one stays as a last resort
@@ -462,7 +506,7 @@ const isScored = (value: ScoredRelease | RejectedRelease): value is ScoredReleas
 
 export const selectRelease = (
     releases: IndexerResult[],
-    profile: QualityProfile = getQualityProfile(),
+    profile: QualityProfile,
     target?: ReleaseTarget
 ): ReleaseSelection => {
     const candidates: ScoredRelease[] = [];
@@ -495,7 +539,7 @@ export const selectEpisodeRelease = (
     releases: IndexerResult[],
     season: number,
     episode: number,
-    profile: QualityProfile = getQualityProfile(),
+    profile: QualityProfile,
     titles: string[] = [],
     originalLanguage?: string | null
 ): ReleaseSelection => {
@@ -522,7 +566,7 @@ export const selectSeasonRelease = (
     releases: IndexerResult[],
     season: number,
     episodeCount: number,
-    profile: QualityProfile = getQualityProfile(),
+    profile: QualityProfile,
     titles: string[] = [],
     originalLanguage?: string | null
 ): ReleaseSelection => {
