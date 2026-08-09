@@ -103,7 +103,11 @@ export function WatchlistTable() {
     const { entries, refresh } = useWatchlist();
     const { isAdmin } = useSession();
     const [ items, setItems ] = useState<WatchlistRowItem[]>();
-    const [ everybody, setEverybody ] = useState(false);
+    // the whole house by default: this table is where somebody goes to see what the app
+    // is looking for, and half of that is other people's. The server is what decides
+    // whether the answer may be everybody's — a non administrator asking for it gets
+    // their own list back, and never sees the switch.
+    const [ everybody, setEverybody ] = useState(true);
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
