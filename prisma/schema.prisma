@@ -37,7 +37,11 @@ model User {
   id    Int      @id @default(autoincrement())
   /// stored lowercased, because it is also how an OIDC login finds an existing account
   email String   @unique
-  name  String   @default("")
+  /// Required, with no default: every line in the log that names somebody names this,
+  /// and "who deleted this" answered with an email address reads like a machine did it.
+  /// An account that arrives through the provider without one takes the local part of
+  /// its address rather than being refused.
+  name  String
   role  UserRole @default(USER)
 
   passwordHash String?

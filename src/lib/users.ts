@@ -57,14 +57,19 @@ const keepAnAdmin = async (user: User, message: string) => {
 
 export const createUser = async (input: {
     email: string;
-    name?: string;
+    name: string;
     password?: string;
     role?: UserRole;
 }) => {
     const email = normalize(input.email);
+    const name = input.name.trim();
 
     if (! looksLikeEmail(email)) {
         throw new UserError("That does not look like an email address.");
+    }
+
+    if (! name) {
+        throw new UserError("A name, please — it is what the log will call them.");
     }
 
     if (await prisma.user.findUnique({ where: { email } })) {
@@ -88,7 +93,7 @@ export const createUser = async (input: {
     return await prisma.user.create({
         data: {
             email,
-            name: (input.name || "").trim(),
+            name,
             role: input.role || UserRole.USER,
             passwordHash
         }
@@ -96,7 +101,7 @@ export const createUser = async (input: {
 };
 
 /** The first account, and the only one that is created without anybody being signed in. */
-export const createFirstAdmin = async (input: { email: string, name?: string, password: string }) => {
+export const createFirstAdmin = async (input: { email: string, name: string, password: string }) => {
     if (await prisma.user.count() > 0) {
         throw new UserError("This install already has an administrator.");
     }
@@ -131,6 +136,10 @@ export const updateUser = async (id: number, changes: {
     const data: Record<string, unknown> = {};
 
     if (changes.name !== undefined) {
+        if (! changes.name.trim()) {
+            throw new UserError("A name, please — it is what the log will call them.");
+        }
+
         data.name = changes.name.trim();
     }
 

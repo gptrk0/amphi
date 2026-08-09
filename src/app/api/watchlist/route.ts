@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { refuseUnlessSignedIn } from "@/lib/auth";
+import { currentUser, refuseUnlessSignedIn, withActor } from "@/lib/auth";
 import { logInfo } from "@/lib/log";
 import {
     addToWatchlist,
@@ -73,7 +73,10 @@ export async function POST(req: NextRequest) {
         await logInfo(
             "watchlist",
             `added: ${ label(result.media?.name, tmdbId) }`,
-            seasons ? `watching season${ seasons.length === 1 ? "" : "s" } ${ seasons.join(", ") || "none yet" }` : "watching everything"
+            withActor(
+                seasons ? `watching season${ seasons.length === 1 ? "" : "s" } ${ seasons.join(", ") || "none yet" }` : "watching everything",
+                await currentUser()
+            )
         );
 
         return Response.json({
@@ -134,7 +137,10 @@ export async function PATCH(req: NextRequest) {
         await logInfo(
             "watchlist",
             `${ monitored ? "watching" : "no longer watching" } ${ what }: ${ label(result?.media?.name, tmdbId) }`,
-            result ? undefined : "nothing is left to watch on it, so it came off the watchlist"
+            withActor(
+                result ? undefined : "nothing is left to watch on it, so it came off the watchlist",
+                await currentUser()
+            )
         );
 
         return Response.json({ success: true, result });

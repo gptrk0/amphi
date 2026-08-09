@@ -28,8 +28,8 @@ import { useSession } from "@/context/session";
 
 // two letters off whatever there is to work with, which beats a stock avatar nobody
 // recognises
-const initials = (name: string, email: string) => {
-    const source = (name || email).trim();
+const initials = (name: string) => {
+    const source = name.trim();
     const parts = source.split(/[\s._-]+/).filter(Boolean);
 
     return (parts.length > 1 ? `${ parts[0][0] }${ parts[1][0] }` : source.slice(0, 2)).toUpperCase();
@@ -76,16 +76,16 @@ export function UserMenu() {
                 <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="sm" className="cursor-pointer gap-2">
                         <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px] font-medium">
-                            { initials(user.name, user.email) }
+                            { initials(user.name) }
                         </span>
 
-                        <span className="hidden sm:inline">{ user.name || user.email }</span>
+                        <span className="hidden sm:inline">{ user.name }</span>
                     </Button>
                 </DropdownMenuTrigger>
 
                 <DropdownMenuContent align="end" className="w-56">
                     <DropdownMenuLabel>
-                        <div className="font-medium">{ user.name || user.email }</div>
+                        <div className="font-medium">{ user.name }</div>
 
                         <div className="text-xs font-normal text-muted-foreground">
                             { user.email } · { user.isAdmin ? "administrator" : "user" }

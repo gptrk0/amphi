@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { refuseUnlessAdmin } from "@/lib/auth";
+import { currentUser, refuseUnlessAdmin, withActor } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
 import {
     cancelDelete,
@@ -49,9 +49,10 @@ export async function PATCH(req: Request, { params }: Params) {
         await logInfo(
             "library",
             wanted ? `marked for deletion: ${ label }` : `deletion cancelled: ${ label }`,
-            wanted
-                ? `it goes ${ withFiles ? "with its files " : "" }when the seed time is up`
-                : undefined
+            withActor(
+                wanted ? `it goes ${ withFiles ? "with its files " : "" }when the seed time is up` : undefined,
+                await currentUser()
+            )
         );
 
         return Response.json({ success: true, result });
@@ -105,7 +106,10 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         await logWarn(
             "library",
             `deleted: ${ label }`,
-            withFiles ? "the torrent and its files were removed from the client" : "the torrent was removed, the files were kept"
+            withActor(
+                withFiles ? "the torrent and its files were removed from the client" : "the torrent was removed, the files were kept",
+                await currentUser()
+            )
         );
 
         return Response.json({ success: true });

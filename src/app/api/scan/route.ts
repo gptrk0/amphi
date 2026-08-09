@@ -1,4 +1,5 @@
-import { refuseUnlessAdmin, refuseUnlessSignedIn } from "@/lib/auth";
+import { actorText, currentUser, refuseUnlessAdmin, refuseUnlessSignedIn } from "@/lib/auth";
+import { logInfo } from "@/lib/log";
 import { isScanRunning, nextScanAt, runScan } from "@/lib/scheduler";
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 
@@ -39,6 +40,10 @@ export async function POST(req: Request) {
         // plain scheduled round.
         const body = await req.json().catch(() => null);
         const force = body?.force === true;
+
+        // written before the round, not after: the round's own lines come next, and
+        // this is what says whose button they belong to
+        await logInfo("scheduler", `a scan was asked for by hand`, actorText(await currentUser()));
 
         const started = await runScan({ force });
 

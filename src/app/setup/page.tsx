@@ -95,7 +95,7 @@ export default function Page() {
                     />
 
                     <Input
-                        placeholder="Your name (optional)"
+                        placeholder="Your name"
                         value={name}
                         onChange={event => setName(event.target.value)}
                     />
@@ -116,7 +116,7 @@ export default function Page() {
                         onChange={event => setAgain(event.target.value)}
                     />
 
-                    <Button type="submit" className="w-full cursor-pointer" disabled={isBusy}>
+                    <Button type="submit" className="w-full cursor-pointer" disabled={isBusy || ! email || ! name.trim()}>
                         <Loader2 className={classNames("animate-spin", { "hidden": ! isBusy })} />
                         <ShieldCheck className={classNames({ "hidden": isBusy })} />
                         Create the administrator

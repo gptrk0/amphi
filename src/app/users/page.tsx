@@ -230,11 +230,11 @@ export default function Page() {
                         <TableRow key={user.id} className={classNames({ "opacity-50": user.disabled })}>
                             <TableCell className="py-2">
                                 <div className="font-medium">
-                                    { user.name || user.email }
+                                    { user.name }
                                     {user.id === state?.user?.id && <span className="pl-2 text-xs text-muted-foreground">you</span>}
                                 </div>
 
-                                {user.name && <div className="text-xs text-muted-foreground">{ user.email }</div>}
+                                <div className="text-xs text-muted-foreground">{ user.email }</div>
                             </TableCell>
 
                             <TableCell className="py-2">
@@ -320,7 +320,7 @@ export default function Page() {
                         />
 
                         <Input
-                            placeholder="Name (optional)"
+                            placeholder="Name — this is what the log will call them"
                             value={name}
                             onChange={event => setName(event.target.value)}
                         />
@@ -349,7 +349,7 @@ export default function Page() {
                     <DialogFooter>
                         <Button variant="outline" className="cursor-pointer" onClick={() => setAdding(false)}>Cancel</Button>
 
-                        <Button className="cursor-pointer" onClick={create} disabled={isBusy || ! email}>
+                        <Button className="cursor-pointer" onClick={create} disabled={isBusy || ! email || ! name.trim()}>
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isBusy })} />
                             Add
                         </Button>

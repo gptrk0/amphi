@@ -5,7 +5,7 @@ import { User, UserRole } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { SESSION_COOKIE } from "@/lib/cookies";
 import { verifyPassword } from "@/lib/password";
-import { settingFlag, settingNumber, settingText } from "@/lib/settings";
+import { loadSettings, settingFlag, settingNumber, settingText } from "@/lib/settings";
 
 /**
  * Who is asking, and whether they may.
@@ -44,7 +44,26 @@ export const toAuthUser = (user: User): AuthUser => ({
     linkedToProvider: !! user.oidcSubject
 });
 
-const sessionDays = () => Math.max(settingNumber("AUTH_SESSION_DAYS"), 1);
+/**
+ * How long a signed in browser stays signed in, with **0 meaning never expire**.
+ *
+ * The column is not nullable and there is no "no expiry" to store, so forever is a
+ * date a century out. It is not a magic value anything compares against — the setting
+ * is what decides, and this only has to be further away than anybody will be here.
+ */
+const sessionDays = () => Math.max(settingNumber("AUTH_SESSION_DAYS"), 0);
+
+const isForever = () => sessionDays() === 0;
+
+const FOREVER_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+
+// browsers cap a cookie's own lifetime at about four hundred days whatever is asked
+// for, so a "forever" session is renewed by the visit rather than by the number
+const COOKIE_CAP = 400 * 24 * 60 * 60;
+
+const sessionWindowMs = () => isForever() ? FOREVER_MS : sessionDays() * 24 * 60 * 60 * 1000;
+
+const cookieMaxAge = () => isForever() ? COOKIE_CAP : sessionDays() * 24 * 60 * 60;
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -73,19 +92,18 @@ export const sessionCookieOptions = async (maxAge: number) => ({
 /** A new signed in browser. Returns the token; the caller decides how it is sent. */
 export const createSession = async (userId: number) => {
     const token = randomBytes(32).toString("base64url");
-    const days = sessionDays();
 
     await prisma.session.create({
         data: {
             id: tokenHash(token),
             userId,
-            expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+            expiresAt: new Date(Date.now() + sessionWindowMs())
         }
     });
 
     await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
 
-    return { token, maxAge: days * 24 * 60 * 60 };
+    return { token, maxAge: cookieMaxAge() };
 };
 
 export const startSession = async (userId: number) => {
@@ -117,8 +135,16 @@ export const endAllSessions = async (userId: number) => {
  * The signed in user, or null. The window slides on use: past the halfway mark the
  * expiry is pushed out again, so somebody who opens the app every day is never signed
  * out and somebody who stops using it eventually is.
+ *
+ * It also slides **down**. Shortening the setting — or turning "never" back into
+ * thirty days — has to reach the sessions that are already out there, or the change
+ * would only apply to people who sign in again afterwards, which is nobody.
  */
 export const currentUser = async (): Promise<AuthUser | null> => {
+    // the session length is read synchronously below, and this runs on every guarded
+    // request — so this is the "on the way in" the settings cache is designed around
+    await loadSettings();
+
     const store = await cookies();
     const token = store.get(SESSION_COOKIE)?.value;
 
@@ -141,9 +167,13 @@ export const currentUser = async (): Promise<AuthUser | null> => {
         return null;
     }
 
-    const window = sessionDays() * 24 * 60 * 60 * 1000;
+    // The rule is on what is left, not on how long ago the last visit was, and that is
+    // what makes a changed setting reach the sessions that are already out there: a
+    // window that shrank leaves too much on them, one that grew leaves too little.
+    const window = sessionWindowMs();
+    const left = session.expiresAt.getTime() - Date.now();
 
-    if (Date.now() - session.lastSeenAt.getTime() > window / 2) {
+    if (left < window / 2 || left > window) {
         await prisma.session.update({
             where: { id: session.id },
             data: { lastSeenAt: new Date(), expiresAt: new Date(Date.now() + window) }
@@ -194,9 +224,20 @@ export const refuseUnlessAdmin = async (): Promise<Response | null> => {
     return null;
 };
 
-/** For a log line: who did this, when the answer is not "the scheduler". */
+/**
+ * Who did this, for the log. Every line the scheduler did not write is somebody's, and
+ * on a shared watchlist that is the only record of whose idea it was.
+ *
+ * The name and not the address, because this is read by a person. It is required on an
+ * account for exactly this reason.
+ */
 export const actorText = (user: AuthUser | null) => {
-    return user ? `by ${ user.name || user.email }` : "by nobody signed in";
+    return user ? `by ${ user.name }` : "by nobody signed in";
+};
+
+/** The same, glued onto whatever else the line had to say. */
+export const withActor = (detail: string | undefined, user: AuthUser | null) => {
+    return detail ? `${ detail } — ${ actorText(user) }` : actorText(user);
 };
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();

@@ -227,11 +227,19 @@ export const finishLogin = async (code: string, verifier: string): Promise<OidcP
     }
 
     const groupsClaim = settingText("AUTH_OIDC_GROUPS_CLAIM") || "groups";
+    const email = text(claims.email).trim().toLowerCase();
 
     return {
         subject,
-        email: text(claims.email).trim().toLowerCase(),
-        name: text(claims.name) || text(claims.preferred_username) || text(claims.given_name),
+        email,
+        // a name is required on an account, and a provider that sends none must not be
+        // the reason somebody cannot sign in — the local part of the address is a worse
+        // name than a real one and a better one than nothing
+        name: text(claims.name)
+            || text(claims.preferred_username)
+            || text(claims.given_name)
+            || email.split("@")[0]
+            || subject,
         groups: asList(claims[groupsClaim])
     };
 };

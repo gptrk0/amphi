@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { refuseUnlessAdmin } from "@/lib/auth";
+import { actorText, currentUser, refuseUnlessAdmin } from "@/lib/auth";
 import { clearLog, logSources, logWarn, newestLogId, readLog, toLogDto, toLogFilter } from "@/lib/log";
 
 const PAGE_SIZE = 200;
@@ -53,8 +53,9 @@ export async function DELETE() {
     try {
         const count = await clearLog();
 
-        // the log losing its own history is exactly the kind of thing the log is for
-        await logWarn("app", `the log was cleared from the admin page (${ count } entries)`);
+        // the log losing its own history is exactly the kind of thing the log is for,
+        // and the one line that survives it had better say who
+        await logWarn("app", `the log was cleared from the admin page (${ count } entries)`, actorText(await currentUser()));
 
         return Response.json({ success: true, cleared: count });
 

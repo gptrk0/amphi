@@ -1,4 +1,4 @@
-import { refuseUnlessAdmin } from "@/lib/auth";
+import { currentUser, refuseUnlessAdmin, withActor } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
 import {
     deleteSetting,
@@ -135,9 +135,10 @@ export async function PUT(req: Request) {
         const before = Object.fromEntries(Object.keys(wanted).map(key => [ key, settingText(key) ]));
 
         const changed = await saveSettings(wanted);
+        const who = await currentUser();
 
         for (const key of changed) {
-            await logInfo("settings", `setting changed: ${ name(key) }`, change(key, before[key], wanted[key]));
+            await logInfo("settings", `setting changed: ${ name(key) }`, withActor(change(key, before[key], wanted[key]), who));
         }
 
         return Response.json({ success: true, changed: changed.length, ...state() });
@@ -174,7 +175,10 @@ export async function DELETE(req: Request) {
         await logWarn(
             "settings",
             `setting cleared: ${ name(key) }`,
-            def?.default !== undefined ? `back to the default "${ clip(def.default) }"` : "it has no default, so it is unset now"
+            withActor(
+                def?.default !== undefined ? `back to the default "${ clip(def.default) }"` : "it has no default, so it is unset now",
+                await currentUser()
+            )
         );
 
         return Response.json({ success: true, ...state() });

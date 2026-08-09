@@ -1,4 +1,4 @@
-import { refuseUnlessSignedIn } from "@/lib/auth";
+import { currentUser, refuseUnlessSignedIn, withActor } from "@/lib/auth";
 import { logInfo } from "@/lib/log";
 import { getWatchlistItem, stopWatching, toMediaType } from "@/lib/watchlist";
 
@@ -40,7 +40,10 @@ export async function DELETE(req: Request, { params }: Params) {
         await logInfo(
             "watchlist",
             `stopped watching: ${ name }`,
-            result ? "some of it is still watched" : "nothing is left to look for, so it came off the watchlist"
+            withActor(
+                result ? "some of it is still watched" : "nothing is left to look for, so it came off the watchlist",
+                await currentUser()
+            )
         );
 
         // no title is stored, the caller renders the message from what it already knows
