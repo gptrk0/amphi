@@ -1,4 +1,4 @@
-import { ContentType, LibraryStatus, Prisma } from "../../prisma/generated/client";
+import { ContentType, LibraryItem as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { getMediaMetadata } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
@@ -7,11 +7,22 @@ import { addToWatchlist, ensureEpisodeUnits, pruneWatchlistItem, toMediaType } f
 import { LibraryEntry, LibraryItem } from "@/types/library";
 import { WatchlistDownload } from "@/types/watchlist";
 
-export type LibraryRow = Prisma.LibraryItemGetPayload<{ include: { episodes: true } }>;
+export type { LibraryRow };
 
 export type GrabbedEpisode = { seasonNumber: number, episodeNumber: number };
 
-export const libraryInclude = { episodes: { orderBy: [ { seasonNumber: "asc" }, { episodeNumber: "asc" } ] } } satisfies Prisma.LibraryItemInclude;
+/**
+ * How an episode is written down on a download. One string instead of two columns,
+ * because every question about them — "do I have this", "was this season started",
+ * "what is the highest one seen" — is asked about one title and answered by a set.
+ */
+export const episodeKey = (episode: GrabbedEpisode) => `${ episode.seasonNumber }:${ episode.episodeNumber }`;
+
+export const toEpisode = (key: string): GrabbedEpisode => {
+    const [ seasonNumber, episodeNumber ] = key.split(":").map(Number);
+
+    return { seasonNumber, episodeNumber };
+};
 
 const seedMs = () => settingNumber("LIBRARY_SEED_DAYS") * 24 * 60 * 60 * 1000;
 
@@ -30,11 +41,12 @@ const code = (value: number) => String(value).padStart(2, "0");
  * What one download covers, as a person would say it. The release title is the
  * other half of the story and is shown next to it.
  */
-export const coverText = (episodes: { seasonNumber: number, episodeNumber: number }[]) => {
-    if (episodes.length === 0) {
+export const coverText = (keys: string[]) => {
+    if (keys.length === 0) {
         return "";
     }
 
+    const episodes = keys.map(toEpisode);
     const seasons = [ ...new Set(episodes.map(episode => episode.seasonNumber)) ].sort((a, b) => a - b);
 
     if (episodes.length === 1) {
@@ -85,9 +97,8 @@ export const moveToLibrary = async (input: {
             type: input.type,
             releaseTitle: input.releaseTitle,
             watched: replaced.some(unit => unit.monitored),
-            episodes: { create: input.episodes.map(episode => ({ ...episode })) }
-        },
-        include: libraryInclude
+            episodes: input.episodes.map(episodeKey)
+        }
     });
 
     if (row) {
@@ -101,7 +112,7 @@ export const moveToLibrary = async (input: {
 };
 
 export const setTorrentHash = async (id: number, torrentHash: string) => {
-    return await prisma.libraryItem.update({ where: { id }, data: { torrentHash }, include: libraryInclude });
+    return await prisma.libraryItem.update({ where: { id }, data: { torrentHash } });
 };
 
 /** The download finished: it can be watched, and the seed window starts now. */
@@ -139,8 +150,10 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
             });
 
         } else {
-            for (const season of [ ...new Set(item.episodes.map(episode => episode.seasonNumber)) ]) {
-                const episodes = item.episodes
+            const covered = item.episodes.map(toEpisode);
+
+            for (const season of [ ...new Set(covered.map(episode => episode.seasonNumber)) ]) {
+                const episodes = covered
                     .filter(episode => episode.seasonNumber === season)
                     .map(episode => episode.episodeNumber);
 
@@ -178,23 +191,23 @@ export const forgetLibraryItem = async (id: number) => {
  * asking for it again is allowed.
  */
 export const heldEpisodes = async (tmdbId: number) => {
-    const episodes = await prisma.libraryEpisode.findMany({
-        where: { item: { tmdbId, removedAt: null } },
-        select: { seasonNumber: true, episodeNumber: true }
+    const items = await prisma.libraryItem.findMany({
+        where: { tmdbId, removedAt: null },
+        select: { episodes: true }
     });
 
-    return new Set(episodes.map(episode => `${ episode.seasonNumber }:${ episode.episodeNumber }`));
+    return new Set(items.flatMap(item => item.episodes));
 };
 
 /** Whether anything of this season is already downloading or on disk. */
 export const seasonStarted = async (tmdbId: number, seasonNumber: number) => {
-    return await prisma.libraryEpisode.count({
-        where: { seasonNumber, item: { tmdbId, removedAt: null } }
-    }) > 0;
+    const held = await heldEpisodes(tmdbId);
+
+    return [ ...held ].some(key => toEpisode(key).seasonNumber === seasonNumber);
 };
 
 export const getLibraryItem = async (id: number) => {
-    return await prisma.libraryItem.findUnique({ where: { id }, include: libraryInclude });
+    return await prisma.libraryItem.findUnique({ where: { id } });
 };
 
 export const requestDelete = async (id: number, deleteFiles: boolean) => {
@@ -228,7 +241,6 @@ export const runLibraryCleanup = async () => {
             removedAt: null,
             OR: [ { seedUntil: null }, { seedUntil: { lte: new Date() } } ]
         },
-        include: libraryInclude
     });
 
     for (const item of due) {
@@ -270,7 +282,6 @@ export const toLibraryEntry = (item: LibraryRow): LibraryEntry => ({
 export const getLibrary = async (torrents: TorrentStatus[] | null = null): Promise<LibraryItem[]> => {
     const items = await prisma.libraryItem.findMany({
         where: { removedAt: null },
-        include: libraryInclude,
         orderBy: { startedAt: "desc" }
     });
 

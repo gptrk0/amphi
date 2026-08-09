@@ -48,7 +48,7 @@ Ez a dokumentum a jelenlegi állapot elemzését és a hátralévő munka fázis
 
 Metaadat (cím, poszter) **nem** kerül a DB-be — az mindig TMDB-ből jön; a táblákban csak azonosító, letöltési állapot és a scanner döntéséhez kellő `airDate` van.
 
-**2026-08-09: hét tábla.** A watchlist és a library kettévált: ami letöltésre került, az a `LibraryItem` / `LibraryEpisode` párosban él, és a `WatchlistUnit` már csak azt jelenti, amit még meg kell találni. Ld. a lenti „A watchlist keres, a library birtokol" alfejezetet.
+**2026-08-09: hat tábla.** A watchlist és a library kettévált: ami letöltésre került, az a `LibraryItem` táblában él, és a `WatchlistUnit` már csak azt jelenti, amit még meg kell találni. Ld. a lenti „A watchlist keres, a library birtokol" alfejezetet.
 
 **2026-08-08: öt tábla.** A `Watchlist` és a `WatchlistUnit` mellé bejött a `BlockedRelease`, a `Setting` és a `LogEntry`. A `Setting` kulcs-érték párokat tárol, kizárólag azokra a beállításokra, amiket a `/settings` oldalon tudatosan átírtak — aminek nincs sora, az a [settings.ts](src/lib/settings.ts) registryjében lévő defaultot használja, és az env-ben már nincs is ott. Ld. a lenti „Settings oldal" és „Csak a settings, env nélkül" alfejezeteket. A `BlockedRelease` és a `LogEntry` az a kettő, ami nem a watchlistről szól: egyiknek sincs relációja semmivel. A feketelista kulcsa a normalizált release-név (ld. „A feketelista tábla lett"), a `LogEntry` pedig maga a napló, amit a `/log` oldal mutat (ld. „Admin log oldal"). Mindhárom sémája itt van, a `WatchlistUnit` után.
 
@@ -959,7 +959,9 @@ Kérés: a watchlist szerepe **csak annyi legyen, hogy a scanner tudja, mit kell
 | állapotok | `PENDING`, `SEARCHING` | `DOWNLOADING`, `AVAILABLE` |
 | élettartam | a letöltés indulásáig | a törlésig (utána is, tombstone-ként) |
 
-A `LibraryItem` sor **a torrent hozzáadása előtt** jön létre, mert az id-ja lett a tag, amiről a hash visszaolvasható — ezzel a `movieTag` / `episodeTag` / `seasonTag` hármas egyetlen `libraryTag`-ra egyszerűsödött. A `LibraryEpisode` gyerektábla mondja meg, mit fed le egy letöltés: filmnél semmit, epizódnál egyet, packnél mindet — a több évadot fedő pack másik évadjait is.
+A `LibraryItem` sor **a torrent hozzáadása előtt** jön létre, mert az id-ja lett a tag, amiről a hash visszaolvasható — ezzel a `movieTag` / `episodeTag` / `seasonTag` hármas egyetlen `libraryTag`-ra egyszerűsödött. Hogy egy letöltés mit fed le, az az `episodes` oszlopban van, `évad:rész` kulcsok tömbjeként: filmnél üres, epizódnál egy elem, packnél mind — a több évadot fedő pack másik évadjait is.
+
+**Miért nem külön `LibraryEpisode` tábla.** Először az volt, és egy commitig élt. A négy olvasóból három (`heldEpisodes`, a `syncTvSeasons` vízjele, az adatlap epizód-állapotai) **azonnal kulcs-halmazzá lapította** a gyerek sorokat, a negyedik (`coverText`) pedig végigment rajtuk — vagyis a tábla minden olvasásnál újraépítendő halmaz volt. Ráadásul minden kérdés **egy címre** vonatkozik (`where tmdbId`), tehát a gyerektábla indexe sem vásárolt semmit: címenként néhány sorról van szó. A `@@unique([itemId, seasonNumber, episodeNumber])` sem védett semmit, amit a tömb ne védene — két *különböző* letöltés amúgy sem ütközhetett benne, azt a `held` ellenőrzés akadályozza meg kódban. Ami elveszett: nem lehet globálisan lekérdezni, hogy „kinek van meg az S03E07" — ilyen kérdés nincs, és ha lesz, a Postgres tömb-operátorai (`@>`) megválaszolják.
 
 **Ami ebből következett, és nem volt nyilvánvaló:**
 
@@ -985,7 +987,7 @@ A `LibraryItem` sor **a torrent hozzáadása előtt** jön létre, mert az id-ja
 9. badge: 125988 UPCOMING (watchlist) | 1339713 DOWNLOADED, id=null (csak library)
 ```
 
-Migráció: `20260809160000_library`. A meglévő letöltések torrentenként csoportosítva kerültek át (a hash amúgy is pontosan így fogta össze őket), a `completedAt` a sor utolsó módosítása — pontosabb adat nem volt, és csak azt dönti el, mikor oldódik a zár. A release nevét egyik unit sem tárolta; azt a következő kliens-visszaolvasás tölti ki a torrent nevéből.
+Migráció: `20260809160000_library`, majd `20260809180000_library_episode_list` (a gyerektábla összevonása). A meglévő letöltések torrentenként csoportosítva kerültek át (a hash amúgy is pontosan így fogta össze őket), a `completedAt` a sor utolsó módosítása — pontosabb adat nem volt, és csak azt dönti el, mikor oldódik a zár. A release nevét egyik unit sem tárolta; azt a következő kliens-visszaolvasás tölti ki a torrent nevéből.
 
 **Ami nyitva marad.** A `WatchStatus` enumban benne maradt a `DOWNLOADING`, `DOWNLOADED` és `FAILED` — a unitok már egyiket sem veszik fel, de egy Postgres enum-érték eldobása külön migráció, és a badge-ek úgyis ugyanezeket a neveket használják a library felől. A `monitorNewSeasons`-nek továbbra sincs saját kapcsolója a felületen. És a seedelésnek nincs arány-alapú vége: az „meddig seedeljen" kérdésre a válasz most „amíg nem törlöd".
 

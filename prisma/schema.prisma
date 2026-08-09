@@ -102,25 +102,15 @@ model LibraryItem {
   /// episode was ever obtained and would fetch it all over again.
   removedAt DateTime?
 
-  episodes LibraryEpisode[]
+  /// What this download covers, as `season:episode` keys — empty for a film, one
+  /// entry for a single episode, all of them for a season pack, across seasons when
+  /// the pack spans several. Every reader of this asks it about one title and wants
+  /// exactly this set, so a child table would only be a set to rebuild on each read.
+  episodes String[]
 
   @@index([tmdbId, type])
   @@index([torrentHash])
   @@index([status])
-}
-
-/// What one download covers. A film has none, a single episode one, a season pack
-/// all of them — including the other seasons a multi season pack carries.
-model LibraryEpisode {
-  id     Int         @id @default(autoincrement())
-  itemId Int
-  item   LibraryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-
-  seasonNumber  Int
-  episodeNumber Int
-
-  @@unique([itemId, seasonNumber, episodeNumber])
-  @@index([seasonNumber, episodeNumber])
 }
 
 enum BlockReason {

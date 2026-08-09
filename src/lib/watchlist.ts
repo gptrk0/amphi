@@ -110,10 +110,7 @@ const EMPTY_STATE: LibraryState = { items: 0, downloading: 0, held: 0, available
 const key = (type: ContentType, tmdbId: number) => `${ toMediaType(type) }:${ tmdbId }`;
 
 const libraryState = async (): Promise<Map<string, LibraryState>> => {
-    const items = await prisma.libraryItem.findMany({
-        where: { removedAt: null },
-        include: { episodes: { select: { id: true } } }
-    });
+    const items = await prisma.libraryItem.findMany({ where: { removedAt: null } });
 
     const map = new Map<string, LibraryState>();
 
@@ -188,17 +185,19 @@ export const getWatchlistSlim = async (): Promise<WatchlistEntry[]> => {
  * units left is still a season on the details page, so this is what draws it.
  */
 const libraryEpisodes = async (tmdbId: number) => {
-    const rows = await prisma.libraryEpisode.findMany({
-        where: { item: { tmdbId, removedAt: null } },
-        select: { seasonNumber: true, episodeNumber: true, item: { select: { status: true } } }
+    const items = await prisma.libraryItem.findMany({
+        where: { tmdbId, removedAt: null },
+        select: { status: true, episodes: true }
     });
 
     const map = new Map<string, PrismaWatchStatus>();
 
-    for (const row of rows) {
-        map.set(`${ row.seasonNumber }:${ row.episodeNumber }`, row.item.status === PrismaLibraryStatus.AVAILABLE
-            ? PrismaWatchStatus.DOWNLOADED
-            : PrismaWatchStatus.DOWNLOADING);
+    for (const item of items) {
+        for (const key of item.episodes) {
+            map.set(key, item.status === PrismaLibraryStatus.AVAILABLE
+                ? PrismaWatchStatus.DOWNLOADED
+                : PrismaWatchStatus.DOWNLOADING);
+        }
     }
 
     return map;
@@ -447,14 +446,20 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
     // An obtained episode has no unit, so the watermark below would slide back down
     // and offer it again. The library remembers everything ever downloaded, deleted
     // ones included, and that is exactly what "already offered" means here.
-    const obtained = await prisma.libraryEpisode.findMany({
-        where: { item: { tmdbId } },
-        select: { seasonNumber: true, episodeNumber: true, item: { select: { watched: true } } }
+    const downloads = await prisma.libraryItem.findMany({
+        where: { tmdbId },
+        select: { watched: true, episodes: true }
     });
+
+    const obtained = downloads.flatMap(download => download.episodes.map(key => {
+        const [ seasonNumber, episodeNumber ] = key.split(":").map(Number);
+
+        return { seasonNumber, episodeNumber, watched: download.watched };
+    }));
 
     // and once a season's last unit is carried off by a download, the library is
     // also the only thing that still knows the season was being watched
-    const watchedSeasons = new Set(obtained.filter(episode => episode.item.watched).map(episode => episode.seasonNumber));
+    const watchedSeasons = new Set(obtained.filter(episode => episode.watched).map(episode => episode.seasonNumber));
 
     const known = [ ...units.map(unit => unit.seasonNumber as number), ...obtained.map(episode => episode.seasonNumber) ];
     const latest = known.length > 0 ? Math.max(...known) : null;

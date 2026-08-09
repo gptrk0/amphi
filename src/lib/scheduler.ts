@@ -4,7 +4,6 @@ import { errorText, writeLog } from "@/lib/log";
 import { executeMovieGrab, executeSeasonGrab, planMovieGrab, planSeasonGrab, planSeasonGrabs } from "@/lib/grab";
 import {
     forgetLibraryItem,
-    libraryInclude,
     libraryLabel,
     markAvailable,
     restoreToWatchlist,
@@ -129,7 +128,6 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
     const items = await prisma.libraryItem.findMany({
         where: { removedAt: null, torrentHash: { not: null } },
-        include: libraryInclude
     });
 
     for (const item of items) {
