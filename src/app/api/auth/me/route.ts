@@ -45,7 +45,6 @@ export async function GET() {
             preferredLanguages: row?.preferredLanguages || "",
             excludeLanguages: row?.excludeLanguages || "",
             defaultLanguage: row?.defaultLanguage || LANGUAGE_DEFAULTS.untagged,
-            languageBonus: row?.languageBonus ?? LANGUAGE_DEFAULTS.bonus,
             languageFirst: row?.languageFirst ?? LANGUAGE_DEFAULTS.first
         }
     });
@@ -130,8 +129,6 @@ export async function PATCH(req: Request) {
                 }, { status: 400 });
             }
 
-            const bonus = Number(body.languageBonus);
-
             await prisma.user.update({
                 where: { id: me.id },
                 data: {
@@ -140,7 +137,6 @@ export async function PATCH(req: Request) {
                         ? { excludeLanguages: cleanLanguageList(body.excludeLanguages) }
                         : {}),
                     ...(untagged ? { defaultLanguage: untagged } : {}),
-                    ...(Number.isFinite(bonus) && bonus >= 0 ? { languageBonus: Math.round(bonus) } : {}),
                     ...(typeof body.languageFirst === "boolean" ? { languageFirst: body.languageFirst } : {})
                 }
             });

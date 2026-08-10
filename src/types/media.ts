@@ -107,3 +107,28 @@ export type MediaSeason = {
     air_date: string | null;
     episodes: MediaEpisode[];
 };
+
+/**
+ * A season as the pickers draw it. The episode overviews are left out and they are the
+ * bulk of the payload — a long running show is a few hundred kilobytes of text nothing on
+ * screen shows.
+ */
+export type SeasonInfo = {
+    season_number: number;
+    name: string;
+    air_date: string | null;
+    episode_count: number;
+    episodes: { episode_number: number, name: string, air_date: string | null }[];
+};
+
+export const toSeasonInfo = (seasons: MediaSeason[]): SeasonInfo[] => seasons.map(season => ({
+    season_number: season.season_number,
+    name: season.name,
+    air_date: season.air_date,
+    episode_count: season.episode_count,
+    episodes: season.episodes.map(episode => ({
+        episode_number: episode.episode_number,
+        name: episode.name,
+        air_date: episode.air_date
+    }))
+}));

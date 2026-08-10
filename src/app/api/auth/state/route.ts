@@ -1,5 +1,5 @@
 import { currentUser, needsSetup, passwordLoginAllowed } from "@/lib/auth";
-import { isOidcEnabled, providerName } from "@/lib/oidc";
+import { isOidcEnabled } from "@/lib/oidc";
 import { loadSettings } from "@/lib/settings";
 import { AuthState } from "@/types/user";
 
@@ -17,7 +17,7 @@ export async function GET() {
     const state: AuthState = {
         needsSetup: await needsSetup(),
         passwordLogin: passwordLoginAllowed(),
-        oidc: { enabled: isOidcEnabled(), name: providerName() },
+        oidc: { enabled: isOidcEnabled() },
         user: user
             ? {
                 id: user.id,

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Copy, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,10 @@ type SettingItem = {
     isSet: boolean;
 };
 
+// the derived address the provider has to be told about, which is not a setting and
+// cannot be one — see the note on `state` in the api route
+type OidcInfo = { callbackUrl: string, fromPublicUrl: boolean };
+
 const SOURCE: Record<SettingItem["source"], { text: string, variant: "default" | "secondary" | "outline" }> = {
     database: { text: "edited", variant: "default" },
     default: { text: "default", variant: "secondary" },
@@ -61,13 +65,27 @@ const tableEntry = (tag: string) => {
 
 function SettingsPage() {
     const [ items, setItems ] = useState<SettingItem[]>();
+    const [ oidc, setOidc ] = useState<OidcInfo>();
     const [ values, setValues ] = useState<Record<string, string>>({});
     const [ isSaving, setSaving ] = useState(false);
     const [ tab, setTab ] = useState("");
 
-    const load = (data: { settings: SettingItem[] }) => {
+    const load = (data: { settings: SettingItem[], oidc?: OidcInfo }) => {
         setItems(data.settings);
+        setOidc(data.oidc);
         setValues(Object.fromEntries(data.settings.map(item => [ item.key, item.value ])));
+    };
+
+    // http on a bare ip has no clipboard api at all, and a button that silently does
+    // nothing is worse than one that says to select the text
+    const copy = async (value: string) => {
+        try {
+            await navigator.clipboard.writeText(value);
+            toast("Copied.");
+
+        } catch {
+            toast("The browser would not let this page copy — select the address by hand.");
+        }
     };
 
     useEffect(() => {
@@ -244,6 +262,42 @@ function SettingsPage() {
 
                 {groups.map(group => (
                     <TabsContent key={group} value={group}>
+                        {group === "Access" && oidc && (
+                            <div className="mt-4 space-y-2 rounded-md border bg-muted/40 p-4">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-medium">Callback address for the provider</span>
+
+                                    <Badge variant={oidc.fromPublicUrl ? "default" : "secondary"}>
+                                        { oidc.fromPublicUrl ? "from the public address below" : "read from this page's own address" }
+                                    </Badge>
+                                </div>
+
+                                <div className="flex items-start gap-2">
+                                    <code className="bg-background min-w-0 flex-1 rounded border px-2 py-1.5 text-xs break-all">
+                                        { oidc.callbackUrl }
+                                    </code>
+
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="cursor-pointer"
+                                        onClick={() => copy(oidc.callbackUrl)}
+                                    >
+                                        <Copy />
+                                        Copy
+                                    </Button>
+                                </div>
+
+                                <p className="text-xs text-muted-foreground">
+                                    Allow this at the provider exactly as it stands — Authentik and Keycloak call it
+                                    a redirect URI, Google an authorised redirect URI. A provider that has not been
+                                    told about it refuses the sign-in on its own page, before this app hears anything
+                                    about it.
+                                    {! oidc.fromPublicUrl && " Right now it is guessed from the address you opened this page on. Behind a proxy that rewrites the host, fill in the public address below and this follows it."}
+                                </p>
+                            </div>
+                        )}
+
                         <div className="divide-y">
                             {items.filter(item => item.group === group).map(item => (
                                 <div

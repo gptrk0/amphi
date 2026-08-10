@@ -34,7 +34,14 @@ export function middleware(req: NextRequest) {
         return NextResponse.json({ success: false, message: "Sign in first." }, { status: 401 });
     }
 
-    const url = new URL("/login", req.url);
+    // Built from the headers the browser sent, not from `req.url`: the released image runs
+    // the standalone server with HOSTNAME=0.0.0.0, and that is the host `req.url` carries —
+    // so a redirect built from it sends people to `http://0.0.0.0:3000/login`, an address
+    // that exists nowhere. There is no database out here to read the configured public URL
+    // from, so the forwarded host and then the plain Host header is as far as the edge gets.
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+    const proto = (req.headers.get("x-forwarded-proto") || req.nextUrl.protocol.replace(":", "")).split(",")[0].trim();
+    const url = new URL("/login", host ? `${ proto }://${ host }` : req.url);
 
     // back to where they were going, once they are through
     url.searchParams.set("next", `${ path }${ req.nextUrl.search }`);

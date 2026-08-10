@@ -25,6 +25,12 @@ import { NotConfiguredError, settingFlag, settingList, settingText } from "@/lib
  * **What binds the two legs together** is the `state`, which is generated here, put
  * in a short lived cookie, and compared on the way back. That is what stops somebody
  * feeding this app a code they obtained for their own account.
+ *
+ * **What is deliberately not configurable.** The scopes, the claim the groups are read
+ * from, and the name on the login button used to be three settings, which is three more
+ * things to get exactly right before a sign-in works and none of them had a value worth
+ * choosing: see `SCOPES` and `groupsFrom` below. What is left is what genuinely differs
+ * per install — the issuer, the client, and who becomes an admin.
  */
 
 export type OidcProfile = {
@@ -53,15 +59,13 @@ const clientId = () => settingText("AUTH_OIDC_CLIENT_ID");
 
 const clientSecret = () => settingText("AUTH_OIDC_CLIENT_SECRET");
 
-const scopes = () => {
-    const list = settingList("AUTH_OIDC_SCOPES");
-
-    // openid is what makes it OpenID Connect rather than plain oauth, so it is not
-    // something a hand edited list gets to leave out
-    return [ ...new Set([ "openid", ...list ]) ].join(" ");
-};
-
-export const providerName = () => settingText("AUTH_OIDC_NAME") || "Single sign-on";
+/**
+ * Not a setting. `openid` is what makes this OpenID Connect rather than plain oauth,
+ * `email` is what an account here is created from, and `profile` is what carries a
+ * name and — on Authentik and Authelia — the groups. There is no combination of the
+ * three this app would work better with, and a hand edited list could only be wrong.
+ */
+const SCOPES = "openid profile email";
 
 export const isOidcEnabled = () => {
     return settingFlag("AUTH_OIDC_ENABLED") && issuer() !== "" && clientId() !== "";
@@ -103,24 +107,38 @@ const discover = async (): Promise<Discovery> => {
 };
 
 /**
- * Where the provider is told to send the browser back to. It has to match what is
- * registered on the provider **exactly**, so it is worth being able to override: a
- * proxy that rewrites the host without saying so would otherwise build an address
- * nobody registered.
+ * The address this app is reached at **from the browser's side**, which is not something
+ * the request itself reliably knows. A proxy that forwards without `Host` leaves the
+ * container's own socket in it, and `new URL(path, req.url)` then builds a redirect to
+ * `http://0.0.0.0:3000` — an address that exists nowhere. So: the configured public URL
+ * first, the forwarded headers second, the plain host last.
  */
-export const redirectUri = async () => {
+export const publicBase = async () => {
     const configured = settingText("AUTH_PUBLIC_URL");
 
     if (configured) {
-        return `${ configured.replace(/\/+$/, "") }/api/auth/oidc/callback`;
+        return configured.replace(/\/+$/, "");
     }
 
     const header = await headers();
     const host = header.get("x-forwarded-host") || header.get("host") || "localhost:3000";
     const proto = (header.get("x-forwarded-proto") || "http").split(",")[0].trim();
 
-    return `${ proto }://${ host }/api/auth/oidc/callback`;
+    return `${ proto }://${ host }`;
 };
+
+/**
+ * A page of this app, absolute, for a redirect the browser has to be able to follow.
+ * Everything the single sign-on legs send somebody to goes through this.
+ */
+export const appUrl = async (path: string) => new URL(path, `${ await publicBase() }/`).toString();
+
+/**
+ * Where the provider is told to send the browser back to. It has to match what is
+ * registered on the provider **exactly**, which is the other reason the public URL is
+ * worth being able to set by hand.
+ */
+export const redirectUri = async () => await appUrl("/api/auth/oidc/callback");
 
 const base64url = (value: Buffer) => value.toString("base64url");
 
@@ -138,7 +156,7 @@ export const beginLogin = async () => {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", clientId());
     url.searchParams.set("redirect_uri", await redirectUri());
-    url.searchParams.set("scope", scopes());
+    url.searchParams.set("scope", SCOPES);
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", challenge);
     url.searchParams.set("code_challenge_method", "S256");
@@ -199,6 +217,19 @@ const asList = (value: unknown): string[] => {
     return typeof value === "string" && value ? [ value ] : [];
 };
 
+/**
+ * Where group membership arrives, by provider: `groups` on Authentik and Authelia,
+ * `realm_access.roles` on Keycloak, `roles` on the rest. All three are read, because the
+ * alternative was a setting whose right value an administrator had to know before
+ * anything worked — and reading a claim the provider does not send costs nothing.
+ */
+const groupsFrom = (claims: Record<string, unknown>): string[] => {
+    const realm = claims.realm_access;
+    const nested = realm && typeof realm === "object" ? (realm as { roles?: unknown }).roles : undefined;
+
+    return [ ...new Set([ ...asList(claims.groups), ...asList(claims.roles), ...asList(nested) ]) ];
+};
+
 const text = (value: unknown) => typeof value === "string" ? value : "";
 
 /** Everything the second leg needs: who signed in, and what they are a member of. */
@@ -226,7 +257,6 @@ export const finishLogin = async (code: string, verifier: string): Promise<OidcP
         throw new Error("the provider returned no subject, so there is nothing to recognise this account by next time");
     }
 
-    const groupsClaim = settingText("AUTH_OIDC_GROUPS_CLAIM") || "groups";
     const email = text(claims.email).trim().toLowerCase();
 
     return {
@@ -240,7 +270,7 @@ export const finishLogin = async (code: string, verifier: string): Promise<OidcP
             || text(claims.given_name)
             || email.split("@")[0]
             || subject,
-        groups: asList(claims[groupsClaim])
+        groups: groupsFrom(claims)
     };
 };
 

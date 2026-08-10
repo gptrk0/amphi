@@ -31,7 +31,6 @@ type Account = {
     preferredLanguages: string;
     excludeLanguages: string;
     defaultLanguage: string;
-    languageBonus: number;
     languageFirst: boolean;
 };
 
@@ -62,12 +61,8 @@ export default function Page() {
     const [ languages, setLanguages ] = useState("");
     const [ excluded, setExcluded ] = useState("");
     const [ untagged, setUntagged ] = useState("");
-    const [ bonus, setBonus ] = useState("");
-    const [ languageFirst, setLanguageFirst ] = useState(false);
-    const [ current, setCurrent ] = useState("");
-    const [ next, setNext ] = useState("");
+    const [ languageFirst, setLanguageFirst ] = useState(true);
     const [ isSaving, setSaving ] = useState(false);
-    const [ isChanging, setChanging ] = useState(false);
     const [ isTesting, setTesting ] = useState(false);
 
     const load = (data: Account) => {
@@ -78,7 +73,6 @@ export default function Page() {
         setLanguages(data.preferredLanguages);
         setExcluded(data.excludeLanguages);
         setUntagged(data.defaultLanguage);
-        setBonus(String(data.languageBonus));
         setLanguageFirst(data.languageFirst);
     };
 
@@ -99,7 +93,6 @@ export default function Page() {
                 preferredLanguages: languages,
                 excludeLanguages: excluded,
                 defaultLanguage: untagged,
-                languageBonus: Number(bonus),
                 languageFirst
             });
 
@@ -132,25 +125,6 @@ export default function Page() {
 
         } finally {
             setTesting(false);
-        }
-    };
-
-    const changePassword = async () => {
-        setChanging(true);
-
-        try {
-            await axios.patch("/api/auth/me", { currentPassword: current, password: next });
-
-            setCurrent("");
-            setNext("");
-
-            toast("Your password is changed — every other browser was signed out.");
-
-        } catch(err) {
-            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || "Could not change it.");
-
-        } finally {
-            setChanging(false);
         }
     };
 
@@ -266,37 +240,20 @@ export default function Page() {
                     </p>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium">Untagged release counts as</label>
+                <div className="max-w-sm space-y-2">
+                    <label className="text-sm font-medium">Untagged release counts as</label>
 
-                        <OptionSelect
-                            value={untagged}
-                            onChange={setUntagged}
-                            options={LANGUAGE_OPTIONS}
-                            noun="language"
-                        />
+                    <OptionSelect
+                        value={untagged}
+                        onChange={setUntagged}
+                        options={LANGUAGE_OPTIONS}
+                        noun="language"
+                    />
 
-                        <p className="text-xs text-muted-foreground">
-                            Most releases carry no language tag at all. This is what they are taken to be —
-                            and with a first language that is not this, an untagged release is not yours.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium">Language bonus</label>
-
-                        <Input
-                            value={bonus}
-                            inputMode="numeric"
-                            onChange={event => setBonus(event.target.value)}
-                            placeholder="1000000"
-                        />
-
-                        <p className="text-xs text-muted-foreground">
-                            How much a better language is worth when two releases are otherwise equal.
-                        </p>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Most releases carry no language tag at all. This is what they are taken to be —
+                        and with a first language that is not this, an untagged release is not yours.
+                    </p>
                 </div>
 
                 <div className="space-y-2">
@@ -312,7 +269,10 @@ export default function Page() {
                     </label>
 
                     <p className="text-xs text-muted-foreground">
-                        On: a 720p release in your language beats a 1080p one that is not.
+                        On, which is how a new account starts: a 720p release in your language beats a
+                        1080p one that is not. Off means the sharpest copy wins and the language is only
+                        a tie-breaker — there is no setting between the two, because a language that
+                        merely counts for something is a language that loses to a few more seeders.
                     </p>
                 </div>
 
@@ -340,46 +300,10 @@ export default function Page() {
                 </Button>
             </div>
 
-            {account.hasPassword && <>
-                <Separator className="my-8" />
-
-                <div className="space-y-4">
-                    <div className="space-y-1">
-                        <h3 className="text-lg font-medium">Password</h3>
-
-                        <p className="text-sm text-muted-foreground">
-                            The old one is asked for even though you are signed in. Changing it signs out every
-                            other browser.
-                        </p>
-                    </div>
-
-                    <Input
-                        type="password"
-                        autoComplete="current-password"
-                        placeholder="Your current password"
-                        value={current}
-                        onChange={event => setCurrent(event.target.value)}
-                    />
-
-                    <Input
-                        type="password"
-                        autoComplete="new-password"
-                        placeholder="The new one, at least 8 characters"
-                        value={next}
-                        onChange={event => setNext(event.target.value)}
-                    />
-
-                    <Button
-                        variant="outline"
-                        className="cursor-pointer"
-                        onClick={changePassword}
-                        disabled={isChanging || ! current || ! next}
-                    >
-                        <Loader2 className={classNames("animate-spin", { "hidden": ! isChanging })} />
-                        Change it
-                    </Button>
-                </div>
-            </>}
+            {/* The password is changed in the dialog behind "Change password" in the user
+                menu, which is reachable from every page — a second form for it here was two
+                places to keep the same rules in, and the one on a page you have to navigate
+                to was the worse of them. */}
 
             {account.linkedToProvider && ! account.hasPassword && <>
                 <Separator className="my-8" />

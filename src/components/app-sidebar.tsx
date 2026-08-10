@@ -13,6 +13,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
     SidebarRail,
+    useSidebar,
 } from "@/components/ui/sidebar"
 import Link from "next/link";
 import classNames from "classnames";
@@ -87,14 +88,33 @@ const menus: {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const pathname = usePathname();
     const { isAdmin } = useSession();
+    const { isMobile, setOpenMobile } = useSidebar();
 
     const visible = menus.filter(menu => ! menu.admin || isAdmin);
+
+    /**
+     * On a phone this sidebar is a sheet over the whole screen, so leaving it open after
+     * a tap means the page you just asked for is behind it and the next thing you do is
+     * dismiss it by hand. On a desktop it is a column next to the page and closing it
+     * would be the wrong answer, hence the check.
+     */
+    const leave = () => {
+        if (isMobile) {
+            setOpenMobile(false);
+        }
+    };
+
+    // the backstop: anything that navigates while the sheet is open — a link somewhere
+    // inside it, the browser's own history — ends up here too
+    React.useEffect(() => {
+        setOpenMobile(false);
+    }, [ pathname, setOpenMobile ]);
 
     return (
         <Sidebar {...props}>
             <SidebarHeader className="px-5 pt-4 pb-2">
                 {/* the name at the top of a page is a way home everywhere else on the web */}
-                <Link href="/" className={classNames(teko.className, "text-5xl text-center")}>
+                <Link href="/" className={classNames(teko.className, "text-5xl text-center")} onClick={leave}>
                     aioseerr
                 </Link>
             </SidebarHeader>
@@ -109,7 +129,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 {item.items.map((item, i) => (
                                     <SidebarMenuItem key={i}>
                                         <SidebarMenuButton asChild isActive={ pathname === item.url }>
-                                            <Link href={ item.url }>
+                                            {/* onClick as well as the effect below: tapping the page
+                                                you are already on changes no pathname, and the sheet
+                                                would sit there as if the tap had missed */}
+                                            <Link href={ item.url } onClick={leave}>
                                                 { item.title }
                                             </Link>
                                         </SidebarMenuButton>

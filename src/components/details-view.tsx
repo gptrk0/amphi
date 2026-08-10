@@ -307,11 +307,9 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                         <p className="max-w-3xl text-sm leading-relaxed">{ media.overview || "No overview yet." }</p>
 
                         <div className="flex flex-wrap gap-3 pt-2">
-                            <Button
-                                className="cursor-pointer"
-                                onClick={download}
-                                disabled={isTv && pickedCount === 0}
-                            >
+                            {/* not disabled with nothing ticked any more: it asks instead,
+                                in the same dialog a poster or the billboard now opens */}
+                            <Button className="cursor-pointer" onClick={download}>
                                 <Download />
                                 Download
                                 { isTv && pickedCount > 0 ? ` ${ pickedCount } episode${ pickedCount > 1 ? "s" : "" }` : "" }

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { getMediaDetails, getTvSeasons, isMediaType } from "@/lib/media";
 import { DetailsView } from "@/components/details-view";
+import { toSeasonInfo } from "@/types/media";
 
 /**
  * Server rendered on purpose: the page used to load its own data from /api/details
@@ -29,18 +30,9 @@ export default async function Page({ params }: { params: Promise<{ type: string,
             type={type}
             tmdbId={tmdbId}
             details={details}
-            // episode overviews are not shown here, and they are the bulk of the payload
-            seasons={seasons.map(season => ({
-                season_number: season.season_number,
-                name: season.name,
-                air_date: season.air_date,
-                episode_count: season.episode_count,
-                episodes: season.episodes.map(episode => ({
-                    episode_number: episode.episode_number,
-                    name: episode.name,
-                    air_date: episode.air_date
-                }))
-            }))}
+            // trimmed of the episode overviews, which are the bulk of the payload — the
+            // same shape /api/seasons hands to the download dialog's own picker
+            seasons={toSeasonInfo(seasons)}
         />
     );
 }

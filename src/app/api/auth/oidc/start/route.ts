@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { sessionCookieOptions } from "@/lib/auth";
 import { errorText, logError } from "@/lib/log";
-import { beginLogin, STATE_COOKIE } from "@/lib/oidc";
+import { appUrl, beginLogin, STATE_COOKIE } from "@/lib/oidc";
 import { loadSettings } from "@/lib/settings";
 
 /**
@@ -33,6 +33,6 @@ export async function GET(req: NextRequest) {
     } catch(err) {
         await logError("auth", "single sign-on could not be started", errorText(err));
 
-        return NextResponse.redirect(new URL("/login?error=sso", req.url));
+        return NextResponse.redirect(await appUrl("/login?error=sso"));
     }
 }

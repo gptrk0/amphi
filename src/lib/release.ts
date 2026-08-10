@@ -20,7 +20,6 @@ export type QualityProfile = {
     preferredLanguages: string[];
     excludeLanguages: string[];
     defaultLanguage: string;
-    languageBonus: number;
     languageFirst: boolean;
     /**
      * Set, and a release that is not in this language is not a candidate at all — not
@@ -31,7 +30,6 @@ export type QualityProfile = {
      */
     requireLanguage: string | null;
     indexerPriority: string[];
-    indexerBonus: number;
 };
 
 /**
@@ -111,12 +109,10 @@ export const getQualityProfile = (language: LanguageProfile, requireLanguage: st
         preferredLanguages: language.preferred,
         excludeLanguages: language.exclude,
         defaultLanguage: language.untagged,
-        languageBonus: language.bonus,
         languageFirst: language.first,
         requireLanguage,
         // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
-        indexerPriority: priority.length > 0 ? priority : getIndexerIds(),
-        indexerBonus: settingNumber("INDEXER_PRIORITY_BONUS")
+        indexerPriority: priority.length > 0 ? priority : getIndexerIds()
     };
 };
 
@@ -382,32 +378,54 @@ export const rateLanguage = (title: string, profile: QualityProfile, target?: Re
     return { languages, rank, excluded: effective.find(v => profile.excludeLanguages.includes(v)) || null };
 };
 
-const RESOLUTION_WEIGHT = 1000000000;
+/**
+ * The scoring, and why it has no weights to set any more.
+ *
+ * It used to be a sum of tunable bonuses — a language bonus, an indexer priority weight —
+ * and that made every question about it unanswerable. "What does 100000 mean?" has no
+ * answer without knowing every other number in the formula, and the only two answers
+ * anybody ever wants are *always* and *never*: either the preferred indexer wins at equal
+ * quality or it does not, either your language wins or it does not. A number that has to
+ * be large enough is a number that is wrong for somebody.
+ *
+ * So the signals are **strict tiers**: nothing below a tier can add up to one step of it.
+ * A rank is capped at 99 — a hundred resolutions, languages or indexers is not a real
+ * install — and the last tier is the seeder count, which is where the codec bonus also
+ * lives, because that one *is* expressed in seeders and has a reference frame.
+ */
+const RANK_CAP = 99;
+const TIER = RANK_CAP + 1;
 
-// has to outrank any resolution, so language can be made the strongest signal
-const LANGUAGE_FIRST_WEIGHT = 100000000000;
+const SEEDER_CAP = 99999;
+
+// seeders and the codec bonus share the bottom tier, so it has to hold both
+const TAIL_SPAN = 2 * (SEEDER_CAP + 1);
+
+const capped = (rank: number) => Math.min(Math.max(rank, 0), RANK_CAP);
 
 /**
- * Resolution first, then the language, then the indexer priority, then seeders. A
- * widely supported codec is worth a fixed number of seeders, so h264 wins unless
- * another release has clearly more peers.
+ * Resolution, language, indexer priority, seeders — with the first two swapped when the
+ * requester asked for their language to come first. A widely supported codec is worth a
+ * fixed number of seeders, so h264 wins unless another release has clearly more peers.
  */
 const score = (release: IndexerResult, resolution: string | null, profile: QualityProfile, languageRank: number) => {
-    const rank = resolution ? profile.resolutions.length - profile.resolutions.indexOf(resolution) : 0;
+    const resolutionRank = resolution ? profile.resolutions.length - profile.resolutions.indexOf(resolution) : 0;
 
     const indexerIndex = profile.indexerPriority.indexOf(release.indexerId);
     const indexerRank = indexerIndex < 0 ? 0 : profile.indexerPriority.length - indexerIndex;
 
     const codec = parseCodec(release.title);
-    const codecBonus = codec && profile.preferredCodecs.includes(codec) ? profile.codecBonus : 0;
+    // the bonus is denominated in seeders, so it cannot be worth more than every seeder
+    // there is — otherwise it would reach into the tier above and stop being a tie-breaker
+    const codecBonus = codec && profile.preferredCodecs.includes(codec) ? Math.min(profile.codecBonus, SEEDER_CAP) : 0;
 
-    const languageWeight = profile.languageFirst ? LANGUAGE_FIRST_WEIGHT : profile.languageBonus;
+    const ordered = profile.languageFirst
+        ? [ languageRank, resolutionRank, indexerRank ]
+        : [ resolutionRank, languageRank, indexerRank ];
 
-    return rank * RESOLUTION_WEIGHT
-        + languageRank * languageWeight
-        + indexerRank * profile.indexerBonus
-        + Math.min(release.seeders, 99999)
-        + codecBonus;
+    const tiers = ordered.reduce((sum, rank) => sum * TIER + capped(rank), 0);
+
+    return tiers * TAIL_SPAN + Math.min(release.seeders, SEEDER_CAP) + codecBonus;
 };
 
 export const rateRelease = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ScoredRelease | RejectedRelease => {

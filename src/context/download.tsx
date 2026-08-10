@@ -4,9 +4,12 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
 import axios from "axios";
 import { toast } from "sonner";
 
+import { EpisodePicker } from "@/components/episode-picker";
 import { ReleasePicker } from "@/components/release-picker";
 import { useWatchlist } from "@/context/watchlist";
 import { DownloadPreview } from "@/types/download";
+import { SeasonInfo } from "@/types/media";
+import { WatchlistItem } from "@/types/watchlist";
 
 export type SeasonSelection = {
     seasonNumber: number;
@@ -39,6 +42,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     const [ picks, setPicks ] = useState<Record<string, string>>({});
     const [ isLoading, setLoading ] = useState(false);
     const [ isStarting, setStarting ] = useState(false);
+
+    // the step before the release search, for a show nobody has chosen episodes of
+    const [ picking, setPicking ] = useState<DownloadTarget | null>(null);
+    const [ seasons, setSeasons ] = useState<SeasonInfo[]>();
+    const [ watched, setWatched ] = useState<WatchlistItem>();
 
     const search = useCallback(async (wanted: DownloadTarget) => {
         setLoading(true);
@@ -73,10 +81,62 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
+    /**
+     * The episode list and whatever of it is already being watched, for the picker. Both
+     * at once: the ticks it starts from are the watchlist's, and a show that is on nobody's
+     * list simply answers null.
+     */
+    const loadEpisodes = useCallback(async (wanted: DownloadTarget) => {
+        setSeasons(undefined);
+        setWatched(undefined);
+
+        try {
+            const [ list, state ] = await Promise.all([
+                axios.get("/api/seasons", { params: { id: wanted.tmdbId } }),
+                axios.get("/api/watchlist", { params: { type: wanted.type, tmdbId: wanted.tmdbId } })
+            ]);
+
+            setSeasons(list.data.result || []);
+            setWatched(state.data.result || undefined);
+
+        } catch(err) {
+            console.error(err);
+
+            toast("Could not read the episode list.");
+            setPicking(null);
+        }
+    }, []);
+
+    /**
+     * A film goes straight to the release search. A show with nothing chosen is asked
+     * about first: pressing Download on one from a poster or the billboard used to send
+     * no selection, which the api refused with "Pick at least one episode!" — a button
+     * that was there and never worked.
+     */
     const startDownload = useCallback((wanted: DownloadTarget) => {
+        if (wanted.type === "tv" && ! wanted.seasons?.length) {
+            setPicking(wanted);
+            void loadEpisodes(wanted);
+
+            return;
+        }
+
         setTarget(wanted);
         void search(wanted);
-    }, [ search ]);
+    }, [ search, loadEpisodes ]);
+
+    /** The picker answered: on to the same release dialog every download goes through. */
+    const pickedEpisodes = useCallback((chosen: SeasonSelection[]) => {
+        if (! picking) {
+            return;
+        }
+
+        const wanted = { ...picking, seasons: chosen };
+
+        setPicking(null);
+        setTarget(wanted);
+        void search(wanted);
+    }, [ picking, search ]);
 
     /**
      * Only the parts that were not found: the whole film, or exactly the episodes
@@ -155,6 +215,15 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     return (
         <DownloadContext.Provider value={value}>
             { children }
+
+            <EpisodePicker
+                open={picking !== null}
+                name={picking?.name || ""}
+                seasons={seasons}
+                item={watched}
+                onCancel={() => setPicking(null)}
+                onConfirm={pickedEpisodes}
+            />
 
             <ReleasePicker
                 open={target !== null}

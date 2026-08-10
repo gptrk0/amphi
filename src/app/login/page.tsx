@@ -91,7 +91,7 @@ function LoginForm() {
                     onClick={() => { window.location.href = `/api/auth/oidc/start?next=${ encodeURIComponent(next) }`; }}
                 >
                     <KeyRound />
-                    Continue with { state.oidc.name }
+                    Continue with single sign-on
                 </Button>
             )}
 

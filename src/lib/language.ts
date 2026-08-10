@@ -20,22 +20,27 @@ export type LanguageProfile = {
     exclude: string[];
     /// what a release carrying no language tag at all is taken to be
     untagged: string;
-    bonus: number;
-    /// language outranks resolution
+    /**
+     * Language outranks resolution. **On by default**, because that is what wanting a
+     * language means: a film you cannot understand is not a better copy of it. Off is
+     * the deliberate choice — take the sharpest release and read subtitles.
+     *
+     * There is no weight next to this any more. It used to be a number ("language
+     * bonus") and a number here can only be too small, in which case a preferred
+     * language quietly loses to a few more seeders and nothing says why.
+     */
     first: boolean;
 };
 
 /**
- * What a new account starts with, and what the migration falls back to. The same
- * values the install-wide settings had, so nobody's downloads change shape on the
- * day the setting moved.
+ * What a new account starts with, and what a search falls back to when the account
+ * behind it is gone.
  */
 export const LANGUAGE_DEFAULTS: LanguageProfile = {
     preferred: [ "hun", "eng" ],
     exclude: [],
     untagged: "eng",
-    bonus: 1000000,
-    first: false
+    first: true
 };
 
 export const parseLanguageList = (value: string) => value
@@ -48,13 +53,11 @@ export const toLanguageProfile = (user: {
     preferredLanguages: string;
     excludeLanguages: string;
     defaultLanguage: string;
-    languageBonus: number;
     languageFirst: boolean;
 }): LanguageProfile => ({
     preferred: parseLanguageList(user.preferredLanguages),
     exclude: parseLanguageList(user.excludeLanguages),
     untagged: user.defaultLanguage.trim().toLowerCase() || LANGUAGE_DEFAULTS.untagged,
-    bonus: user.languageBonus,
     first: user.languageFirst
 });
 

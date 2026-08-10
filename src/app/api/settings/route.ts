@@ -1,7 +1,9 @@
 import { currentUser, refuseUnlessAdmin, withActor } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
+import { redirectUri } from "@/lib/oidc";
 import {
     deleteSetting,
+    hasSetting,
     isSecret,
     loadSettings,
     SETTING_GROUPS,
@@ -47,7 +49,22 @@ const toItem = (key: string) => {
     };
 };
 
-const state = () => ({ groups: SETTING_GROUPS, settings: SETTINGS.map(def => toItem(def.key)) });
+/**
+ * The one thing on this page that is not a setting: the address the provider has to be
+ * told to send people back to. It is derived (public URL, or the headers of this very
+ * request) and getting it wrong is the most common way a single sign-on fails — with a
+ * message from the provider, on the provider's own page, that never reaches this app.
+ * So it is shown, ready to be copied, rather than described in a help text.
+ */
+const state = async () => ({
+    groups: SETTING_GROUPS,
+    settings: SETTINGS.map(def => toItem(def.key)),
+    oidc: {
+        callbackUrl: await redirectUri(),
+        // whether that address is a decision or a guess from this request's headers
+        fromPublicUrl: hasSetting("AUTH_PUBLIC_URL")
+    }
+});
 
 // a long list would push everything else out of the line
 const clip = (value: string) => value.length > 120 ? `${ value.slice(0, 119) }…` : value;
@@ -81,7 +98,7 @@ export async function GET() {
     try {
         await loadSettings(true);
 
-        return Response.json({ success: true, ...state() });
+        return Response.json({ success: true, ...await state() });
 
     } catch(err) {
         console.error(err);
@@ -138,7 +155,7 @@ export async function PUT(req: Request) {
             await logInfo("settings", `setting changed: ${ name(key) }`, withActor(change(key, before[key], wanted[key]), who));
         }
 
-        return Response.json({ success: true, changed: changed.length, ...state() });
+        return Response.json({ success: true, changed: changed.length, ...await state() });
 
     } catch(err) {
         console.error(err);
@@ -180,7 +197,7 @@ export async function DELETE(req: Request) {
             )
         );
 
-        return Response.json({ success: true, ...state() });
+        return Response.json({ success: true, ...await state() });
 
     } catch(err) {
         console.error(err);

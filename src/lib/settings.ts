@@ -81,8 +81,7 @@ export const SETTINGS: SettingDef[] = [
     { key: "INDEXER_URL", group: "Indexers", label: "Jackett / Prowlarr URL", type: "string", placeholder: "http://host:9117" },
     { key: "INDEXER_API_KEY", group: "Indexers", label: "API key", type: "string", secret: true },
     { key: "INDEXER_IDS", group: "Indexers", label: "Indexers", type: "list", ordered: true, default: "all", placeholder: "indexer id", help: "Queried one by one, by capability, and the order is also the priority. `all` uses Jackett's aggregate endpoint, which silently drops any indexer that cannot search by imdb id — naming them is better." },
-    { key: "INDEXER_PRIORITY", group: "Indexers", label: "Priority order", type: "list", ordered: true, help: "Only if it should differ from the order above." },
-    { key: "INDEXER_PRIORITY_BONUS", group: "Indexers", label: "Priority weight", type: "number", default: "100000", help: "High enough and the preferred indexer always wins at equal resolution; lower it and the seeder count can decide." },
+    { key: "INDEXER_PRIORITY", group: "Indexers", label: "Priority order", type: "list", ordered: true, help: "Only if it should differ from the order above. At equal resolution and language the earlier indexer always wins, however many seeders the other one has — that is what naming an order means. If the preferred one has no acceptable release, the next one's is taken." },
     { key: "INDEXER_CAPS_TTL_MINUTES", group: "Indexers", label: "Capability cache (minutes)", type: "number", default: "360" },
 
     // Torrent client
@@ -100,7 +99,7 @@ export const SETTINGS: SettingDef[] = [
     // Quality
     { key: "QUALITY_RESOLUTIONS", group: "Quality", label: "Resolutions, best first", type: "list", ordered: true, default: "1080p,720p,2160p", help: "Anything not listed is rejected. An unrecognised resolution is kept as a last resort." },
     { key: "QUALITY_PREFERRED_CODECS", group: "Quality", label: "Preferred codecs", type: "list", ordered: true, default: "x264,h264,avc", help: "h264 plays on everything; hevc and av1 are the fallback." },
-    { key: "QUALITY_CODEC_BONUS", group: "Quality", label: "Codec bonus", type: "number", default: "500", help: "Worth this many seeders." },
+    { key: "QUALITY_CODEC_BONUS", group: "Quality", label: "Codec bonus", type: "number", default: "500", help: "Worth this many seeders — that is the whole meaning of the number, and it is the only weight in the scoring left for exactly that reason. It never reaches past the seeder count into the resolution, the language or the indexer order." },
     { key: "QUALITY_MIN_SEEDERS", group: "Quality", label: "Minimum seeders", type: "number", default: "1" },
     { key: "QUALITY_MAX_SIZE_GB", group: "Quality", label: "Maximum size (GB)", type: "number", default: "0", help: "0 = no limit." },
     { key: "QUALITY_MAX_PACK_SIZE_PER_EPISODE_GB", group: "Quality", label: "Season pack ceiling per episode (GB)", type: "number", default: "5", help: "A 2160p pack can run to 89–189 GB, which is what this is for." },
@@ -143,16 +142,13 @@ export const SETTINGS: SettingDef[] = [
     // Access
     { key: "AUTH_SESSION_DAYS", group: "Access", label: "Stay signed in for (days)", type: "number", default: "30", help: "Counted from the last request, not from the login, so somebody who uses the app never gets thrown out. 0 = never expires, until somebody signs out or the account is switched off. Shortening this reaches the sessions that are already open." },
     { key: "AUTH_ALLOW_PASSWORD", group: "Access", label: "Allow the password form", type: "boolean", default: "1", help: "Off leaves single sign-on as the only way in — and is ignored while no provider is configured, so this cannot be the setting that locks you out." },
-    { key: "AUTH_PUBLIC_URL", group: "Access", label: "Public address of this app", type: "string", placeholder: "https://aioseerr.example.com", help: "Only needed for single sign-on behind a proxy that does not send X-Forwarded-Host: it is what the redirect back from the provider is built from." },
-    { key: "AUTH_OIDC_ENABLED", group: "Access", label: "Single sign-on", type: "boolean", default: "0", help: "OpenID Connect — Authentik, Authelia, Keycloak, Google. The provider is asked what its endpoints are, so the issuer below is all it needs." },
-    { key: "AUTH_OIDC_NAME", group: "Access", label: "Name of the provider", type: "string", default: "Single sign-on", help: "What the button on the login page says." },
+    { key: "AUTH_PUBLIC_URL", group: "Access", label: "Public address of this app", type: "string", placeholder: "https://aioseerr.example.com", help: "Only needed for single sign-on behind a proxy that does not send X-Forwarded-Host: it is what the redirect back from the provider is built from. The callback address at the top of this tab follows it." },
+    { key: "AUTH_OIDC_ENABLED", group: "Access", label: "Single sign-on", type: "boolean", default: "0", help: "OpenID Connect — Authentik, Authelia, Keycloak, Google. The provider is asked what its endpoints are, so the issuer below is all it needs. It always asks for `openid profile email`, and the callback address to register is at the top of this tab." },
     { key: "AUTH_OIDC_ISSUER", group: "Access", label: "Issuer URL", type: "string", placeholder: "https://auth.example.com/application/o/aioseerr/", help: "Authentik prints it on the provider page. Everything else is read from its .well-known/openid-configuration." },
     { key: "AUTH_OIDC_CLIENT_ID", group: "Access", label: "Client id", type: "string" },
     { key: "AUTH_OIDC_CLIENT_SECRET", group: "Access", label: "Client secret", type: "string", secret: true, help: "Leave empty for a public client — the flow uses PKCE either way." },
-    { key: "AUTH_OIDC_SCOPES", group: "Access", label: "Scopes", type: "list", default: "openid,profile,email", help: "Add the one that carries the groups claim if you map admins by group below." },
     { key: "AUTH_OIDC_AUTO_CREATE", group: "Access", label: "Create an account on first sign-in", type: "boolean", default: "1", help: "On: whoever the provider lets through gets an account here, as a plain user. Off: only somebody already on the users page can sign in." },
-    { key: "AUTH_OIDC_GROUPS_CLAIM", group: "Access", label: "Groups claim", type: "string", default: "groups" },
-    { key: "AUTH_OIDC_ADMIN_GROUPS", group: "Access", label: "Groups that make an admin", type: "list", help: "While this is filled in, the provider decides the role of every account it signs in — being removed from the group takes admin away again. It can never take away the last admin, so a typo here cannot lock you out." },
+    { key: "AUTH_OIDC_ADMIN_GROUPS", group: "Access", label: "Groups that make an admin", type: "list", help: "While this is filled in, the provider decides the role of every account it signs in — being removed from the group takes admin away again. Membership is read from whichever of `groups`, `roles` and `realm_access.roles` your provider sends. It can never take away the last admin, so a typo here cannot lock you out." },
 
     // Log
     { key: "LOG_RETENTION_DAYS", group: "Log", label: "Keep entries for (days)", type: "number", default: "14", help: "0 = keep everything. Checked once an hour, on the way out of a write." },

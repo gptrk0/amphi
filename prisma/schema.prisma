@@ -73,9 +73,10 @@ model User {
   excludeLanguages   String  @default("")
   /// what a release with no language tag at all is taken to be
   defaultLanguage    String  @default("eng")
-  languageBonus      Int     @default(1000000)
-  /// on: a 720p release in the right language beats a 1080p one in the wrong one
-  languageFirst      Boolean @default(false)
+  /// On by default: a 720p release in the right language beats a 1080p one in the wrong
+  /// one. There is no weight beside it — the language either wins or it does not, and a
+  /// number in between could only be set too low to matter.
+  languageFirst      Boolean @default(true)
 
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?

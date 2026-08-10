@@ -214,8 +214,8 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
   **Mérés (2026-08-05)**, ami igazolta, hogy indexerenként kell hívni: a Jackettben **három** indexer van (`ncore`, `limetorrents`, `thepiratebay`), és csak az nCore tud `imdbid`-t (`movie: q,imdbid,genre`; a másik kettő csak `q`). Az aggregate endpointon imdbid-vel keresve **16** találat jött (a másik két indexer csendben nulla), indexerenként, képesség szerint keresve **147** — ugyanarra a filmre. Epizódnál 91 találat (`ncore=1, limetorrents=40, thepiratebay=50`), tehát az nCore-on kívüli indexerek adják a sorozat-találatok többségét.
 - [x] **Release-pontozás** ([src/lib/release.ts](src/lib/release.ts)) — a „vedd az elsőt" helyett:
   - Env-ből konfigurálható profil: `QUALITY_RESOLUTIONS` (prioritási sorrend, **most `1080p,720p,2160p`** — FullHD a preferált), `QUALITY_PREFERRED_CODECS` (`x264,h264,avc`) + `QUALITY_CODEC_BONUS` (500), `QUALITY_EXCLUDE`, `QUALITY_MIN_SEEDERS`, `QUALITY_MAX_SIZE_GB` (0 = nincs limit), `QUALITY_MIN_SIZE_MOVIE` / `QUALITY_MIN_SIZE_EPISODE`.
-  - `score = felbontás_rangja * 1e9 + indexer_rangja * INDEXER_PRIORITY_BONUS + seederek + kodek_bónusz`. Sorrend: **felbontás → indexer-prioritás → seederek → kodek**.
-  - **Indexer-prioritás**: az `INDEXER_IDS` sorrendje egyben a prioritás (most `ncore` az első), felülírható `INDEXER_PRIORITY`-vel, a súly `INDEXER_PRIORITY_BONUS` (default 100000, azaz azonos felbontáson az előbb álló indexer gyakorlatilag mindig nyer; kisebb értékkel a seeder-szám átveheti a döntést). Ha a prioritásosnál nincs elfogadható találat, a következő indexer jön — nem kizárólagos.
+  - A pontozás **szigorú szintekből** áll, nem összeadott bónuszokból: `nyelv/felbontás → felbontás/nyelv → indexer-prioritás → seederek (+ kodek-bónusz)`, és egy alsóbb szint sosem tud egy felsőbb szint egy lépését kiadni (ld. „Nincs több súly a pontozásban"). Az első két szint sorrendjét a kérő fiók „Language outranks resolution" pipája dönti el (alapból **be**).
+  - **Indexer-prioritás**: az `INDEXER_IDS` sorrendje egyben a prioritás (most `ncore` az első), felülírható `INDEXER_PRIORITY`-vel. Azonos felbontáson és nyelven az előbb álló indexer **mindig** nyer, akárhány seedere van a másiknak. Ha a prioritásosnál nincs elfogadható találat, a következő indexer jön — nem kizárólagos.
   - **Hamis release-védelem** (valós eset: The Odyssey-re egy „2160p" nevű, 1.07GB-os, 158 seederes torrent indult el, ami nem is film volt):
     - **Cím- és év-ellenőrzés**: a release nevéből kiparsolt cím normalizálva egyeznie kell az eredeti vagy a lokalizált címmel, film esetén az év ±1 éven belül. Ez szűrte ki pl. a `The Odyssey The Making Of An Epic` dokumentumfilmet, a filmzenét és egy cosplay videót.
     - **Minimum méret a bemondott felbontáshoz**: film `2160p:8GB, 1080p:2GB, 720p:0.8GB, 480p:0.3GB`, epizódnál kisebb táblázat, packnél epizódszámmal skálázva. Ismeretlen felbontásnál a legkisebb küszöb érvényes.
@@ -328,6 +328,7 @@ Amit ebből átvettem:
   - A nyelv-tag csak a **cím utáni** részben számít (év / felbontás / `S01E01` után), különben a `Dan in Real Life` dán release-nek látszana. Élőben ellenőrizve: `Dan.in.Real.Life`, `Danish.Girl`, `Indiana.Jones` → nincs találat, `…ITA`, `…HUN`, `…JPN` → helyes.
   - A záró release-group levágását megmértem: 1099 valós release-ből **egyszer** számított, és ott egy igazi `HuN` tag veszett volna el (`…DoVi-HDR.HEVC.HuN.TRiNiTY`), hamis pozitív nulla — ezért nincs levágás.
   - Mérés a saját indexereiden: Dune Part Two 147 találatából 6 német/francia esett ki, Ted Lasso S01E01 50 találatából 2 francia; a magyar release-ek a jelöletlenek elé kerültek. `QUALITY_LANGUAGE_FIRST=1`-gyel a 720p HUN megelőzi az 1080p jelöletlent.
+  - *Ez a bekezdés a kiinduló, install-szintű változat. A nyelvi szabályok 2026-08-09-én a fiókhoz kerültek (ld. „A nyelv az emberé"), a bónusz-szám pedig 08-10-én megszűnt, és a „nyelv előbb" alapból be van kapcsolva (ld. „Nincs több súly a pontozásban").*
 - [x] **Meg nem jelent tartalmat ne keressen** (2026-08-07-i kérés). Epizódnál ez eddig is így volt (`scanEpisodes`: `airDate` ismert és múltbeli), **filmnél viszont nem** — egy még be sem mutatott film 30 percenként keresésre került, és `MAX_SEARCH_ATTEMPTS` után `FAILED`-re állt volna. Most a film unitjának `airDate`-je a TMDB megjelenési dátuma, a `scanMovies` pedig ugyanúgy szűr rá. Ismeretlen dátum nem blokkol (a film kereshető marad).
   - A dátumot a `refreshMetadata()` (a régi `refreshShows`) tartja frissen, mert a TMDB tologatja a megjelenéseket; ez a kör a `runScan`-ben előre került, hogy a scanner már friss dátumból döntsön. A `syncDownloads`-hoz hasonlóan **dry-runban is ír**: nem indít semmit, csak követi a TMDB-t — és pont ezekre a dátumokra támaszkodik a visszatartás.
   - Élőben ellenőrizve: a három meglévő film dátuma magától kitöltődött, egy jövőbeli dátumú filmet (`The Last Sunrise`, 2026-08-26) felvéve a `scanMovies` átugrotta, a két megjelentet feldolgozta.
@@ -1350,6 +1351,33 @@ Ugyanezen az oldalon a „Language outranks resolution" pipája is nyers `input`
 
 **Mérve:** `tsc --noEmit` és `next lint` tiszta, `/account` 200-nal renderel, hiba nélkül. **Amit nem:** magát a lenyílót és a témát böngészőben — a natív kontrollok kinézete pont az, amit szerveroldali HTML-ből nem lehet ellenőrizni.
 
+#### „Melyik részeket?" — a letöltés maga kérdezi meg (2026-08-10-i kérés) ✅
+
+Kérés: „ha egy sorozatnál rányomok a letöltésre anélkül, hogy watchlistre választottam volna részeket, akkor egy felugró modalban adjon lehetőséget ugyanolyan módon kiválasztani őket".
+
+**Ami volt:** a poszterről, a sorból és a billboardról a Download **kiválasztás nélkül** indult, az api pedig „Pick at least one episode!"-lal elutasította — egy gomb, ami ott volt, és sorozatnál soha nem működött. A kérdésre egyedül az adatlap tudott válaszolni, mert az szerveroldalon renderel, és nála megvan az epizódlista.
+
+**Ami lett:** a `DownloadProvider` sorozatnál, ha nincs kiválasztás, előbb egy [episode-picker.tsx](src/components/episode-picker.tsx) modalt nyit — **ugyanazzal a `SeasonPicker`-rel**, ami az adatlapon van, tehát évad- és epizód-pipákkal, nyitható évadokkal, a „downloaded" / „waiting for release" jegyzetekkel. Utána ugyanabba a kiadásválasztóba fut, amin 2026-08-08 óta minden letöltés keresztülmegy.
+
+Két döntés benne. **A pipa itt nem a watchlist**: az adatlapon egy pipa *maga* a watchlist és azonnal ír, itt viszont egyetlen letöltés kiválasztása, tehát az ablak megnyitása és a meggondolás nem ment el semmit. Amiből viszont **indul**, az a watchlist: ami már figyelve van, az bepipálva jelenik meg, mert szinte mindig az a válasz a kérdésre. És az adatlapon a Download **már nincs letiltva** üres kiválasztásnál: ugyanezt az ablakot nyitja, mint bárhol máshol.
+
+Ehhez kellett egy végpont, mert a böngésző eddig nem tudta megtudni, milyen részei vannak egy sorozatnak: `GET /api/seasons?id=` ugyanazt a levágott alakot adja (`SeasonInfo`, epizód-leírások nélkül — azok a payload zöme), amit az adatlap is átad, és amit most már a `types/media.ts` `toSeasonInfo`-ja állít elő mindkét helyen.
+
+**Mérve** (friss sessionnel, a valódi végpontokon):
+
+```
+GET /api/seasons?id=256695     200, 1409 byte, 1 evad, 19 epizod, overview nelkul
+GET /api/seasons               400   (nincs id)
+GET /api/seasons (session nelkul) 401
+POST /api/download/preview  {"seasons":[{"seasonNumber":1,"episodeNumbers":[2]}]}
+                               200, choices=[], missing=[S01E02], filtered=8
+/, /library, /details/tv/256695  mind 200, hiba nelkul
+```
+
+*(Egy új **route** fájlt a turbopack nem vett fel újraindítás nélkül: 404-et adott, amíg a konténer nem indult újra. Komponensnél ez nem volt így.)*
+
+`tsc --noEmit` és `next lint` tiszta. **Amit nem mértem:** magát a modalt böngészőben.
+
 #### A seed-idő a kliens ideje, nem a miénk (2026-08-10-i kérés) ✅
 
 Kérdés, majd kérés: „a `LIBRARY_SEED_DAYS` mi alapján számol? a qBittorrentben tárolt seed időtartamot nézi?" — nem nézte, most már azt nézi.
@@ -1452,6 +1480,80 @@ az utolso is levéve              a watchlist sor elment (0)
 **A te adatoddal mit tettem.** A 17:06-os kör által visszahozott 18 unitot leszedtem az app saját `stopWatching`-jával, tehát a *Regular Show: The Lost Tapes* lekerült a watchlistről — ez az, amit 16:54-kor kértél, és amit a kör felülírt. A **library sor és a torrent érintetlen**: a letöltött S01E01 megvan. Ha mégis kell belőle több rész, az adatlapon bepipálható, és most már meg is marad.
 
 `tsc --noEmit` és `next lint` tiszta. **Amit nem mértem:** a böngészőben magát a pipát — de a fenti `getTitleState` pontosan az, amit az adatlap kap.
+
+#### Az OIDC-ből eltűnik három tekerő, és kiírjuk a callback URL-t (2026-08-10-i kérés) ✅
+
+Kérés: „OIDC esetén amire nincs szükség hogy állítani lehessen azt vedd le settingsből, pl. scopes, groups claim, name of the provider; illetve írja ki az oldalon, hogy mi a callback url amit engedélyeztetni kell a OIDC providernél."
+
+**Ami megszűnt beállításnak.** Mind a három azért volt ott, mert a protokollban van ilyen paraméter — nem mert bármelyiknek lett volna választható értéke:
+
+| Volt | Most | Miért nem beállítás |
+| --- | --- | --- |
+| `AUTH_OIDC_SCOPES` (`openid,profile,email`) | `SCOPES = "openid profile email"` konstans | Az `openid` nélkül nem OIDC, az `email` nélkül nem tud fiókot létrehozni (van rá kifejezett hibaüzenet), a `profile` a név és — Authentiken, Authelián — a csoportok. Nincs olyan részhalmaz, amivel az app **jobban** működne, hibás viszont van. |
+| `AUTH_OIDC_GROUPS_CLAIM` (`groups`) | `groupsFrom()`: `groups`, `roles` és `realm_access.roles` **mind** olvasva | Ennek a helyes értékét a providered tudja, nem te: Keycloakon `realm_access.roles`, máshol `groups`. Egy nem létező claim beolvasása nem költség, egy rosszul kitalált claim-név viszont csendben admin nélkül hagyja a mappinget. |
+| `AUTH_OIDC_NAME` („Single sign-on") | a login gomb: „Continue with single sign-on" | Csak a gomb feliratát adta. Nem a provider hostját írjuk ki helyette: az a login oldal, ami bejelentkezés nélkül is látszik, és egy belső hostnév nem oda tartozik. |
+
+Ami maradt, az az, ami telepítésenként **valóban** más: issuer, kliens-azonosító, kliens-titok, fiók-létrehozás, admin-csoportok. Az elhagyott kulcsokra egy migráció (`20260810130000_oidc_without_dials`) `DELETE`-et ad — nem sémaváltás, hanem hogy ne maradjon a `Setting` táblában olyan sor, amit már semmi nem olvas, és ami egy későbbi verzióban ugyanazon a néven csendben életre kelne.
+
+**A callback URL kiírása.** Ez az egyetlen dolog a Settings / Access fülön, ami **nem beállítás, hanem levezetett érték** — és pont ez az, aminek az elrontása a legrosszabb hibaüzenetet adja: a provider a **saját** oldalán utasítja el a bejelentkezést, tehát a mi logunkban nyoma sincs. Ezért a fül tetején ott áll, másolható gombbal, plusz egy jelzés arról, hogy honnan jött: „from the public address below" (tehát döntés), vagy „read from this page's own address" (tehát tipp). A `GET/PUT/DELETE /api/settings` mind a friss értéket adja vissza, így a publikus URL mentése után azonnal frissül.
+
+**És közben a bejelentés: „SSO bejelentkezés után a 0.0.0.0:3000 címre kerültem, nem a megadott AUTH_PUBLIC_URL-re."** Ez ugyanennek a kérdésnek a másik fele, és valódi hiba volt. A kiadott image `HOSTNAME=0.0.0.0`-val futtatja a standalone szervert, tehát a **`req.url`-ben ez a host áll** — a sikeres bejelentkezés utolsó lépése pedig `new URL(safeNext(next), req.url)` volt. A `redirectUri()` (amit a provider megkap) mindig a publikus címből épült, ezért maga a bejelentkezés működött; csak az utolsó átirányítás vitt a semmibe.
+
+Most egy helyen dől el, mi a „kintről látott" cím — `publicBase()`: **konfigurált publikus URL → `X-Forwarded-Host` → `Host` → végső esetben a request**. Erre épül a `redirectUri()` és az új `appUrl()`, és az OIDC mindkét lába (`start`, `callback`, valamint minden hibaüzenetes visszaút) ezen megy. A middleware ugyanezt a hibát tudta a `/login`-ra átirányításnál — ott nincs adatbázis (edge runtime), így a fejlécekig jut el: `X-Forwarded-Host` → `Host` → `req.url`.
+
+**Mérve** (ebben a példányban nincs OIDC beállítva, tehát a provider-oldali lábat nem lehetett végigjárni; a host-feloldás viszont pont az, ami mérhető):
+
+```
+GET /api/settings                                  oidc.callbackUrl = http://localhost:3000/api/auth/oidc/callback
+                                                   fromPublicUrl = false
+  + X-Forwarded-Host: aioseerr.example.com (https) → https://aioseerr.example.com/api/auth/oidc/callback
+AUTH_PUBLIC_URL = https://aioseerr.mine.hu/        → https://aioseerr.mine.hu/api/auth/oidc/callback, fromPublicUrl = true
+
+GET /library (session nélkül)                      Location: /login?next=%2Flibrary
+  + proxy fejlécek                                 Location: https://aioseerr.example.com/login?next=%2Flibrary
+GET /api/auth/oidc/start (nincs konfigurálva)      Location: https://aioseerr.example.com/login?error=sso
+GET /api/auth/oidc/callback (state cookie nélkül)  Location: https://aioseerr.example.com/login?message=That+sign-in+attempt+has+expired…
+  + Host: 0.0.0.0:3000, AUTH_PUBLIC_URL beállítva  Location: https://aioseerr.mine.hu/login?…        ← ez volt a bejelentett hiba
+```
+
+A payloadból eltűnt mindhárom kulcs (a maradék: `AUTH_SESSION_DAYS`, `AUTH_ALLOW_PASSWORD`, `AUTH_PUBLIC_URL`, `AUTH_OIDC_ENABLED|ISSUER|CLIENT_ID|CLIENT_SECRET|AUTO_CREATE|ADMIN_GROUPS`), az `/api/auth/state` `oidc` blokkja `{"enabled":false}`, a `/login`, `/settings`, `/library`, `/` mind 200, a naplóban nincs hiba. `tsc --noEmit` és `next lint` tiszta, a migráció felment (20 migráció).
+
+**Amit nem mértem:** a *sikeres* bejelentkezés utáni átirányítást (ahhoz élő provider kell) — az ugyanazt az `appUrl()`-t használja, amit a hibás visszautak, és csak az útvonal-rész más; illetve a Settings fülön a callout kinézetét, mert a lap kliens oldalon rajzolódik, a HTML-ben nincs benne.
+
+#### Nincs több súly a pontozásban (2026-08-10-i kérés) ✅
+
+Kérés: „az `INDEXER_PRIORITY_BONUS` állítási lehetőségének nincs értelme, mert nincs viszonyítási alap hogy mit jelent az érték amit beírok (mindig a preferált indexer győzzön); a Language bonus szintén (mindig a user által preferált nyelv győzzön, ha létezik és egyébként megfelel a többi feltételnek); a »Language outranks resolution« default bekapcsolt legyen."
+
+**A diagnózis a kérésben van benne: viszonyítási alap.** A pontozás összeadott bónuszokból állt, és egy ilyen számról nem lehet megmondani, hogy jó-e, amíg az ember nem ismeri a formula *összes* többi számát. Ráadásul a válasz, amit ki akar fejezni, sosem egy szám: vagy **mindig** győz a preferált indexer azonos minőségen, vagy **soha**. Egy „elég nagy" súly az, ami valakinél éppen nem elég nagy — és akkor a magyar release csendben veszít pár tucat seederrel szemben, anélkül hogy bárhol látszana, miért.
+
+**Most szigorú szintek vannak** ([release.ts](src/lib/release.ts) `score`): egy alsóbb szint **sosem** tud kiadni egy felsőbb szint egy lépését. A rang szintenként 99-re vágva (száz felbontás / nyelv / indexer nem valós telepítés), a legalsó szint a seeder-szám — és **itt lakik a kodek-bónusz is**, mert az az egyetlen súly, aminek *van* viszonyítási alapja: „ennyi seedert ér", és ezt a help szövege mondja is. Hogy ez igaz is maradjon, a kodek-bónusz a seeder-tartományra van vágva; enélkül egy nagyra állított érték átnyúlt volna a felette lévő szintbe, és megszűnt volna döntetlen-eldöntőnek lenni.
+
+A szintek sorrendje: `felbontás → nyelv → indexer → seeder(+kodek)`, és a **kérő fiók** pipája megcserélheti az első kettőt. A számok így nem is nőnek ki a `double` biztonságos egész-tartományából (mérve: minden pontszám `Number.isSafeInteger`), ami a régi `1e11`-es súlyoknál egy nyelvvel több már közelített volna.
+
+**Ami eltűnt.** `INDEXER_PRIORITY_BONUS` (setting) és `languageBonus` (fiók-oszlop, `User`) — utóbbi migrációval le is van dobva, mert egy oszlop, amit semmi nem olvas, egy nap ellent fog mondani a valóságnak. A **„Language outranks resolution" alapból be**: a `User.languageFirst` default `true`, és a meglévő sorok is átálltak. Ezt megmértem a döntés előtt: mindkét fiók az érintetlen `(false, 1000000)` páron állt, tehát nem volt mit felülírni — a flag egy napos, és semmi nem hívta fel rá a figyelmet az account oldalon. Aki mégis a legélesebb kópiát akarja, ki tudja kapcsolni, és onnantól ez a migráció már nem létezik, hogy felülbírálja.
+
+**Mérve** (dobható szkript a konténerben, a valódi `rateRelease`-en, majd törölve):
+
+```
+azonos 1080p HUN, ncore 3 seeder vs majomparade 9000    -> ncore            (4060400503 vs 4060209500)
+720p HUN vs 2160p jelöletlen, languageFirst=on          -> 720p HUN         (4040200501 vs 2020409000)
+720p HUN vs 1080p jelöletlen, languageFirst=off          -> 1080p jelöletlen (a felbontás visszaveszi)
+1080p HUN a rosszabb indexeren vs 1080p jelöletlen a jobbon, off
+                                                        -> 1080p HUN        (a nyelv az indexer fölött marad)
+kodek-bónusz 1 000 000 000-re állítva, x265 a jó indexeren vs x264 a másikon
+                                                        -> a jó indexeré    (a bónusz nem nyúl át)
+ugyanaz 500-nál, minden más egyenlő                     -> x264             (döntetlent viszont eldönt)
+```
+
+És élőben, a saját indexereiden (`/api/download/preview`, *Dune Part Two*): a felajánlott öt release **mind 1080p HUN**, az élen a `H.264`-es — vagyis a nyelv-szint és a kodek-döntetlen a valódi találati listán is azt teszi, amit a szintetikus eset.
+
+#### Két UI-kérés ugyanabban a körben ✅
+
+**A jelszó-mező lekerült az account oldalról.** Ugyanaz a művelet két helyen élt: egy űrlap a `/account`-on és a felhasználó-menü „Change password" dialógusa. A dialógus marad — az minden oldalról egy kattintás, míg a másikhoz oda kell navigálni —, és az api oldalon eddig sem volt két út, ugyanaz a `PATCH /api/auth/me` hívás mindkettő.
+
+**Mobilon a navbar becsukódik választásra.** Telefonon ez a sidebar egy sheet az egész képernyő fölött, tehát a régi viselkedés az volt, hogy a kért oldal a menü *mögött* jelent meg, és a következő teendő a menü kézi elhúzása. Két mechanizmus, mert egyik sem elég önmagában: a linkeken `onClick` (a `useSidebar().isMobile` ellenőrzésével, mert desktopon a bezárás lenne a hibás válasz), **és** egy `pathname`-re figyelő effekt — az `onClick` nélkül a már megnyitott oldalra koppintás nem csuk be semmit (nincs útvonal-változás), az effekt nélkül pedig a sheeten belüli bármelyik más navigáció nyitva hagyja.
+
+**Mérve:** `tsc --noEmit` és `next lint` tiszta, a migráció felment, `/api/auth/me` már `languageBonus` nélkül és `languageFirst: true`-val válaszol, a settings payloadból eltűnt az `INDEXER_PRIORITY_BONUS` (marad `INDEXER_URL|API_KEY|IDS|PRIORITY|CAPS_TTL_MINUTES`), az `/account`, `/settings`, `/`, `/watchlist` mind 200, a fiók mentése ki-be tudja billenteni a flaget, és egy `languageBonus`-t még küldő régi kliens 200-at kap (a mezőt figyelmen kívül hagyja, nem 500-zal áll meg). **Amit nem:** böngészőben semmit — sem a mobil sheetet, sem az account oldal új formáját. A mérés melléktermékként három „setting changed" sor bekerült a naplóba (a szkript állította a prioritást és a kodek-bónuszt); a sorokat nem töröltem ki, a `Setting` rekordokat igen, tehát mindhárom kulcs újra a defaultján van.
 
 ---
 

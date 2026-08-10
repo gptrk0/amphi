@@ -16,7 +16,8 @@ export type UserItem = {
 export type AuthState = {
     needsSetup: boolean;
     passwordLogin: boolean;
-    oidc: { enabled: boolean, name: string };
+    // the provider had a configurable name once; the button says what it does instead
+    oidc: { enabled: boolean };
     user: {
         id: number;
         email: string;

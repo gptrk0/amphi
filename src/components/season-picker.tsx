@@ -5,15 +5,11 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import classNames from "classnames";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { SeasonInfo } from "@/types/media";
 import { WatchlistItem, WatchStatus } from "@/types/watchlist";
 
-export type SeasonInfo = {
-    season_number: number;
-    name: string;
-    air_date: string | null;
-    episode_count: number;
-    episodes: { episode_number: number, name: string, air_date: string | null }[];
-};
+// it moved to the types, because a server route hands the same shape out now
+export type { SeasonInfo };
 
 type Props = {
     seasons: SeasonInfo[];

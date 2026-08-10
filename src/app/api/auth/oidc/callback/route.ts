@@ -2,16 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createSession, sameToken, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
 import { errorText, logError, logInfo, logWarn } from "@/lib/log";
-import { finishLogin, OidcSignInError, STATE_COOKIE, userForProfile } from "@/lib/oidc";
+import { appUrl, finishLogin, OidcSignInError, STATE_COOKIE, userForProfile } from "@/lib/oidc";
 import { loadSettings } from "@/lib/settings";
 
 /**
  * The way back. Whatever happens the browser ends up on a page rather than on a JSON
  * error — this address is reached by a redirect from another site, and a stack trace
  * in the window is not an answer to "I clicked sign in".
+ *
+ * Built from the public address and not from `req.url`: a proxy that does not forward
+ * the host leaves the container's own socket in the request, and this used to land
+ * people on `0.0.0.0:3000` after signing in successfully.
  */
-const back = (req: NextRequest, message: string) => {
-    const url = new URL("/login", req.url);
+const back = async (message: string) => {
+    const url = new URL(await appUrl("/login"));
 
     url.searchParams.set("message", message);
 
@@ -38,7 +42,7 @@ export async function GET(req: NextRequest) {
         if (error) {
             await logWarn("auth", "the provider refused a sign-in", params.get("error_description") || error);
 
-            return back(req, params.get("error_description") || "The provider refused the sign-in.");
+            return await back(params.get("error_description") || "The provider refused the sign-in.");
         }
 
         const code = params.get("code");
@@ -46,7 +50,7 @@ export async function GET(req: NextRequest) {
         const stored = req.cookies.get(STATE_COOKIE)?.value;
 
         if (! code || ! state || ! stored) {
-            return back(req, "That sign-in attempt has expired — try again.");
+            return await back("That sign-in attempt has expired — try again.");
         }
 
         const saved = JSON.parse(stored) as { state?: string, verifier?: string, next?: string };
@@ -56,7 +60,7 @@ export async function GET(req: NextRequest) {
         if (! saved.state || ! saved.verifier || ! sameToken(saved.state, state)) {
             await logWarn("auth", "a single sign-on callback arrived with the wrong state", "it was refused");
 
-            return back(req, "That sign-in attempt could not be verified — try again.");
+            return await back("That sign-in attempt could not be verified — try again.");
         }
 
         const profile = await finishLogin(code, saved.verifier);
@@ -64,7 +68,7 @@ export async function GET(req: NextRequest) {
 
         const { token, maxAge } = await createSession(user.id);
 
-        const response = NextResponse.redirect(new URL(safeNext(saved.next), req.url));
+        const response = NextResponse.redirect(await appUrl(safeNext(saved.next)));
 
         response.cookies.set(SESSION_COOKIE, token, await sessionCookieOptions(maxAge));
         response.cookies.delete(STATE_COOKIE);
@@ -77,11 +81,11 @@ export async function GET(req: NextRequest) {
         if (err instanceof OidcSignInError) {
             await logWarn("auth", "a single sign-on was refused", err.message);
 
-            return back(req, err.message);
+            return await back(err.message);
         }
 
         await logError("auth", "a single sign-on failed", errorText(err));
 
-        return back(req, "Single sign-on failed. The log has the details.");
+        return await back("Single sign-on failed. The log has the details.");
     }
 }
