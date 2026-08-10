@@ -4,6 +4,7 @@ import { getIndexerIds, IndexerResult } from "@/lib/indexer";
 import { isReleaseBlocked } from "@/lib/blocklist";
 import { LanguageProfile } from "@/lib/language";
 import { settingList, settingNumber, settingText } from "@/lib/settings";
+import { LANGUAGES } from "@/types/language";
 
 export type QualityProfile = {
     resolutions: string[];
@@ -289,50 +290,24 @@ const hasKeyword = (title: string, keyword: string) => {
     return new RegExp(`(^|[^a-z0-9])${ escaped }([^a-z0-9]|$)`, "i").test(title);
 };
 
-// two letter codes are left out on purpose: "Dan in Real Life" is not a Danish release
-const LANGUAGE_ALIASES: Record<string, string[]> = {
-    hun: [ "hun", "hungarian", "magyar" ],
-    eng: [ "eng", "english" ],
-    ita: [ "ita", "italian", "italiano" ],
-    ger: [ "ger", "deu", "german", "deutsch" ],
-    fre: [ "fre", "fra", "french", "francais", "truefrench", "vff", "vfq", "vostfr" ],
-    spa: [ "spa", "spanish", "espanol", "castellano", "latino" ],
-    por: [ "por", "portuguese", "dublado" ],
-    rus: [ "rus", "russian" ],
-    pol: [ "pol", "polish", "lektor" ],
-    cze: [ "cze", "ces", "czech" ],
-    slo: [ "slo", "slovak" ],
-    tur: [ "tur", "turkish" ],
-    ara: [ "ara", "arabic" ],
-    hin: [ "hin", "hindi" ],
-    tam: [ "tam", "tamil" ],
-    tel: [ "tel", "telugu" ],
-    kor: [ "kor", "korean" ],
-    jpn: [ "jpn", "jap", "japanese" ],
-    chi: [ "chi", "chinese", "mandarin", "cantonese" ],
-    tha: [ "tha", "thai" ],
-    vie: [ "vie", "vietnamese" ],
-    ukr: [ "ukr", "ukrainian" ],
-    rum: [ "rum", "ron", "romanian" ],
-    bul: [ "bul", "bulgarian" ],
-    dut: [ "dut", "nld", "dutch" ],
-    swe: [ "swe", "swedish" ],
-    nor: [ "nor", "norwegian" ],
-    dan: [ "dan", "danish" ],
-    fin: [ "fin", "finnish" ],
-    gre: [ "gre", "greek" ],
-    heb: [ "heb", "hebrew" ],
-    per: [ "per", "farsi", "persian" ],
-    ind: [ "ind", "indonesian" ]
-};
+/**
+ * What to look for in a title, per language. Two letter codes are deliberately not in
+ * here — "Dan in Real Life" is not a Danish release — which is also why the app stores the
+ * three letter form.
+ *
+ * Both tables are derived from [the catalogue](src/types/language.ts) rather than written
+ * out here, because the account page now offers that same list to pick from: two copies of
+ * it would mean a language somebody can choose and no release can ever match.
+ */
+const LANGUAGE_ALIASES: Record<string, string[]> = Object.fromEntries(
+    LANGUAGES.map(entry => [ entry.code, [ entry.code, ...entry.aliases ] ])
+);
 
-const ISO_639_1: Record<string, string> = {
-    en: "eng", hu: "hun", it: "ita", de: "ger", fr: "fre", es: "spa", pt: "por",
-    ru: "rus", pl: "pol", cs: "cze", sk: "slo", tr: "tur", ar: "ara", hi: "hin",
-    ta: "tam", te: "tel", ko: "kor", ja: "jpn", zh: "chi", th: "tha", vi: "vie",
-    uk: "ukr", ro: "rum", bg: "bul", nl: "dut", sv: "swe", no: "nor", da: "dan",
-    fi: "fin", el: "gre", he: "heb", fa: "per", id: "ind"
-};
+// the other direction, and the only place a two letter code is read: TMDB reports a
+// title's original language that way
+const ISO_639_1: Record<string, string> = Object.fromEntries(
+    LANGUAGES.map(entry => [ entry.iso1, entry.code ])
+);
 
 /**
  * Language tags sit after the title, so only that part is scanned — otherwise a

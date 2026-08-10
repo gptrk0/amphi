@@ -178,17 +178,36 @@ model Library {
   /// these are the ones told when it is ready.
   watchedBy Int[]
 
+  /// How big the torrent is, in bytes. Read back from the client rather than taken
+  /// from the indexer, so it is what actually landed — and kept here because the
+  /// listing has to be able to say it after the torrent is gone from qBittorrent.
+  ///
+  /// A double, not an Int: a season pack passes 2 GB routinely, and a byte count is
+  /// exact in a double up to 2^53, which is nine petabytes past anything here.
+  sizeBytes Float?
+
   startedAt   DateTime  @default(now())
   completedAt DateTime?
 
-  /// Until when it may not be deleted. Set when the download finishes; the torrent
-  /// keeps seeding past it, this only unlocks the delete button.
+  /// Until when it may not be deleted, and nothing more: the torrent goes on seeding past
+  /// it under the client's own rules, this only unlocks the delete button.
+  ///
+  /// A projection of qBittorrent's `seeding_time`, refreshed on every sync round rather
+  /// than set once when the download landed — so a paused torrent keeps owing the time it
+  /// is not spending, and one that was already complete before the app saw it is not asked
+  /// to serve its window twice. See `syncSeedWindow`.
   seedUntil DateTime?
 
   /// Asked for while it was still seeding. The cleanup carries it out the moment
   /// `seedUntil` passes.
   deleteRequested Boolean @default(false)
   deleteFiles     Boolean @default(true)
+
+  /// Who asked for it. The deletion itself happens later, in a background round with
+  /// nobody signed in, and the notification about it still has to be able to say
+  /// whose decision it was. Null on a row nobody marked, and on a deletion the
+  /// retention time carried out on its own.
+  deleteRequestedBy Int?
 
   /// Deleted, but remembered. Without the row the scanner would have no idea the
   /// episode was ever obtained and would fetch it all over again.

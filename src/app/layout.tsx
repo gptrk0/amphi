@@ -8,6 +8,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import "./globals.css";
 import { Separator } from "@radix-ui/react-separator";
 import { SearchBar } from "@/components/searchbar";
+import { ScrollRestoration } from "@/components/scroll-restoration";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { Toaster } from "@/components/ui/sonner";
 import { UserMenu } from "@/components/user-menu";
@@ -75,6 +76,10 @@ export default function RootLayout({
 
                                         { children }
                                         <Toaster />
+
+                                        {/* stepping back into a listing lands where you
+                                            were, which no listing here can do on its own */}
+                                        <ScrollRestoration />
                                     </SidebarInset>
                                 </SidebarProvider>
                             </DownloadProvider>

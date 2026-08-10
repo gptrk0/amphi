@@ -5,6 +5,19 @@ import { logInfo } from "@/lib/log";
 import { loadSettings } from "@/lib/settings";
 import { updateUser, UserError } from "@/lib/users";
 import { webhookProblem } from "@/lib/webhook";
+import { cleanLanguageList, resolveLanguage } from "@/types/language";
+import { NOTIFY_EVENT_VALUES } from "@/types/notify";
+
+/**
+ * Only events that exist. The form ticks boxes, so nothing it sends can be wrong — but a
+ * value this does not recognise would quietly mean "send me nothing", which is the one
+ * outcome nobody would go looking for a typo to explain.
+ */
+const cleanEvents = (value: string) => value
+    .split(",")
+    .map(event => event.trim().toLowerCase())
+    .filter(event => event === "*" || NOTIFY_EVENT_VALUES.includes(event))
+    .join(",");
 
 /** Your own account, including the parts the shared session state does not carry. */
 export async function GET() {
@@ -86,13 +99,34 @@ export async function PATCH(req: Request) {
         // the scanner will fetch on its own, so an empty list is refused rather than
         // silently meaning "anything": that would be a person who never gets anything
         // downloaded for them, and nothing on screen would say why.
+        //
+        // Every one of them goes through the catalogue on the way in. The form only offers
+        // what is in there, so this is for anything else that talks to the api — and it is
+        // worth being strict about, because a code the release parser cannot produce is a
+        // language nothing will ever be found in, with nothing on screen to say why. It is
+        // also forgiving in the one direction that costs nothing: `hungarian`, `magyar` and
+        // `hu` all arrive as `hun`.
         if (typeof body?.preferredLanguages === "string") {
-            const preferred = parseLanguageList(body.preferredLanguages);
+            const preferred = cleanLanguageList(body.preferredLanguages);
+            const asked = parseLanguageList(body.preferredLanguages);
 
-            if (preferred.length === 0) {
+            if (! preferred) {
                 return Response.json({
                     success: false,
-                    message: "Name at least one language — the first one is what gets downloaded for you."
+                    message: asked.length > 0
+                        ? `Not a language this app knows: ${ asked.join(", ") }. Pick from the list.`
+                        : "Name at least one language — the first one is what gets downloaded for you."
+                }, { status: 400 });
+            }
+
+            const untagged = typeof body.defaultLanguage === "string" ? resolveLanguage(body.defaultLanguage) : null;
+
+            // this one cannot be dropped and cannot be empty: it is what every untagged
+            // release is taken to be, so a wrong value here quietly re-labels everything
+            if (typeof body.defaultLanguage === "string" && body.defaultLanguage.trim() && ! untagged) {
+                return Response.json({
+                    success: false,
+                    message: `"${ body.defaultLanguage.trim() }" is not a language this app knows.`
                 }, { status: 400 });
             }
 
@@ -101,13 +135,11 @@ export async function PATCH(req: Request) {
             await prisma.user.update({
                 where: { id: me.id },
                 data: {
-                    preferredLanguages: preferred.join(","),
+                    preferredLanguages: preferred,
                     ...(typeof body.excludeLanguages === "string"
-                        ? { excludeLanguages: parseLanguageList(body.excludeLanguages).join(",") }
+                        ? { excludeLanguages: cleanLanguageList(body.excludeLanguages) }
                         : {}),
-                    ...(typeof body.defaultLanguage === "string" && body.defaultLanguage.trim()
-                        ? { defaultLanguage: body.defaultLanguage.trim().toLowerCase() }
-                        : {}),
+                    ...(untagged ? { defaultLanguage: untagged } : {}),
                     ...(Number.isFinite(bonus) && bonus >= 0 ? { languageBonus: Math.round(bonus) } : {}),
                     ...(typeof body.languageFirst === "boolean" ? { languageFirst: body.languageFirst } : {})
                 }
@@ -134,7 +166,7 @@ export async function PATCH(req: Request) {
                 where: { id: me.id },
                 data: {
                     ...(url !== null ? { webhookUrl: url || null } : {}),
-                    ...(typeof body.notifyEvents === "string" ? { notifyEvents: body.notifyEvents.trim() } : {})
+                    ...(typeof body.notifyEvents === "string" ? { notifyEvents: cleanEvents(body.notifyEvents) } : {})
                 }
             });
         }

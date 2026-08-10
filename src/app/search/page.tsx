@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import axios from "axios";
 
@@ -8,25 +8,39 @@ import { MediaCard } from "@/components/media-card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cached, remember } from "@/lib/browse-cache";
 import { Media } from "@/types/media";
 
-function SearchResults() {
-    const query = (useSearchParams().get("q") || "").trim();
-    const [ items, setItems ] = useState<Media[]>();
-    const [ page, setPage ] = useState(1);
-    const [ totalPages, setTotalPages ] = useState(0);
+type Shown = { items: Media[], page: number, totalPages: number };
+
+/**
+ * One query's results. Keyed on the query by the component above, so a new search is a new
+ * mount and what the cache holds can be read straight into the initial state — including
+ * however many times "Load more" was pressed, which is the part that made coming back from
+ * a details page lose its place.
+ */
+function Results({ query }: { query: string }) {
+    const cacheKey = `search:${ query }`;
+    const was = query ? cached<Shown>(cacheKey) : undefined;
+
+    const [ items, setItems ] = useState<Media[] | undefined>(was?.items);
+    const [ page, setPage ] = useState(was?.page ?? 1);
+    const [ totalPages, setTotalPages ] = useState(was?.totalPages ?? 0);
     const [ loading, setLoading ] = useState(false);
 
-    useEffect(() => {
-        setPage(1);
-        setItems(undefined);
-    }, [ query ]);
+    // what is already in `items`: the pages the cache brought back are not asked for again
+    const loaded = useRef(was?.page ?? 0);
+    const shown = useRef<Media[]>(was?.items ?? []);
 
     useEffect(() => {
         if (! query) {
             setItems([]);
             setTotalPages(0);
 
+            return;
+        }
+
+        if (page <= loaded.current) {
             return;
         }
 
@@ -41,15 +55,22 @@ function SearchResults() {
                 }
 
                 const found: Media[] = res.data.result || [];
+                const merged = page > 1 ? [ ...shown.current, ...found ] : found;
+                const pages = res.data.totalPages || 0;
 
-                setItems(prev => page > 1 && prev ? [ ...prev, ...found ] : found);
-                setTotalPages(res.data.totalPages || 0);
+                shown.current = merged;
+                loaded.current = page;
+
+                setItems(merged);
+                setTotalPages(pages);
+
+                remember<Shown>(cacheKey, { items: merged, page, totalPages: pages });
             })
             .catch(err => {
                 console.error(err);
 
                 if (! cancelled) {
-                    setItems([]);
+                    setItems(prev => prev || []);
                 }
             })
             .finally(() => {
@@ -59,7 +80,7 @@ function SearchResults() {
             });
 
         return () => { cancelled = true; };
-    }, [ query, page ]);
+    }, [ cacheKey, query, page ]);
 
     return (
         <div className="p-4">
@@ -109,6 +130,12 @@ function SearchResults() {
             </>}
         </div>
     );
+}
+
+function SearchResults() {
+    const query = (useSearchParams().get("q") || "").trim();
+
+    return <Results key={query} query={query} />;
 }
 
 export default function Page() {

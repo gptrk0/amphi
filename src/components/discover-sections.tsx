@@ -10,6 +10,7 @@ import { MediaRow } from "@/components/media-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWatchlist } from "@/context/watchlist";
+import { cached, remember } from "@/lib/browse-cache";
 import { Section } from "@/lib/sections";
 import { Media } from "@/types/media";
 
@@ -38,16 +39,28 @@ function SetupNotice() {
     );
 }
 
+type Shown = { hero: Media | null, sections: Section[] };
+
+/**
+ * `view` never changes for a mounted one of these — the call sites key on it — so what
+ * the cache is read into is the initial state and there is no resetting to do.
+ */
 export function DiscoverSections({ view }: { view: string }) {
     const { revision } = useWatchlist();
-    const [ hero, setHero ] = useState<Media | null>(null);
-    const [ sections, setSections ] = useState<Section[]>();
+    const key = `sections:${ view }`;
+    const was = cached<Shown>(key);
+
+    const [ hero, setHero ] = useState<Media | null>(was?.hero ?? null);
+    const [ sections, setSections ] = useState<Section[] | undefined>(was?.sections);
     const [ needsTmdb, setNeedsTmdb ] = useState(false);
 
     // the library rows are built from the watchlist, so a change anywhere reloads
     // them. `revision` counts actual changes: keying this on the list itself meant
     // the watchlist arriving after mount looked like one, and the whole page was
     // built twice on every visit.
+    //
+    // It refetches even when the cache has already drawn the page — what the cache buys
+    // is the height and the first paint, not the freshness of a trending row.
     useEffect(() => {
         let cancelled = false;
 
@@ -57,20 +70,24 @@ export function DiscoverSections({ view }: { view: string }) {
                     return;
                 }
 
-                setHero(res.data.hero || null);
-                setSections(res.data.sections || []);
+                const shown: Shown = { hero: res.data.hero || null, sections: res.data.sections || [] };
+
+                setHero(shown.hero);
+                setSections(shown.sections);
                 setNeedsTmdb(res.data.setup?.tmdb === false);
+
+                remember(key, shown);
             })
             .catch(err => {
                 console.error(err);
 
                 if (! cancelled) {
-                    setSections([]);
+                    setSections(prev => prev || []);
                 }
             });
 
         return () => { cancelled = true; };
-    }, [ view, revision ]);
+    }, [ key, view, revision ]);
 
     if (needsTmdb) {
         return <SetupNotice />;

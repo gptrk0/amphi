@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
 
-import { actorText, currentUser, refuseUnlessSignedIn } from "@/lib/auth";
+import { actorText, AuthUser, currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 import { executeStoredPlan, getStoredPlan, toSeasonRequests } from "@/lib/download-plan";
 import { executeMovieGrab, executeSeasonGrab, grabContext, planMovieGrab, planSeasonGrab, StartedDownload } from "@/lib/grab";
 import { isIndexerConfigured } from "@/lib/indexer";
+import { getLibraryItem, libraryLabel } from "@/lib/library";
 import { errorText, logError, logInfo, logWarn } from "@/lib/log";
+import { notify, notifyUsers } from "@/lib/notify";
 import { isClientConfigured } from "@/lib/torrent";
 import { loadSettings, NotConfiguredError } from "@/lib/settings";
 import { MissingSeason } from "@/types/download";
@@ -31,14 +33,29 @@ const missingService = async () => {
 /**
  * Every download the user asked for by hand, one line each. The scanner logs its own
  * grabs, and this is the other half of the answer to "where did this file come from".
+ *
+ * It also notifies, for the same reason: the install chat hears about everything the
+ * scanner grabs, and a download somebody started themselves is the kind that most has a
+ * person behind it. The title is the one a person would say — the release name is the
+ * detail under it, exactly as on the scanner's own messages.
  */
-const logStarted = async (started: StartedDownload[], who: string) => {
+const announceStarted = async (started: StartedDownload[], me: AuthUser | null) => {
+    const who = actorText(me);
+
     for (const download of started) {
         await logInfo(
             "download",
             `asked for by hand: ${ download.title }`,
             `${ who }, ${ download.label }${ download.hash ? `, torrent ${ download.hash.slice(0, 8) }` : ", the client returned no hash" }`
         );
+
+        const item = await getLibraryItem(download.libraryId);
+        const label = item ? await libraryLabel(item) : download.title;
+
+        // "asked for by Patrick" against the scanner's "for Patrick": which of the two
+        // started it is the first thing anybody reading the chat wants to know
+        await notify("started", label, download.title, `asked for ${ who }`);
+        await notifyUsers(download.watchedBy, "started", label, download.title);
     }
 };
 
@@ -75,7 +92,6 @@ export async function POST(req: NextRequest) {
         // an instant download never touches a watchlist, so this is the only record
         // of whose it is — both for the log and for the notification when it lands
         const me = await currentUser();
-        const who = actorText(me);
 
         const notConfigured = await missingService();
 
@@ -98,7 +114,7 @@ export async function POST(req: NextRequest) {
 
             const started = await executeStoredPlan(plan, toPicks(body?.picks), me?.id ?? null);
 
-            await logStarted(started, who);
+            await announceStarted(started, me);
 
             // silence here was how a download could look like a watchlisting: the
             // grab puts what it cannot start back on the watchlist, and nothing said so
@@ -151,7 +167,7 @@ export async function POST(req: NextRequest) {
 
             const started = await executeMovieGrab(id, plan.release, context, me!.id);
 
-            await logStarted(started ? [ started ] : [], who);
+            await announceStarted(started ? [ started ] : [], me);
 
             if (! started) {
                 await logWarn(
@@ -198,7 +214,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        await logStarted(started, who);
+        await announceStarted(started, me);
 
         return Response.json({
             success: true,

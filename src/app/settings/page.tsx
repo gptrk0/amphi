@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { TagInput } from "@/components/tag-input";
 import { AdminOnly } from "@/components/admin-only";
 
@@ -21,8 +22,12 @@ type SettingItem = {
     group: string;
     label: string;
     type: "string" | "number" | "boolean" | "list" | "table";
+    // only decides how the log writes about it — the value itself is shown here, see
+    // the comment on `toItem` in the api route
     secret: boolean;
     ordered: boolean;
+    // a list that can only hold these: ticked instead of typed
+    options: { value: string, label: string, help?: string }[];
     help: string;
     placeholder: string;
     default: string;
@@ -77,8 +82,8 @@ function SettingsPage() {
             });
     }, []);
 
-    // only what actually changed is sent; a secret left alone stays untouched because
-    // the api treats an empty secret as "no change"
+    // only what actually changed is sent, secrets included: the field holds the real
+    // value now, so an untouched one compares equal and never reaches the api
     const dirty = useMemo(() => {
         if (! items) {
             return {};
@@ -166,6 +171,12 @@ function SettingsPage() {
             );
         }
 
+        // a fixed set of values is ticked rather than typed: a misspelt event was
+        // accepted, stored, and then quietly sent nothing
+        if (item.options.length > 0) {
+            return <OptionCheckboxes value={value} onChange={set} options={item.options} />;
+        }
+
         if (item.type === "list" || item.type === "table") {
             return (
                 <TagInput
@@ -180,12 +191,10 @@ function SettingsPage() {
 
         return (
             <Input
-                type={item.secret ? "password" : "text"}
+                type="text"
                 inputMode={item.type === "number" ? "numeric" : undefined}
                 value={value}
-                placeholder={item.secret
-                    ? (item.isSet ? "set — type to replace" : "not set")
-                    : item.placeholder}
+                placeholder={item.placeholder}
                 autoComplete="off"
                 onChange={(e) => set(e.target.value)}
             />

@@ -13,11 +13,15 @@ import {
 } from "@/lib/settings";
 
 /**
- * A secret is never sent back. The page shows whether one is set and lets it be
- * replaced, which is enough to administer it without the value ever leaving the
- * server. Everything here is administrators only now, which is a reason to relax this
- * and not a good one: a rendered password is one shoulder, one screen share or one
- * cached response away from being somebody else's.
+ * **A secret comes back too.** It used to be withheld — the page said whether one was set
+ * and let it be replaced, never read. What that bought was one attack (a screen share, a
+ * cached response) that this page is already wide open to, since it is administrators
+ * only and they are the ones who typed the key in the first place. What it cost was the
+ * everyday question: is the key in there the same one the indexer is rejecting? That was
+ * unanswerable without a database shell, and a field you cannot read is a field you
+ * retype from a password manager to check. So the value is sent, and `secret` now only
+ * means one thing: the **log** names the setting instead of quoting it, because a log page
+ * is read by people who are not looking for it and shows up in screenshots.
  */
 const toItem = (key: string) => {
     const def = SETTINGS.find(entry => entry.key === key)!;
@@ -30,6 +34,7 @@ const toItem = (key: string) => {
         type: def.type,
         secret: !! def.secret,
         ordered: !! def.ordered,
+        options: def.options ?? [],
         help: def.help || "",
         placeholder: def.placeholder || "",
         // shown as "back to X" on the reset button, so it is worth knowing even when the
@@ -37,8 +42,7 @@ const toItem = (key: string) => {
         default: def.default ?? "",
         hasDefault: def.default !== undefined,
         source,
-        // where it comes from is worth showing even for a secret; the value is not
-        value: def.secret ? "" : settingText(key),
+        value: settingText(key),
         isSet: source !== "unset"
     };
 };
@@ -55,7 +59,7 @@ const clip = (value: string) => value.length > 120 ? `${ value.slice(0, 119) }�
  */
 const change = (key: string, before: string, after: string) => {
     if (isSecret(key)) {
-        return before === "" ? "set for the first time" : "replaced";
+        return after === "" ? "cleared" : before === "" ? "set for the first time" : "replaced";
     }
 
     return `"${ clip(before) }" → "${ clip(after) }"`;
@@ -112,13 +116,6 @@ export async function PUT(req: Request) {
 
             const text = (typeof value === "string" ? value : String(value ?? "")).trim();
 
-            // an untouched secret arrives as an empty string, and empty would mean "back
-            // to nothing" — so those are dropped rather than wiping a key nobody meant
-            // to change. Clearing one is the separate DELETE below
-            if (isSecret(key) && text === "") {
-                continue;
-            }
-
             // a number that is not one would silently become the default on the next
             // read, so it is refused here instead
             if (def.type === "number" && text !== "" && ! Number.isFinite(Number(text))) {
@@ -151,8 +148,10 @@ export async function PUT(req: Request) {
 }
 
 /**
- * Back to the default. Also the only way to clear a secret, for the same reason an empty
- * field cannot mean it.
+ * Back to the default, which is a different gesture from saving an empty value — for a
+ * list, empty is a decision and is stored. A secret can now also be cleared by emptying
+ * its field, since the field holds the real value and emptying it is deliberate; this is
+ * still the only way to get a *default* back.
  */
 export async function DELETE(req: Request) {
     const refusal = await refuseUnlessAdmin();

@@ -19,11 +19,16 @@ export type LibraryEntry = {
     // "S03E07", "S01 — 10 episodes", empty for a film
     covers: string;
     episodeCount: number;
+    // how big the torrent is. Null on an old row whose torrent is no longer in the
+    // client, which is the only place the size could have been read from
+    sizeBytes: number | null;
     startedAt: string;
     completedAt: string | null;
     seedUntil: string | null;
     // still inside the seed window: it can be marked for deletion, not deleted
     seeding: boolean;
+    // when the retention will delete it on its own, null while that is switched off
+    expiresAt: string | null;
     deleteRequested: boolean;
     deleteFiles: boolean;
     // who was waiting for this, by name. The library is shared; the wanting was not

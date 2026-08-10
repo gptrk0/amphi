@@ -61,6 +61,20 @@ const remaining = (seconds: number | null) => {
     return seconds < 3600 ? `${ Math.round(seconds / 60) }m left` : `${ Math.round(seconds / 3600) }h left`;
 };
 
+/**
+ * GB for anything worth calling GB, MB below that. Two decimals would be noise here —
+ * this column answers "what is filling the disk", not "how many bytes exactly".
+ */
+const sizeText = (bytes: number | null) => {
+    if (! bytes) {
+        return "—";
+    }
+
+    const gb = bytes / 1024 ** 3;
+
+    return gb >= 1 ? `${ gb.toFixed(gb >= 10 ? 0 : 1) } GB` : `${ Math.max(Math.round(bytes / 1024 ** 2), 1) } MB`;
+};
+
 const ago = (value: string | null) => {
     if (! value) {
         return "—";
@@ -77,8 +91,8 @@ const ago = (value: string | null) => {
     return hours < 48 ? `${ hours }h ago` : `${ Math.round(hours / 24) }d ago`;
 };
 
-/** How much of the seed time is left, which is the only thing blocking a delete. */
-const seedText = (value: string | null) => {
+/** How long until a moment that has consequences. Empty once it has passed. */
+const untilText = (value: string | null) => {
     if (! value) {
         return "";
     }
@@ -89,7 +103,14 @@ const seedText = (value: string | null) => {
         return "";
     }
 
-    return hours < 48 ? `${ hours }h left` : `${ Math.ceil(hours / 24) } days left`;
+    return hours < 48 ? `${ hours }h` : `${ Math.ceil(hours / 24) } days`;
+};
+
+/** How much of the seed time is left, which is the only thing blocking a delete. */
+const seedText = (value: string | null) => {
+    const left = untilText(value);
+
+    return left ? `${ left } left` : "";
 };
 
 /**
@@ -221,6 +242,31 @@ export function LibraryTable() {
             )
         },
         {
+            key: "watchers",
+            label: "Requested by",
+            value: item => item.watchers.join(", ").toLowerCase(),
+            // the file is the household's, the wanting was not: this is the only place
+            // that still says whose download it was, once the watchlist rows are gone
+            render: item => item.watchers.length === 0
+                ? <span className="text-xs text-muted-foreground">—</span>
+                : <span
+                    className="block max-w-[12rem] truncate text-xs"
+                    title={item.watchers.join(", ")}
+                >
+                    { item.watchers.join(", ") }
+                </span>
+        },
+        {
+            key: "size",
+            label: "Size",
+            value: item => item.sizeBytes ?? 0,
+            render: item => (
+                <span className="text-xs whitespace-nowrap text-muted-foreground">
+                    { sizeText(item.sizeBytes) }
+                </span>
+            )
+        },
+        {
             key: "status",
             label: "Status",
             value: item => item.status,
@@ -266,7 +312,12 @@ export function LibraryTable() {
 
                 return (
                     <div className="min-w-[7rem]">
-                        <div className={classNames("flex items-center gap-1", { "text-muted-foreground": ! left })}>
+                        <div
+                            className={classNames("flex items-center gap-1", { "text-muted-foreground": ! left })}
+                            // it is qBittorrent's own seeding time, so this moves out again
+                            // while the torrent is paused rather than counting down anyway
+                            title="Counted from qBittorrent's own seeding time — a paused torrent is not serving it."
+                        >
                             {left && <Clock className="size-3" />}
                             { left || "free to delete" }
                         </div>
@@ -274,6 +325,17 @@ export function LibraryTable() {
                         {item.deleteRequested && (
                             <div className="text-xs text-destructive">
                                 { left ? "goes when the time is up" : "deleting..." }
+                            </div>
+                        )}
+
+                        {/* the retention is a timer nobody is watching, so the row it will
+                            take says so long before it happens */}
+                        {! item.deleteRequested && item.expiresAt && (
+                            <div
+                                className="text-xs text-muted-foreground"
+                                title="The retention time under Settings / Library. The files go with it."
+                            >
+                                { untilText(item.expiresAt) ? `deleted in ${ untilText(item.expiresAt) }` : "deleted any moment now" }
                             </div>
                         )}
                     </div>
@@ -340,7 +402,9 @@ export function LibraryTable() {
             <div className="space-y-1">
                 <h2 className="text-2xl font-semibold tracking-tight">Library</h2>
                 <p className="text-sm text-muted-foreground">
-                    Everything you have and everything on its way. A finished download seeds for a while before it can be deleted.
+                    Everything the house has and everything on its way. A finished download seeds for a while
+                    before it can be deleted, and then goes on its own — with its files — once the retention
+                    time under Settings / Library is up.
                 </p>
             </div>
 

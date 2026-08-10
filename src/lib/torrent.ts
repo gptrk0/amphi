@@ -34,6 +34,10 @@ export type TorrentStatus = {
     // seconds, null when qBittorrent cannot tell yet
     eta: number | null;
     seeds: number;
+    /// How long this has been complete, in seconds, as the client counts it — qBittorrent's
+    /// `seeding_time`. Not the app's own clock: a torrent that was already seeding before
+    /// the app noticed it, or one that is paused, is only honest about it from here.
+    seedingTime: number;
 };
 
 const category = () => settingText("TORRENT_CATEGORY");
@@ -150,7 +154,9 @@ const toStatus = (torrent: any): TorrentStatus => {
         size: Number(torrent.size || 0),
         downloadSpeed: Number(torrent.dlspeed || 0),
         eta: eta > 0 && eta < UNKNOWN_ETA ? eta : null,
-        seeds: Number(torrent.num_seeds || 0)
+        seeds: Number(torrent.num_seeds || 0),
+        // negative on an incomplete torrent in some versions, hence the clamp
+        seedingTime: Math.max(Number(torrent.seeding_time || 0), 0)
     };
 };
 

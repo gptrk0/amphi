@@ -11,8 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { OptionCheckboxes } from "@/components/option-checkboxes";
+import { OptionSelect } from "@/components/option-select";
 import { TagInput } from "@/components/tag-input";
 import { useSession } from "@/context/session";
+import { LANGUAGE_OPTIONS } from "@/types/language";
+import { NOTIFY_EVENTS } from "@/types/notify";
 
 type Account = {
     id: number;
@@ -29,8 +34,6 @@ type Account = {
     languageBonus: number;
     languageFirst: boolean;
 };
-
-const EVENTS = "ready, started, dropped";
 
 // what to paste, for the two services anybody actually uses
 const EXAMPLES = [
@@ -232,10 +235,11 @@ export default function Page() {
                 <div className="space-y-2">
                     <label className="text-sm font-medium">What to send you</label>
 
-                    <TagInput value={events} onChange={setEvents} placeholder="event" />
+                    <OptionCheckboxes value={events} onChange={setEvents} options={NOTIFY_EVENTS} />
 
                     <p className="text-xs text-muted-foreground">
-                        { EVENTS } — or <code>*</code> for all of them. Empty sends nothing.
+                        Only ever about your own downloads. Nothing ticked sends nothing, and so does an
+                        empty webhook above.
                     </p>
                 </div>
 
@@ -244,7 +248,14 @@ export default function Page() {
                 <div className="space-y-2">
                     <label className="text-sm font-medium">Languages you want, best first</label>
 
-                    <TagInput value={languages} onChange={setLanguages} ordered placeholder="hun" />
+                    <TagInput
+                        value={languages}
+                        onChange={setLanguages}
+                        ordered
+                        options={LANGUAGE_OPTIONS}
+                        noun="language"
+                        placeholder="pick a language"
+                    />
 
                     <p className="text-xs text-muted-foreground">
                         <b>The first one is the only language downloaded for you on its own.</b> If a release
@@ -259,7 +270,12 @@ export default function Page() {
                     <div className="space-y-2">
                         <label className="text-sm font-medium">Untagged release counts as</label>
 
-                        <Input value={untagged} onChange={event => setUntagged(event.target.value)} placeholder="eng" />
+                        <OptionSelect
+                            value={untagged}
+                            onChange={setUntagged}
+                            options={LANGUAGE_OPTIONS}
+                            noun="language"
+                        />
 
                         <p className="text-xs text-muted-foreground">
                             Most releases carry no language tag at all. This is what they are taken to be —
@@ -284,12 +300,13 @@ export default function Page() {
                 </div>
 
                 <div className="space-y-2">
+                    {/* the app's own checkbox, like every other one — a raw input here was
+                        the browser's, and looked like it */}
                     <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-                        <input
-                            type="checkbox"
+                        <Checkbox
                             className="cursor-pointer"
                             checked={languageFirst}
-                            onChange={event => setLanguageFirst(event.target.checked)}
+                            onCheckedChange={(checked) => setLanguageFirst(checked === true)}
                         />
                         Language outranks resolution
                     </label>
@@ -302,7 +319,13 @@ export default function Page() {
                 <div className="space-y-2">
                     <label className="text-sm font-medium">Languages you never want</label>
 
-                    <TagInput value={excluded} onChange={setExcluded} placeholder="ita" />
+                    <TagInput
+                        value={excluded}
+                        onChange={setExcluded}
+                        options={LANGUAGE_OPTIONS}
+                        noun="language"
+                        placeholder="pick a language"
+                    />
 
                     <p className="text-xs text-muted-foreground">
                         Only applies to what you start by hand, and never to a release in the title&apos;s own

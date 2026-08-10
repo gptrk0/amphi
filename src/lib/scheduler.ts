@@ -15,10 +15,13 @@ import {
     claimHeldUnits,
     forgetLibraryItem,
     hasLibraryItem,
+    isSeeding,
     libraryLabel,
     markAvailable,
     restoreToWatchlist,
-    runLibraryCleanup
+    runLibraryCleanup,
+    setSize,
+    syncSeedWindow
 } from "@/lib/library";
 import { getMediaMetadata, getTvSeasons, isTmdbConfigured } from "@/lib/media";
 import { isIndexerConfigured } from "@/lib/indexer";
@@ -28,7 +31,7 @@ import { forgetStall, stallDeleteFiles, stallMinutes, trackStall } from "@/lib/s
 import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/lib/payload";
 import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
 import { getTorrentFiles, getTorrentStatus, isClientConfigured, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
-import { isNotifyConfigured, notify, notifyUsers } from "@/lib/notify";
+import { forWhom, isNotifyConfigured, nameList, notify, notifyUsers } from "@/lib/notify";
 import { ensureMovieUnit, syncTvSeasons, toAirDate, toMediaType } from "@/lib/watchlist";
 
 const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES") * 60 * 1000;
@@ -110,11 +113,25 @@ const backoffMs = (attempts: number) => Math.min(backoffBaseMs() * 2 ** attempts
 const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
 
 // the log says when the seed lock lifts, because that is the only thing standing
-// between a finished download and the delete button
-const seedUntilText = () => {
+// between a finished download and the delete button. Both halves are worth printing: how
+// much is owed, and how much the client says has already been served
+const seedLeftText = (item: { seedUntil: Date | null }, seedingTimeSeconds: number) => {
+    const served = Math.round(seedingTimeSeconds / 3600);
+    const left = item.seedUntil ? Math.round((item.seedUntil.getTime() - Date.now()) / 3600000) : 0;
+
+    return `${ left }h to go, ${ served }h seeded so far as the client counts it`;
+};
+
+const seedUntilText = (item: { seedUntil: Date | null }, seedingTimeSeconds: number) => {
     const days = settingNumber("LIBRARY_SEED_DAYS");
 
-    return days > 0 ? `${ days } day${ days === 1 ? "" : "s" } from now` : "no seed time is set";
+    if (days <= 0) {
+        return "no seed time is set, it can be deleted at once";
+    }
+
+    return item.seedUntil && item.seedUntil.getTime() > Date.now()
+        ? `seeding for ${ days } day${ days === 1 ? "" : "s" }, ${ seedLeftText(item, seedingTimeSeconds) }`
+        : `its ${ days } day${ days === 1 ? "" : "s" } of seeding were already served, it can be deleted`;
 };
 
 /**
@@ -178,9 +195,10 @@ const notifyStarted = async (
 
     // a film has no label worth printing — "Mortal Kombat II movie" reads like a typo
     const full = started?.label ? `${ name } ${ started.label }` : name;
+    const watchedBy = started ? started.watchedBy : [];
 
-    await notify("started", full, releaseTitle);
-    await notifyUsers(started ? started.watchedBy : [], "started", full, releaseTitle);
+    await notify("started", full, releaseTitle, await forWhom(watchedBy));
+    await notifyUsers(watchedBy, "started", full, releaseTitle);
 };
 
 /**
@@ -229,6 +247,24 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
                 await prisma.library.update({ where: { id: item.id }, data: { releaseTitle: torrent.name } });
             }
 
+            // and rows that finished before the size was stored. One write each, once:
+            // this is the last chance, because the torrent is what knows it
+            if (! item.sizeBytes && torrent.size > 0) {
+                await setSize(item.id, torrent.size);
+            }
+
+            // the seed window follows the client's own seeding time rather than a date
+            // set once when the download landed — a paused torrent owes the time it is
+            // not spending, and one that seeded before the app noticed is not asked twice
+            const moved = await syncSeedWindow(item, torrent.seedingTime);
+
+            if (moved) {
+                await syncLog(
+                    `${ label }: seed time ${ isSeeding(moved) ? `is not up yet, ${ seedLeftText(moved, torrent.seedingTime) }` : "is up, it can be deleted" }`,
+                    LogLevel.DEBUG
+                );
+            }
+
             continue;
         }
 
@@ -248,7 +284,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             }
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
-            await notify("dropped", label, `${ payload.reason } — ${ torrent.name }`);
+            await notify("dropped", label, `${ payload.reason } — ${ torrent.name }`, await forWhom(item.watchedBy));
             await notifyUsers(item.watchedBy, "dropped", label, `${ payload.reason } — ${ torrent.name }`);
 
             await removeTorrent(hash, payloadDeleteFiles());
@@ -260,10 +296,11 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
         }
 
         if (torrent.isComplete) {
-            await syncLog(`${ label }: downloaded (${ torrent.name }), seeding until ${ seedUntilText() }`);
+            const available = await markAvailable(item.id, torrent.name, torrent.size, torrent.seedingTime);
 
-            await markAvailable(item.id, torrent.name);
-            await notify("ready", label, torrent.name);
+            await syncLog(`${ label }: downloaded (${ torrent.name }), ${ seedUntilText(available, torrent.seedingTime) }`);
+
+            await notify("ready", label, torrent.name, await forWhom(item.watchedBy));
             await notifyUsers(item.watchedBy, "ready", label, torrent.name);
 
         } else if (torrent.isFailed) {
@@ -286,7 +323,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
             const stalled = `stood still at ${ Math.round(torrent.progress * 100) }% for ${ stallMinutes() } minutes`;
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
-            await notify("dropped", label, `${ stalled } — ${ torrent.name }`);
+            await notify("dropped", label, `${ stalled } — ${ torrent.name }`, await forWhom(item.watchedBy));
             await notifyUsers(item.watchedBy, "dropped", label, `${ stalled } — ${ torrent.name }`);
 
             await removeTorrent(hash, stallDeleteFiles());
@@ -296,9 +333,25 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
         }
     }
 
-    // what was marked for deletion while it was still seeding, now that it is not
-    for (const done of await runLibraryCleanup()) {
-        await syncLog(`${ await libraryLabel(done) }: the seed time is up and it was marked for deletion, ${ done.deleteFiles ? "removed with its files" : "removed, the files were kept" }`);
+    // what the app deleted by itself this round: a mark left while it was still seeding,
+    // and a retention time that ran out. The second one destroys files nobody asked about
+    // just now, so it is a WARN and it says who to blame — the setting, not a person
+    for (const { item, why } of await runLibraryCleanup()) {
+        const label = await libraryLabel(item);
+        const withFiles = why === "expired" || item.deleteFiles;
+        const marked = item.deleteRequestedBy ? await nameList([ item.deleteRequestedBy ]) : "";
+
+        const who = why === "expired"
+            ? `nobody — it was kept for ${ settingNumber("LIBRARY_RETENTION_DAYS") } days and the time ran out`
+            : marked ? `marked for deletion by ${ marked }` : "marked for deletion earlier";
+
+        await syncLog(
+            `${ label }: ${ why === "expired" ? "the retention time ran out" : "the seed time is up and it was marked for deletion" }, ${ withFiles ? "removed with its files" : "removed, the files were kept" }`,
+            why === "expired" ? LogLevel.WARN : LogLevel.INFO
+        );
+
+        await notify("deleted", label, item.releaseTitle || undefined, who);
+        await notifyUsers(item.watchedBy, "deleted", label, item.releaseTitle || undefined);
     }
 };
 
@@ -674,6 +727,14 @@ export const startScheduler = async () => {
     await loadSettings(true);
 
     await log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
+
+    // the one timer in the app that destroys files, so it says so on every boot rather
+    // than only in the settings page nobody opens twice
+    const retentionDays = settingNumber("LIBRARY_RETENTION_DAYS");
+
+    await log(retentionDays > 0
+        ? `a finished download is deleted with its files ${ retentionDays } days after it lands (Settings / Library)`
+        : "nothing in the library is deleted on its own: it stays until somebody deletes it (Settings / Library)");
 
     // a list can be empty, and a check that cannot reject anything must not look like
     // it is guarding something

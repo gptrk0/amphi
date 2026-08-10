@@ -8,6 +8,7 @@ import { DiscoverSections } from "@/components/discover-sections";
 import { MediaGrid } from "@/components/media-grid";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { cached, remember } from "@/lib/browse-cache";
 import { MediaGenre } from "@/types/media";
 
 const VIEWS: Record<string, { title: string, description: string, type: "movie" | "tv" }> = {
@@ -28,11 +29,22 @@ export default function Page() {
     const slug = typeof discover_media_type === "string" ? discover_media_type : "";
     const view = VIEWS[slug];
 
-    const [ genres, setGenres ] = useState<MediaGenre[]>([]);
+    const genreKey = `genres:${ view?.type || "" }`;
+
+    const [ genres, setGenres ] = useState<MediaGenre[]>(cached<MediaGenre[]>(genreKey) || []);
     const [ selected, setSelected ] = useState<number | null>(null);
 
+    // The chosen genre lives in the URL, because it has to survive the round trip through
+    // a details page — until now it was component state, so coming back turned the
+    // filtered grid into the unfiltered rows and there was nothing left to scroll back to.
+    //
+    // Read from `window.location` rather than `useSearchParams` on purpose: this page has
+    // no Suspense boundary above it, and one would have to be invented for a value that is
+    // only ever read on mount.
     useEffect(() => {
-        setSelected(null);
+        const wanted = new URLSearchParams(window.location.search).get("genre");
+
+        setSelected(wanted ? Number(wanted) || null : null);
 
         if (! view) {
             return;
@@ -44,12 +56,21 @@ export default function Page() {
             .then(res => {
                 if (! cancelled) {
                     setGenres(res.data.result || []);
+                    remember(genreKey, res.data.result || []);
                 }
             })
             .catch(err => console.error(err));
 
         return () => { cancelled = true; };
-    }, [ view ]);
+    }, [ genreKey, view ]);
+
+    // replaceState, not a router push: it is the same list either way, and a history entry
+    // per chip would mean pressing back five times to leave the page
+    const pick = (id: number | null) => {
+        setSelected(id);
+
+        window.history.replaceState(window.history.state, "", id ? `?genre=${ id }` : window.location.pathname);
+    };
 
     if (! view) {
         notFound();
@@ -77,7 +98,7 @@ export default function Page() {
                                 size="sm"
                                 variant={genre.id === selected ? "default" : "outline"}
                                 className="shrink-0 rounded-full"
-                                onClick={() => setSelected(genre.id === selected ? null : genre.id)}
+                                onClick={() => pick(genre.id === selected ? null : genre.id)}
                             >
                                 { genre.name }
                             </Button>
@@ -88,9 +109,11 @@ export default function Page() {
                 </ScrollArea>
             )}
 
+            {/* keyed on what they are showing: a fresh mount reads its own cache into its
+                initial state, so neither has a reset path to get wrong */}
             {selected
-                ? <MediaGrid type={view.type} category="popular" genre={String(selected)} />
-                : <DiscoverSections view={slug} />}
+                ? <MediaGrid key={`${ view.type }-${ selected }`} type={view.type} category="popular" genre={String(selected)} />
+                : <DiscoverSections key={slug} view={slug} />}
         </div>
     );
 }

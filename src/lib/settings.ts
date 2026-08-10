@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { NOTIFY_EVENTS } from "@/types/notify";
 
 /**
  * Every setting the app has, and the one place that knows how to read one.
@@ -40,6 +41,8 @@ export class NotConfiguredError extends Error {
 
 export type SettingType = "string" | "number" | "boolean" | "list" | "table";
 
+export type SettingOption = { value: string, label: string, help?: string };
+
 export type SettingDef = {
     key: string;
     group: string;
@@ -48,10 +51,15 @@ export type SettingDef = {
     // what an install with no row for this key does. Absent = the key is install
     // specific and there is nothing sensible to guess
     default?: string;
-    // a secret is never sent to the browser — it can be replaced, not read back
+    // never printed in the log, only named. It *is* shown on the settings page: that
+    // page is administrators only, and an api key you cannot read back is one you
+    // cannot check against the service that rejects it
     secret?: boolean;
     // for a list whose order carries meaning, so the ui offers to reorder it
     ordered?: boolean;
+    // a list that can only hold these, so it is ticked rather than typed. The stored
+    // value is the same comma separated string either way
+    options?: readonly SettingOption[];
     help?: string;
     placeholder?: string;
 };
@@ -86,7 +94,8 @@ export const SETTINGS: SettingDef[] = [
     { key: "TORRENT_SERIES_PATH", group: "Torrent client", label: "Series save path", type: "string" },
 
     // Library
-    { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "A finished download cannot be deleted until this is up — it can be marked for deletion, and goes by itself when the time comes. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
+    { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "Counted from qBittorrent's own seeding time, not from when the download landed: a torrent that is paused is not serving its time, and one that was already seeding before this app saw it is not asked to serve it twice. Until it is up the download can only be marked for deletion, and it goes by itself when the time comes. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
+    { key: "LIBRARY_RETENTION_DAYS", group: "Library", label: "Keep a download for (days)", type: "number", default: "7", help: "Counted from the moment it finished. When it is up the torrent and its files are deleted, without asking anybody — this is the only setting in the app that destroys files on a timer, so it is worth being sure about. It never fires before the seed time above is over. 0 = keep everything until somebody deletes it by hand." },
 
     // Quality
     { key: "QUALITY_RESOLUTIONS", group: "Quality", label: "Resolutions, best first", type: "list", ordered: true, default: "1080p,720p,2160p", help: "Anything not listed is rejected. An unrecognised resolution is kept as a last resort." },
@@ -123,7 +132,7 @@ export const SETTINGS: SettingDef[] = [
     // Notifications
     { key: "TELEGRAM_BOT_TOKEN", group: "Notifications", label: "Telegram bot token", type: "string", secret: true, help: "From @BotFather." },
     { key: "TELEGRAM_CHAT_ID", group: "Notifications", label: "Chat id", type: "string", help: "Message the bot once, then read it from /getUpdates. Negative for a group, and it changes if Telegram turns that group into a supergroup." },
-    { key: "TELEGRAM_EVENTS", group: "Notifications", label: "Events to send", type: "list", default: "ready,started,dropped", help: "ready = a download finished and is watchable, started = the scanner grabbed something, dropped = a grab turned out to be fake or dead. Empty sends nothing, `*` sends everything." },
+    { key: "TELEGRAM_EVENTS", group: "Notifications", label: "Events to send", type: "list", options: NOTIFY_EVENTS, default: "ready,started,dropped,deleted", help: "This chat is the install's, so every message says whose download it was about. Nothing ticked sends nothing." },
     { key: "TELEGRAM_API_URL", group: "Notifications", label: "Bot API URL", type: "string", default: "https://api.telegram.org", help: "Only for a self hosted Bot API server." },
     { key: "NOTIFY_WEBHOOK_ALLOW_PRIVATE", group: "Notifications", label: "Allow webhooks inside your network", type: "boolean", default: "0", help: "Everybody here can set a webhook of their own on their account page, and the server is what calls it — so by default it refuses addresses only the server can reach (localhost, 10.x, 192.168.x). Turn this on only if somebody genuinely has a receiver on the same network." },
 

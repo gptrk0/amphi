@@ -103,7 +103,10 @@ const nextAirDate = (units: UnitRow[]): string | null => {
  * merged entry below.
  */
 export const deriveStatus = (item: WatchlistRow): WatchlistStatus => {
-    const units = item.units;
+    // only what is watched: an unticked unit is a remembered "no" (see
+    // `pruneWatchlistItem`), and it must not make the row look like it is waiting for
+    // something
+    const units = item.units.filter(unit => unit.monitored);
 
     if (units.length === 0) {
         return PrismaWatchStatus.PENDING;
@@ -168,7 +171,9 @@ const libraryState = async (audience: LibraryAudience | null): Promise<Map<strin
  */
 export const toWatchlistEntry = (item: WatchlistRow | null, state: LibraryState, id: string): WatchlistEntry => {
     const [ type, tmdbId ] = id.split(":");
-    const units = item ? item.units : [];
+    // the counts and the next air date are about what is being waited for, so an
+    // unticked unit is not one of them
+    const units = (item ? item.units : []).filter(unit => unit.monitored);
 
     const status: WatchlistStatus = state.downloading > 0
         ? PrismaWatchStatus.DOWNLOADING
@@ -257,9 +262,18 @@ const toSeasons = (units: UnitRow[], held: Map<string, PrismaWatchStatus>, withE
 
     for (const [ id, status ] of held) {
         const [ seasonNumber, episodeNumber ] = id.split(":").map(Number);
+        const unit = seasons.get(seasonNumber)?.get(episodeNumber);
 
-        // being had is not being watched: there is nothing left to look for
-        put(seasonNumber, episodeNumber, { monitored: false, status, airDate: null });
+        // Being had is the stronger fact about the *status* — but it must not silently
+        // untick anything. This used to write `monitored: false` over whatever the unit
+        // said, and a tick the page cannot draw is a tick nobody can take back: the show
+        // stayed on the watchlist with every episode showing as unticked, and there was
+        // nothing on screen to explain why. (Regular Show, 2026-08-10.)
+        put(seasonNumber, episodeNumber, {
+            monitored: unit?.monitored ?? false,
+            status,
+            airDate: unit?.airDate ?? null
+        });
     }
 
     return [ ...seasons.entries() ]
@@ -270,7 +284,12 @@ const toSeasons = (units: UnitRow[], held: Map<string, PrismaWatchStatus>, withE
             return {
                 seasonNumber,
                 monitored: list.some(([ , episode ]) => episode.monitored),
-                episodeCount: list.length,
+                // what this season means to this person: what is watched, plus what is
+                // already had. An unticked episode is neither, and counting it would make
+                // "3 episodes" out of a season nobody is waiting for
+                episodeCount: list.filter(([ , episode ]) => episode.monitored
+                    || episode.status === PrismaWatchStatus.DOWNLOADED
+                    || episode.status === PrismaWatchStatus.DOWNLOADING).length,
                 downloadedCount: list.filter(([ , episode ]) => episode.status === PrismaWatchStatus.DOWNLOADED).length,
                 ...(withEpisodes ? {
                     episodes: list.map(([ episodeNumber, episode ]) => ({
@@ -403,12 +422,20 @@ export const ensureEpisodeUnits = async (
     tmdbId: number,
     seasonNumber: number,
     episodeNumbers: number[],
-    monitored = false
+    monitored = false,
+    // episode keys to leave alone entirely. Only the ticking path passes this — a
+    // restore has to be able to create a unit for something the library still holds,
+    // since the row it is restoring from is deleted a moment later
+    skip?: Set<string>
 ) => {
     const season = (await getTvSeasons(tmdbId)).find(v => v.season_number === seasonNumber);
     const units = [];
 
     for (const episodeNumber of episodeNumbers) {
+        if (skip?.has(`${ seasonNumber }:${ episodeNumber }`)) {
+            continue;
+        }
+
         const episode = season?.episodes.find(v => v.episode_number === episodeNumber);
 
         units.push(await prisma.watchlistUnit.upsert({
@@ -441,7 +468,8 @@ export const ensureSeasonUnits = async (
     watchlistId: number,
     tmdbId: number,
     seasonNumbers?: number[],
-    monitored = false
+    monitored = false,
+    skip?: Set<string>
 ) => {
     const seasons = (await getTvSeasons(tmdbId))
         .filter(season => ! seasonNumbers || seasonNumbers.includes(season.season_number));
@@ -454,7 +482,8 @@ export const ensureSeasonUnits = async (
             tmdbId,
             season.season_number,
             season.episodes.map(episode => episode.episode_number),
-            monitored
+            monitored,
+            skip
         ));
     }
 
@@ -617,25 +646,23 @@ export const stopWatching = async (id: number) => {
 };
 
 /**
- * A unit that is not watched has nothing left to say. A search that came back empty
- * is bookkeeping, not a possession, and it must not keep the row alive — otherwise
- * the very scanning that a title needs while it waits for a release is what pins it
- * to the watchlist.
- */
-const dropIdleUnits = async (watchlistId: number) => {
-    return await prisma.watchlistUnit.deleteMany({ where: { watchlistId, monitored: false } });
-};
-
-/**
  * A show nobody watches any more has no reason to sit on the watchlist — unchecking
  * the last episode has to take the row with it.
+ *
+ * **What decides is what is monitored, not what has a row.** An unticked unit is kept,
+ * with `monitored = false`, because that row is the only place a *decline* can live: with
+ * no row at all, "never wanted" and "explicitly unticked" look identical, and
+ * `syncTvSeasons` reads a missing episode of a watched season as a new one and turns it
+ * back on. Deleting them was how unticking the tail of a season came back fifteen minutes
+ * later, monitored, ready to download — measured on Regular Show, 2026-08-10.
+ *
+ * They cost nothing while the row lives and they go with it when it dies: the row is
+ * deleted the moment nothing on it is monitored, and the units cascade.
  */
 export const pruneWatchlistItem = async (id: number): Promise<WatchlistRowItem | null> => {
-    await dropIdleUnits(id);
+    const watched = await prisma.watchlistUnit.count({ where: { watchlistId: id, monitored: true } });
 
-    const keep = await prisma.watchlistUnit.count({ where: { watchlistId: id } });
-
-    if (keep > 0) {
+    if (watched > 0) {
         return await getWatchlistItemWithMedia(id);
     }
 
@@ -685,14 +712,35 @@ export const setMonitored = async (
 
     // ticking creates the rows, unticking lets `pruneWatchlistItem` take them away
     if (monitored && type === ContentType.TV) {
+        // What is already on the disk is left out of it. A unit for an episode the
+        // library holds has nothing to search for: the scanner only hands it straight
+        // back on its next round, and until it does, the show sits on the watchlist for
+        // an episode that is already there. Ticking a whole season used to create one for
+        // every episode in it, downloaded ones included.
+        const held = new Set((await libraryEpisodes(tmdbId, await audienceForUser(userId))).keys());
+
         if (target.episodeNumbers && target.seasonNumber !== undefined) {
-            await ensureEpisodeUnits(row.id, tmdbId, target.seasonNumber, target.episodeNumbers, true);
+            await ensureEpisodeUnits(row.id, tmdbId, target.seasonNumber, target.episodeNumbers, true, held);
+
+            // The rest of the season, written down as declined. Without it "not stored"
+            // means both "never announced" and "not picked", and `syncTvSeasons` reads
+            // everything above the highest picked episode as newly announced and turns it
+            // on — ticking E11 of a finished season quietly became watching E11 to E22.
+            // Monitoring is never turned *off* here, so this cannot undo an existing tick.
+            const announced = (await getTvSeasons(tmdbId))
+                .find(season => season.season_number === target.seasonNumber)?.episodes || [];
+
+            const rest = announced
+                .map(episode => episode.episode_number)
+                .filter(number => ! target.episodeNumbers!.includes(number));
+
+            await ensureEpisodeUnits(row.id, tmdbId, target.seasonNumber, rest, false, held);
 
         } else {
             // a whole season, or the whole show when no season was named
             const seasons = target.seasonNumber === undefined ? undefined : [ target.seasonNumber ];
 
-            await ensureSeasonUnits(row.id, tmdbId, seasons, true);
+            await ensureSeasonUnits(row.id, tmdbId, seasons, true, held);
         }
 
     } else {

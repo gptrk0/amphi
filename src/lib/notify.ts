@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { errorText, logDebug, logWarn } from "@/lib/log";
 import { loadSettings, settingList, settingText } from "@/lib/settings";
 import { callWebhook, WebhookFields } from "@/lib/webhook";
+import { NotifyEvent } from "@/types/notify";
 
 /**
  * Telegram notifications. The point of the app is that it works while nobody is
@@ -20,9 +21,14 @@ import { callWebhook, WebhookFields } from "@/lib/webhook";
  * URLs and nobody has to pick a service. An administrator with both set up gets a
  * message twice, once as the operator and once as themselves; that is the honest
  * reading of it, not a bug to dedupe away.
+ *
+ * **The install chat is told who.** It is the one channel that hears about everybody, so
+ * a line there without a name only says that something happened somewhere in the house:
+ * whose download finished, who pressed the button, who deleted it. A person's own webhook
+ * gets no name, because the only person it ever hears about is its owner.
  */
 
-export type NotifyEvent = "ready" | "started" | "dropped";
+export type { NotifyEvent };
 
 // overridable for a self hosted Bot API server, and it is what makes this testable
 // without talking to Telegram
@@ -53,7 +59,8 @@ const wants = (event: NotifyEvent) => {
 const PREFIX: Record<NotifyEvent, string> = {
     ready: "✅ Ready to watch",
     started: "⬇️ Download started",
-    dropped: "⚠️ Release dropped"
+    dropped: "⚠️ Release dropped",
+    deleted: "🗑 Deleted"
 };
 
 // Telegram parses HTML, and release names are full of characters that break it
@@ -64,48 +71,58 @@ const escape = (value: string) => value
 
 /**
  * `detail` is the release name or the reason — the part that answers "which one?"
- * without having to open the app.
+ * without having to open the app. `who` is the person behind it, and only the install
+ * chat is ever given one.
  */
-const body = (event: NotifyEvent, title: string, detail?: string) => [
+export type NotifyMessage = { event: NotifyEvent, title: string, detail?: string, who?: string };
+
+const body = ({ event, title, detail, who }: NotifyMessage) => [
     `<b>${ escape(PREFIX[event]) }</b>`,
     escape(title),
-    ...(detail ? [ `<i>${ escape(detail) }</i>` ] : [])
+    ...(detail ? [ `<i>${ escape(detail) }</i>` ] : []),
+    ...(who ? [ `👤 ${ escape(who) }` ] : [])
 ].join("\n");
 
 /** One message to one chat. The bot token is the app's; the chat is whose it is. */
-const send = async (chat: string, event: NotifyEvent, title: string, detail: string | undefined, who: string) => {
+const send = async (chat: string, message: NotifyMessage, to: string) => {
+    const said = `${ PREFIX[message.event] } — ${ message.title }${ message.who ? ` (${ message.who })` : "" }`;
+
     try {
         await axios.post(
             `${ api() }/bot${ token() }/sendMessage`,
             {
                 chat_id: chat,
-                text: body(event, title, detail),
+                text: body(message),
                 parse_mode: "HTML",
                 disable_web_page_preview: true
             },
             { timeout: TIMEOUT_MS }
         );
 
-        await logDebug("notify", `telegram → ${ who }: ${ PREFIX[event] } — ${ title }`, detail);
+        await logDebug("notify", `telegram → ${ to }: ${ said }`, message.detail);
 
         return true;
 
     } catch(err) {
         // the message is lost, the download is not — log and carry on
-        await logWarn("notify", `the telegram message to ${ who } about ${ title } was not sent`, errorText(err));
+        await logWarn("notify", `the telegram message to ${ to } about ${ message.title } was not sent`, errorText(err));
 
         return false;
     }
 };
 
-export const notify = async (event: NotifyEvent, title: string, detail?: string) => {
+/**
+ * The install chat. `who` is whose download it was or who did the thing — this channel
+ * hears about everybody, so a message without it says the least interesting half.
+ */
+export const notify = async (event: NotifyEvent, title: string, detail?: string, who?: string) => {
     await loadSettings();
 
     if (! isNotifyConfigured() || ! wants(event)) {
         return false;
     }
 
-    return await send(chatId(), event, title, detail, "the install chat");
+    return await send(chatId(), { event, title, detail, who }, "the install chat");
 };
 
 const userWants = (chosen: string, event: NotifyEvent) => {
@@ -121,6 +138,39 @@ export const webhookFields = (event: NotifyEvent, title: string, detail?: string
     detail: detail || "",
     event
 });
+
+/**
+ * "Anna", "Anna and Patrick" — the names behind a download, for the one channel that
+ * hears about everybody's. An account that has since been deleted drops out rather than
+ * being printed as a number, and nobody at all comes back empty: an instant download
+ * whose asker was removed really is nobody's.
+ */
+export const nameList = async (userIds: number[]) => {
+    if (userIds.length === 0) {
+        return "";
+    }
+
+    const users = await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { name: true },
+        orderBy: { name: "asc" }
+    });
+
+    const names = users.map(user => user.name);
+
+    if (names.length < 2) {
+        return names[0] || "";
+    }
+
+    return `${ names.slice(0, -1).join(", ") } and ${ names[names.length - 1] }`;
+};
+
+/** The same, as the install chat reads it. Undefined when there is nobody to name. */
+export const forWhom = async (userIds: number[]) => {
+    const names = await nameList(userIds);
+
+    return names ? `for ${ names }` : undefined;
+};
 
 /**
  * The people who asked for this one thing. Nobody is told about somebody else's

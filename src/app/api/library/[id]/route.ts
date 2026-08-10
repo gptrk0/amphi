@@ -10,6 +10,7 @@ import {
     libraryLabel,
     requestDelete
 } from "@/lib/library";
+import { notify, notifyUsers } from "@/lib/notify";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -42,8 +43,9 @@ export async function PATCH(req: Request, { params }: Params) {
         const body = await req.json();
         const wanted = body?.deleteRequested === true;
         const withFiles = body?.deleteFiles !== false;
+        const who = await currentUser();
 
-        const result = wanted ? await requestDelete(itemId, withFiles) : await cancelDelete(itemId);
+        const result = wanted ? await requestDelete(itemId, withFiles, who?.id ?? null) : await cancelDelete(itemId);
         const label = await libraryLabel(item);
 
         await logInfo(
@@ -51,7 +53,7 @@ export async function PATCH(req: Request, { params }: Params) {
             wanted ? `marked for deletion: ${ label }` : `deletion cancelled: ${ label }`,
             withActor(
                 wanted ? `it goes ${ withFiles ? "with its files " : "" }when the seed time is up` : undefined,
-                await currentUser()
+                who
             )
         );
 
@@ -100,6 +102,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         }
 
         const label = await libraryLabel(item);
+        const who = await currentUser();
 
         await deleteLibraryItem(item, withFiles);
 
@@ -108,9 +111,17 @@ export async function DELETE(req: NextRequest, { params }: Params) {
             `deleted: ${ label }`,
             withActor(
                 withFiles ? "the torrent and its files were removed from the client" : "the torrent was removed, the files were kept",
-                await currentUser()
+                who
             )
         );
+
+        // the files are gone and everybody sharing this install is affected, so the
+        // install chat hears it with a name on it. The people who were waiting for this
+        // one hear it too — for them it is the download itself that disappeared
+        const detail = `${ withFiles ? "the torrent and its files were deleted" : "the torrent was removed, the files were kept" }${ item.releaseTitle ? ` — ${ item.releaseTitle }` : "" }`;
+
+        await notify("deleted", label, detail, who ? `deleted by ${ who.name }` : "deleted by nobody signed in");
+        await notifyUsers(item.watchedBy, "deleted", label, detail);
 
         return Response.json({ success: true });
 

@@ -5,6 +5,7 @@ import axios from "axios";
 
 import { MediaCard } from "@/components/media-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cached, remember } from "@/lib/browse-cache";
 import { Media } from "@/types/media";
 
 type Props = {
@@ -15,19 +16,34 @@ type Props = {
 
 const key = (media: Media) => `${ media.type }-${ media.id }`;
 
+type Shown = { items: Media[], page: number, totalPages: number };
+
+/**
+ * The call site keys this on what it is showing, so a change of genre is a fresh mount
+ * rather than something to reset — which is what lets the cache be read straight into the
+ * initial state. Coming back to a grid four pages deep gets all four back: the position on
+ * the page is meaningless without them, and refetching page one would throw them away.
+ */
 export function MediaGrid({ type, category, genre }: Props) {
-    const [ items, setItems ] = useState<Media[]>();
-    const [ page, setPage ] = useState(1);
-    const [ totalPages, setTotalPages ] = useState(0);
+    const cacheKey = `grid:${ type }:${ category }:${ genre || "" }`;
+    const was = cached<Shown>(cacheKey);
+
+    const [ items, setItems ] = useState<Media[] | undefined>(was?.items);
+    const [ page, setPage ] = useState(was?.page ?? 1);
+    const [ totalPages, setTotalPages ] = useState(was?.totalPages ?? 0);
     const [ loading, setLoading ] = useState(false);
     const sentinel = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        setPage(1);
-        setItems(undefined);
-    }, [ type, category, genre ]);
+    // what is already in `items`, so the pages that came from the cache are not fetched
+    // a second time. A ref because the fetch effect has to see it in the same commit
+    const loaded = useRef(was?.page ?? 0);
+    const shown = useRef<Media[]>(was?.items ?? []);
 
     useEffect(() => {
+        if (page <= loaded.current) {
+            return;
+        }
+
         let cancelled = false;
 
         setLoading(true);
@@ -39,19 +55,20 @@ export function MediaGrid({ type, category, genre }: Props) {
                 }
 
                 const found: Media[] = res.data.result || [];
+                const seen = new Set(shown.current.map(key));
 
                 // tmdb repeats items across pages when popularity shifts under us
-                setItems(prev => {
-                    if (page === 1 || ! prev) {
-                        return found;
-                    }
+                const merged = page === 1
+                    ? found
+                    : [ ...shown.current, ...found.filter(v => ! seen.has(key(v))) ];
 
-                    const seen = new Set(prev.map(key));
+                shown.current = merged;
+                loaded.current = page;
 
-                    return [ ...prev, ...found.filter(v => ! seen.has(key(v))) ];
-                });
-
+                setItems(merged);
                 setTotalPages(res.data.totalPages || 0);
+
+                remember<Shown>(cacheKey, { items: merged, page, totalPages: res.data.totalPages || 0 });
             })
             .catch(err => {
                 console.error(err);
@@ -67,7 +84,7 @@ export function MediaGrid({ type, category, genre }: Props) {
             });
 
         return () => { cancelled = true; };
-    }, [ type, category, genre, page ]);
+    }, [ cacheKey, type, category, genre, page ]);
 
     useEffect(() => {
         const node = sentinel.current;

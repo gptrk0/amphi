@@ -642,7 +642,7 @@ Kérés: „env-ből átvinni néhány dolgot UI-ról szerkeszthetőnek, egy set
 
 **Miért szinkron az olvasás.** A `getQualityProfile()` és társai pontozó ciklusokban futnak, ott nem lehet `await` értékenként — ugyanaz a helyzet, mint a feketelistánál. A tábla `Map`-be kerül, abból olvasunk szinkronban; a `loadSettings()` induláskor és minden scan-kör elején tölt, mentés után pedig azonnal frissül.
 
-**Titkok.** A `TMDB_API_KEY`, `INDEXER_API_KEY`, `TORRENT_PASS` és `TELEGRAM_BOT_TOKEN` szerkeszthető, de **soha nem jön vissza a böngészőbe**: az API csak azt küldi, hogy be van-e állítva, a mező pedig cserélni tud, olvasni nem. Az üres érték egy titoknál nem törlés (különben egy mentés minden titkot kinullázna), ahhoz külön `DELETE` kell. **Nyitva marad:** az app-nak nincs bejelentkezése (Fázis 8), tehát aki eléri a hálózaton, az *átírni* továbbra is át tudja ezeket — az olvashatatlanság ezt nem pótolja, csak a legrosszabbat zárja ki.
+**Titkok.** ~~A `TMDB_API_KEY`, `INDEXER_API_KEY`, `TORRENT_PASS` és `TELEGRAM_BOT_TOKEN` szerkeszthető, de **soha nem jön vissza a böngészőbe**: az API csak azt küldi, hogy be van-e állítva, a mező pedig cserélni tud, olvasni nem. Az üres érték egy titoknál nem törlés (különben egy mentés minden titkot kinullázna), ahhoz külön `DELETE` kell.~~ **2026-08-10-től a titok értéke is látszik** az admin oldalon, és az üres mező törli — ld. „Nyolc apróság". A `secret` jelző maradt, de már csak a **naplóra** vonatkozik: az megnevezi a beállítást, nem idézi. **Nyitva marad:** ~~az app-nak nincs bejelentkezése (Fázis 8), tehát aki eléri a hálózaton, az *átírni* továbbra is át tudja ezeket~~ — 2026-08-09 óta a `/settings` admin-only.
 
 **Az intervallum is élő.** A `setInterval` befagyasztotta volna a boot-kori értéket, ezért a scan- és sync-kör önmagát újraütemező `setTimeout`-ra váltott, ami minden körben újraolvassa az intervallumot.
 
@@ -695,6 +695,8 @@ STALL_MINUTES=abc                     ->  400, az ertek valtozatlan (60, default
 TORRENT_MOVIE_PATH="" (string)        ->  a sor torlodik, source=unset
 TORRENT_PASS="" (titok)               ->  changed:0, a jelszo megmarad
 ```
+
+*(Az utolsó sor 2026-08-10 óta nem így van: az üres titok is törli a sort, mert a mező immár a valódi értéket tartalmazza, tehát a kiürítése szándékos gesztus. Ld. „Nyolc apróság".)*
 
 Az env kiürítése után újraindítva: `[scheduler] started, scanning every 15 minutes` + `telegram notifications are on` (a token már csak a DB-ben van), `/` 200, `/details/tv/125988` 200 „Silo"-val, `POST /api/scan` `dryRun:false`, `getClientVersion()` `v5.2.2` 2 torrenttel — tehát TMDB, Jackett, qBittorrent és a Telegram mind a táblából konfigurálódik. A `.env` 8 sorra fogyott (`APP_*`, `DATABASE_*`, `SCAN_DISABLED`, `COMPOSE_*`).
 
@@ -1211,6 +1213,246 @@ Két hiba viszont csak így derült ki, mindkettő javítva:
 
 **Ami nyitva marad.** A fájlok rendezése (átnevezés, hardlinkelt könyvtár) még nincs meg; amikor lesz, az app először fog fájlrendszert érinteni, és akkor a compose-ba kell egy médiakönyvtár mount **ugyanazon az útvonalon, ahol a qBittorrent látja** — enélkül a hardlink nem működik. Addig a konténernek nincs mit mountolni.
 
+#### Nyolc apróság: navigáció, értesítések, library-adatok (2026-08-10-i kérések) ✅
+
+Nyolc egymástól független kérés egy körben. Három közülük nem az, aminek látszik — azoknál külön is le van írva, miért.
+
+**1. A logó a főoldalra visz.** A sidebar tetején a név eddig egy `span` volt. Egy `Link` lett; a fejléc a weben mindenhol út haza.
+
+**2. Az értesítéseknél pipa, nem szöveg.** Eddig ugyanaz a `TagInput` szerkesztette, mint a felbontás-listát, tehát az esemény nevét **be kellett gépelni** — és a `redy` elfogadva, eltárolva, majd csendben nem küldött semmit. Ez a legrosszabb fajta hiba: nem hibázik, csak nem történik semmi.
+
+Most [option-checkboxes.tsx](src/components/option-checkboxes.tsx) rajzolja mindkét helyen (admin `TELEGRAM_EVENTS` és a fiók saját `notifyEvents`-e), a választékot pedig **egyetlen lista** adja: [src/types/notify.ts](src/types/notify.ts). Azért külön fájl, mert három olyan hely olvassa, aminek nem szabad elcsúsznia egymástól — a settings registry (szerver), a fiók oldala (kliens) és a `notify.ts` maga.
+
+A tárolt formátum **nem változott**: ugyanaz a vesszős string. A `*` (amit egy korábbi install beírhatott) mindent bepipálva jelenik meg, és ha kiveszel egyet, a lista kiíródik teljesen — az „mindet, kivéve ezt" alakra nincs rövidítés. A `SettingDef` kapott egy `options` mezőt, tehát ez bármelyik zárt értékkészletű listára ráhúzható később. A szerver oldalon a `/api/auth/me` **szűri** is, amit kap (`cleanEvents`): amit nem ismer, azt eldobja, mert egy nem létező esemény némán „ne küldj semmit"-et jelentene.
+
+**3. Az admin-értesítés megmondja, kiről van szó.** Az install-csatorna az egyetlen, ami *mindenkiről* hall — egy név nélküli sor tehát csak annyit közöl, hogy a házban történt valami. Mostantól minden ilyen üzenet alján ott van, hogy kinek (`👤 for Patrick and test`), illetve ki nyomta meg (`👤 asked for by Patrick`, `👤 deleted by Patrick`). A **saját webhook nem** kap nevet: az egyetlen ember, akiről hall, a tulajdonosa.
+
+Menet közben kiderült, hogy a kérés fele nem is létezett: **kézi letöltésről az install-csatorna eddig semmit nem kapott** (csak a scanner grabjai szóltak), és **törlésről sem**. A válaszod alapján mindkettő bekerült, a törlés új eseményként (`deleted`) — a `TELEGRAM_EVENTS` defaultja ezért `ready,started,dropped,deleted`. A `deleted` üzenetet a *kézi* törlés is kiváltja (névvel), és a magától lefutó is: a seedelés végén végrehajtott korábbi jelölés (annak a nevével, aki jelölte — ezért van a `Library.deleteRequestedBy`, mert a jelölés és a végrehajtás napokra van egymástól, és akkor már nincs bejelentkezve senki), illetve a lejárt megőrzés („nobody — it was kept for 7 days and the time ran out").
+
+**Mérve** (a Telegram Bot API url-je a mérés idejére a folyamaton belüli fogadóra állítva, tehát a valódi chat nem kapott semmit; a `Setting` sor a mérés végén törölve):
+
+```
+nameList([3])="Patrick"  [3,4]="Patrick and test"  []=""     forWhom([])=undefined
+
+<b>✅ Ready to watch</b>          <b>🗑 Deleted</b>
+Obsession                        Regular Show S01 — 10 episodes
+<i>Obsession.2015.1080p…</i>     👤 nobody — it was kept for 7 days and the time ran out
+👤 for Patrick and test
+
+<b>⚠️ Release dropped</b>        ← a HTML-escape a helyén maradt
+9 &amp; &lt;Nine&gt;
+<i>not a video — 9.&amp;.&lt;Nine&gt;.2009.exe</i>
+👤 for Patrick
+```
+
+**4. Az api kulcs látszik.** Eddig egy titok sosem jött vissza a böngészőbe. Amit ez vett: egy támadást, aminek ez az oldal amúgy is ki van téve (admin-only, és aki ide belép, az írni is tud minden kulcsot). Amit fizetett: a hétköznapi kérdést, hogy *az a kulcs van-e bent, amit az indexer visszautasít* — erre a válasz adatbázis-shell nélkül nem volt megadható. Szóval a `value` mostantól a titkoknál is a valódi érték, a mező `text` típusú, az üresen mentés pedig **törli** (mint minden más nem-lista kulcsnál).
+
+A `secret` jelző megmaradt, de már **egyetlen dolgot jelent**: a *napló* megnevezi a beállítást, nem idézi (`set for the first time` / `replaced` / `cleared`) — a log oldalt olyanok is olvassák, akik nem ezt keresik, és képernyőképre kerül.
+
+**5. Vissza lépve ott folytatódik, ahol voltál.** Ez a nyolc közül a legkevésbé triviális, mert **nem egy hiányzó `scrollRestoration` beállítás**. Minden lista ebben az appban mount *után* induló fetchből rajzolódik: abban a pillanatban, amikor a böngésző (és a Next saját visszaállítása) helyre tenné a pozíciót, a lap egy fejléc és három skeleton, pár száz pixel — a pozíció a tetejére vágódik, a tartalom pedig utána érkezik alá. Ezért két fél kellett:
+
+- **[scroll-restoration.tsx](src/components/scroll-restoration.tsx)** a layoutban: URL-enként tartja a pozíciót, `popstate`-re pedig **megvárja**, hogy a dokumentum elég magas legyen hozzá, és akkor teszi vissza — legfeljebb 3 másodpercig. Ciklus és nem zár: bármelyik wheel/touch/keydown megszakítja, mert egy még növekvő lap nem húzhatja vissza az embert, aki épp olvas. Semmi nem megy `sessionStorage`-ba és nem nyúl a history state-be (a reload a böngésző dolga, a history entryk a Nextéi).
+- **[browse-cache.ts](src/lib/browse-cache.ts)**: a listák a fülön belül megjegyzik, mit mutattak, és visszalépve abból rajzolódnak — ettől lesz a várakozás egyetlen frame. A `MediaGrid` és a keresés a **betöltött lapjait is** visszakapja (négy oldal végtelen scroll után a pozíció a lapok nélkül értelmezhetetlen), a discover sorok pedig a cache-ből rajzolnak és **csendben újratöltenek** mögötte — a cache a magasságot és az első képet adja, nem a trending frissességét. A genre-chipek listája is bent van, mert az is 40 pixel magasság.
+
+Két dolog ehhez járulékosan változott. A `MediaGrid` / discover / keresés a **saját cache-kulcsára van `key`-elve**, tehát műfajváltás friss mount és nincs reset-út, amit el lehet rontani. És **a kiválasztott műfaj az URL-be került** (`/movies?genre=28`, `replaceState`-tel, hogy ne szaporítsa a history-t): eddig komponens-állapot volt, tehát a részletlapról visszatérve a szűrt rács visszaváltott a szűrés nélküli sorokra, és nem is volt mihez visszagörgetni.
+
+**Amit ebből nem mértem:** a visszalépés magát böngészőben nem próbáltam (itt nincs, amiben kattintanék). Ami mérve van: a nyolc érintett oldal 200-nal és hiba nélkül renderel (`/`, `/movies`, `/movies?genre=28`, `/series`, `/library`, `/settings`, `/account`, `/search?q=alien`), `tsc --noEmit` és `next lint` tiszta. A logika felülvizsgálva arra, hogy a dokumentum a scroll-konténer (a `SidebarInset` szándékosan `overflow-x-clip` és nem `hidden`, épp ezért).
+
+**6. A libraryban látszik, ki kérte.** A `watchers` mező már ott volt az API-ban (nevekre feloldva, egy lekérdezéssel az egész lapra, a törölt fiók pedig kiesik a felsorolásból) — csak oszlop nem volt neki. Most van, „Requested by", és ha többen kérték, mindenki neve ott van. Ez az egyetlen hely, ami egy elindult letöltésnél még megmondja, kié volt: a watchlist sorait a letöltés elvitte.
+
+**7. Megőrzés: 7 nap, fájlokkal.** Új beállítás, `LIBRARY_RETENTION_DAYS`, default `7`, a Library csoportban. A **befejezés** pillanatától számol, és lejárva a torrentet **és a fájlokat** törli, kérdés nélkül. Ez az egyetlen időzítő az appban, ami fájlt semmisít meg, ezért szűk:
+
+- csak `AVAILABLE` sor (ami sosem fejeződött be, annak nem megőrzés kell, hanem újabb keresés — arról a `syncDownloads` dönt),
+- **a seed-ablak elé sosem megy**: a kettő közül a későbbi dönt (ezt az `expiresAt` is így számolja),
+- `0` = ki van kapcsolva, és a kikapcsolt a biztonságos irány,
+- a fájlokat viszi: a sort megtartani a fájlok nélkül a legrosszabb kombináció lenne (a sor eltűnik, tehát az appban semmi nem tud róluk, a lemez viszont ugyanannyira tele van),
+- indulásnál **kimondja a naplóban**, hogy mit fog tenni, a lejárt törlés pedig `WARN` és megmondja, hogy nem ember döntött így.
+
+A library táblában a seed-cella alatt ott van, mikor viszi el (`deleted in 5 days`), mert egy időzítő, amit senki nem figyel, sokkal korábban legyen látható, mint amikor lefut.
+
+**Mérve** (dobható szkript, hamis sorokkal egy tmdb id alatt, ami nincs az installban, torrent-hash nélkül, tehát a qBittorrentet nem érintette; a végén minden törölve):
+
+```
+retention = 7 nap, seed = 3 nap
+  torolve:  marked while seeding, seed time now up (marked) | expired (expired)
+  megmaradt: finished two days ago | old but still seeding | still downloading
+retention = 0
+  torolve:  marked while seeding, seed time now up (marked)
+  megmaradt: expired | finished two days ago | old but still seeding | still downloading
+  a lejart sor expiresAt-je kikapcsolva: null
+```
+
+**Amire figyelni kell:** a default 7 nap **a meglévő könyvtárra is érvényes**, a befejezés dátumától. A te két library sorod 2026-08-09-én lett kész, tehát 08-16-án menne magától — mindkettő amúgy is törlésre jelölt. Ha ez nem így kell, a `LIBRARY_RETENTION_DAYS` `0`-ra állítása kikapcsolja.
+
+**8. GB a libraryban.** Új `Library.sizeBytes` (`DOUBLE PRECISION`, nem `Int`: egy évadcsomag rutinból túl van 2 GB-on, és a bájtszám `double`-ben 2^53-ig pontos). A **kliensből** olvassa, nem az indexer ajánlatából, tehát az van benne, ami tényleg leszállt, és azért tárolja, mert a listának a torrent eltűnése után is meg kell tudni válaszolnia, mi tölti meg a lemezt. A régi sorok a következő kör során kapják meg (egy írás, egyszer), a még futó letöltés mérete pedig élőben jön a kliensből.
+
+**Mérve, a valódi adatbázison:** a két meglévő sor a szerver újraindítása utáni első körben megkapta a méretét (`14947666973` és `848530244` bájt), az API ugyanezt adja (`13.9 GB`, `809 MB`), az `expiresAt` mindkettőn `2026-08-16`, a `watchers` `["Patrick"]`.
+
+**A migráció** `20260810120000_library_size_and_deleter`: két nullázható oszlop (`sizeBytes`, `deleteRequestedBy`), semmi átértelmezés, tehát a fejlesztői műveletek 3. lépése (azonnali újraindítás) nem volt kötelező — a `generate` utáni restart viszont igen, és a mérés közben ki is derült, miért: előtte a futó szerver a régi klienssel `undefined`-et adott a `sizeBytes`-ra, ami a JSON-ból egyszerűen kimaradt.
+
+#### Nyelvet csak listából (2026-08-10-i kérés) ✅
+
+Kérés: „ahol tag-ként lehet nyelveket felvenni, ott ne engedjen csak valid értékeket felvenni; legyen hozzá egy lenyíló, amiből ki is választhatja, meg kereshet, és azokat rakhatja be tagnek".
+
+**Amit ez javít, az nem a gépelés kényelme.** A nyelv `hun` alakban tárolódik, mert a release-parser csak háromjegyű kódot keres (kétjegyűt nem lehet: „Dan in Real Life" nem dán kiadás). A mező viszont szabad szöveg volt, tehát a `hungarian`, a `hu` és a `klingon` is elfogadva, elmentve — és onnantól **semmi nem talált**: a cím a watchlisten maradt, a naplóban egy sor sem magyarázta, miért. Ez a fajta hiba nem hibázik, csak nem történik semmi.
+
+**Egy katalógus, két irányba.** [src/types/language.ts](src/types/language.ts): 33 nyelv, mindegyiknél a tárolt kód, az olvasható név, a TMDB kétjegyű kódja és az aliasok, amiket egy release-név használhat. A [release.ts](src/lib/release.ts) **ebből származtatja** a két korábbi kézi táblát (`LANGUAGE_ALIASES`, `ISO_639_1`) — ez a lényeg: a felület pontosan azt ajánlja fel, amit a parser fel tud ismerni. Két külön lista azt jelentette volna, hogy választható egy nyelv, amire soha nem jön találat. Ezért nincs is több nyelv a listában, mint amire alias van: a hosszabb lista itt hazugság lenne.
+
+**A felület.** A `TagInput` kapott egy `options` módot: ilyenkor lenyíló van (a chevronra vagy fókuszra), amiben a beírt szöveg **minden alakra** szűr (`magyar`, `hungarian`, `hu` és `hun` ugyanazt a sort találja meg), nyilakkal lépkedhető, Enterrel/kattintással kerül be tagnek, a tag pedig az olvasható nevet mutatja, a tárolt kódot a tooltipben és a lenyíló jobb szélén. Ami nem a listáról van, azt **nem veszi fel** („`klingon` is not a language — pick one from the list."), a félig beírt szó pedig kattintáskor csendben eltűnik — a lista ott van a szemed előtt, nincs mit üzenni róla. A sorrendezés (húzás, „the first one wins") változatlan, és a nem-`options` listák (felbontás, indexer, kizárt kulcsszavak) pontosan úgy működnek, mint eddig.
+
+A „Untagged release counts as" **egyértékű**, ezért nem tag lett, hanem egy saját, kereshető választó ([option-select.tsx](src/components/option-select.tsx)) — ld. a lenti „A fehér lenyíló" bejelentést, mert először natív `select` volt, és az két okból nem volt jó.
+
+**A szerver is szűr.** A `/api/auth/me` a katalóguson át veszi át a három nyelvi mezőt: a listákból kiesik, ami nem nyelv, a `hungarian` / `magyar` / `hu` viszont mindhárom `hun`-ként érkezik be. Ha a preferált listából *semmi* nem marad, az 400 — nem csendben üres lista, mert az olyan fiók, aminek soha nem töltődik le semmi. A jelöletlen-default sem eldobható: az minden jelöletlen release címkéje, tehát egy rossz érték ott az egész könyvtárat átkeresztelné, ezért az is 400.
+
+**Mérve.** Előbb a parser, hogy a származtatott tábla ne változtasson semmit:
+
+```
+ok  Some.Movie.2019.1080p.WEB-DL.HUN.ENG.x264-GROUP  -> ["hun","eng"]
+ok  Some.Movie.2020.720p.TRUEFRENCH.x264             -> ["fre"]
+ok  Some.Show.S01E01.1080p.MAGYAR.WEB                -> ["hun"]
+ok  Some.Movie.2019.1080p.DEU.x264                   -> ["ger"]
+ok  Some.Movie.2019.1080p.LEKTOR.PL                  -> ["pol"]
+ok  Dan in Real Life 2007 1080p BluRay x264          -> []        ← a kétjegyű csapda
+ok  Danish.Girl.The.2015.1080p.DANISH                -> ["dan"]
+
+original ja + japán kiadás -> excluded: null    (a saját eredeti nyelve sosem kizárt)
+original en + japán kiadás -> excluded: "jpn"
+resolve: hun=hun  Hungarian=hun  magyar=hun  hu=hun  klingon=null
+clean("magyar, HU, english, klingon, hun") = "hun,eng"
+```
+
+Aztán az API, a saját fiókodon (a végén minden visszaállítva `hun,eng` / üres / `eng`):
+
+```
+{"preferredLanguages":"magyar, english, klingon", "excludeLanguages":"ITA, nonsense",
+ "defaultLanguage":"Hungarian"}                  -> 200, tarolva: hun,eng | ita | hun
+{"preferredLanguages":"klingon, elvish"}         -> 400 "Not a language this app knows: klingon, elvish."
+{"preferredLanguages":""}                        -> 400 "Name at least one language…"
+{"defaultLanguage":"klingon"}                    -> 400 "\"klingon\" is not a language this app knows."
+{"notifyEvents":"ready,redy,deleted"}            -> 200, tarolva: ready,deleted   ← az elgépelt kiesik
+```
+
+**Amit nem mértem:** a lenyílót magát böngészőben (itt nincs mivel kattintani), és a `/account` szerveroldali HTML-je sem mond róla semmit — az oldal két skeletonként érkezik, a tartalom a `/api/auth/me` válaszára épül a kliensen. Ami mérve van: `tsc --noEmit` és `next lint` tiszta, az oldal 200-nal, hiba nélkül renderel, és a fenti API-válaszok a valódi végponttól jönnek.
+
+#### A fehér lenyíló (2026-08-10-i bejelentés) ✅
+
+Bejelentés: „a »Untagged release counts as« hibás és default fehér dropdown jelenik meg".
+
+Két különböző hiba egy mezőben, és az egyik az egész appot érintette.
+
+**1. A `color-scheme` hiányzott, és ez nem csak ez az egy mező volt.** Amit a böngésző maga rajzol — a `select` felugró listája, a nyers checkbox, a scrollbar —, azt a `color-scheme` alapján rajzolja, és a [globals.css](src/app/globals.css)-ben egyáltalán nem volt ilyen. Tehát a böngésző **világos sémában** rajzolta mindet, akármelyik témában: a felugró lista fehér lett, a benne lévő szöveg viszont a témától örökölt világos színt — fehér a fehéren. A `:root` mostantól `light`, a `.dark` pedig `dark`; ez egy sor, és minden natív kontrollra érvényes, nem csak erre a mezőre.
+
+**2. A natív `select` ettől függetlenül is rossz választás volt itt**, és ez a súlyosabb: ha a tárolt érték nincs az `option`-ök között (egy régi fiók, egy kézzel írt kérés), a `select` **az elsőt mutatja**, miközben az állapot a régi értéket tartja. A mező azt írta volna, hogy „Hungarian", és mást mentett volna el. Ezért lett helyette [option-select.tsx](src/components/option-select.tsx): a tag-lenyíló egyértékű párja, ugyanazzal a kereséssel és kinézettel, és ha az érték nem a listáról van, azt **kimondja** (`not set — "xy" is not a language`) ahelyett, hogy mást mutatna. Csak olyan érték kerül belőle kifelé, amit valaki választott.
+
+A két lenyíló illesztése (kód tárolva, név/alias/kétjegyű kód gépelve) közben egy helyre került: [src/lib/options.ts](src/lib/options.ts) — eddig a `TagInput`-ban élt, és egy második példány garantáltan elcsúszott volna tőle.
+
+Ugyanezen az oldalon a „Language outranks resolution" pipája is nyers `input` volt, az app saját `Checkbox`-a helyett — a `color-scheme` után is látszott volna, hogy nem ide tartozik, így az is lecserélve.
+
+**Mérve:** `tsc --noEmit` és `next lint` tiszta, `/account` 200-nal renderel, hiba nélkül. **Amit nem:** magát a lenyílót és a témát böngészőben — a natív kontrollok kinézete pont az, amit szerveroldali HTML-ből nem lehet ellenőrizni.
+
+#### A seed-idő a kliens ideje, nem a miénk (2026-08-10-i kérés) ✅
+
+Kérdés, majd kérés: „a `LIBRARY_SEED_DAYS` mi alapján számol? a qBittorrentben tárolt seed időtartamot nézi?" — nem nézte, most már azt nézi.
+
+**Ami volt.** A `markAvailable` a *befejezés észlelésekor* beírt egy `seedUntil = most + N nap` dátumot, és onnantól az app a saját faliórájából számolt. A kliensből a `seeding_time` mezőt soha nem is olvasta. Ennek három baja van: egy **szüneteltetett** torrent ugyanúgy „letelt", pedig egyetlen bájtot sem adott fel; egy torrent, ami már **kész volt, mielőtt az app meglátta** (kézzel hozzáadva, vagy mert az app állt), újra végigülte a teljes ablakot; és fordítva, egy hét leállás után is a régi dátum állt a sorban.
+
+**Ami lett.** A `TorrentStatus` megkapta a `seedingTime`-ot (qBittorrent `seeding_time`, „elapsed time while complete"), és a `seedUntil` mostantól **ennek a vetülete**: `most + max(0, kért idő − eddig seedelt)`. A sync-kör körönként újraszámolja (`syncSeedWindow`), **mindkét irányban**: kifelé, ha a torrent épp nem seedel (a szüneteltetett tovább tartozik azzal az idővel, amit nem tölt el), és **visszafelé**, ha kiderül, hogy többet seedelt, mint amit az app feltételezett. Két perc tolerancia, hogy a folyamatosan seedelő sor ne kapjon percenként egy tartalom nélküli írást.
+
+Miért marad tárolt dátum, és nem élő kérdés: a törlés-őr, a takarító lekérdezés és a táblázat mind **egy dátumot** olvas a sorról, és a felük soha nem beszél a qBittorrenttel. Így egy helyen fordul a kliens válasza dátumra. Séma-változás nincs, a jelentése változott — a `seedUntil` kommentje ezt ki is mondja.
+
+**Mérve, a te kliensedön** (a mérés előtt: mind a nyolc torrent `stalledUP`):
+
+```
+LIBRARY_SEED_DAYS = 3  (72h kert)
+Obsession        seeding_time =  6.6h   ← 21h telt el a befejezese ota
+Regular Show     seeding_time = 10.1h
+
+row 12  seedUntil  2026-08-12T19:51 -> 2026-08-13T11:21   (65.4h van meg)
+row 13  seedUntil  2026-08-12T20:09 -> 2026-08-13T07:50   (61.9h van meg)
+```
+
+És hogy a kör maga is karban tartja, nem csak az első észlelés: a 13-as sor dátumát kézzel `+300h`-ra állítottam, a következő perces kör visszahúzta és meg is írta, mire:
+
+```
+[scheduler] Regular Show: The Lost Tapes S01E01: seed time is not up yet,
+            62h to go, 10h seeded so far as the client counts it
+```
+
+Vagyis a kliens szerint ezek a torrentek a 21 órából 6–10 órát seedeltek — a régi dátum harmadannyi teljesített idő után ígérte a törölhetőséget. **Ez tehát kitolja a törlés feloldását**, ami a kérés lényege; ha mégis a faliórás számolás kell, a `seeding_time` kiolvasása az egyetlen dolog, amit vissza kell venni.
+
+**Amire figyelni kell:** a megőrzés (`LIBRARY_RETENTION_DAYS`) szándékosan **sosem** előzi meg a seed-ablakot — így egy örökre szüneteltetett torrentet a megőrzés sem fog letörölni. Ez a biztonságos irány (a seedelés ígéretét nem szegi meg egy lemez-takarító), de azt jelenti, hogy egy leállított kliens mellett a library nem tisztul magától. Aki ezt nem akarja, a `LIBRARY_SEED_DAYS`-t állítsa `0`-ra.
+
+#### Watchlisten van, de egy rész sincs bepipálva (2026-08-10-i bejelentés) ✅
+
+Bejelentés: „a Regular Show jelenleg watchlisten van (azt mutatja a UI-n), pedig egy rész sincs bepipálva az adatlapján".
+
+**A napló megmondta, mi történt.** 16:53–16:54 között S01E7 → S01 (egész évad) → E1 → E3 ki-be, majd E2-től E18-ig és E22 kipipálása egyenként. Ami maradt: **egy unit, S01E01, `monitored=true`** — és a library épp azt az egy epizódot tartalmazza (`13. sor, episodes={1:1}`). A TMDB szerint az évadnak 19 része van (E1–E18 és E22), tehát pont mindent levettél **E1 kivételével**. Azt viszont nem lehetett levenni, mert nem is látszott.
+
+**Két hiba, egymásra rakva.**
+
+**1. A megjelenítés hazudott (ez a bejelentés maga).** A `toSeasons` először a unitokból építi fel az évadot, majd **ráírja** a library állapotát:
+
+```ts
+put(seasonNumber, episodeNumber, { monitored: false, status, airDate: null });   // előtte
+```
+
+Vagyis egy epizód, ami *meg is van* és *figyelve is van*, kipipálatlanként rajzolódott. Ez önmagában védhető gondolat („a birtoklás nem figyelés"), csak épp **visszavehetetlen pipát** csinál belőle: a cím ott áll a watchlisten, az adatlap minden része üres, és semmi a képernyőn nem magyarázza, miért. A státusz továbbra is a library-é (az az erősebb tény), a pipa viszont a unité marad:
+
+```ts
+put(seasonNumber, episodeNumber, { monitored: unit?.monitored ?? false, status, airDate: unit?.airDate ?? null });
+```
+
+**2. Az a unit eleve nem kellett volna, hogy létezzen.** Egy évad bepipálása `ensureSeasonUnits`-szal **minden** epizódra unitot csinált, a már letöltöttekre is. Amire nincs mit keresni, arra unit sem kell: a scanner a következő körben úgyis visszaadja (`claimHeldUnits`), addig viszont a show ott ül a watchlisten egy olyan rész miatt, ami már a lemezen van. A `setMonitored` most kihagyja, ami ebben a kiadásban már megvan (`libraryEpisodes` → `skip` halmaz). A `skip` **paraméter és nem beépített szabály**, mert a `restoreToWatchlist` pont olyankor hív `ensureEpisodeUnits`-ot, amikor a library sor még létezik (egy pillanattal később törli) — ott a kihagyás csendben elnyelné a visszaállítást.
+
+**Miért nem javította magát?** Javította volna: a 15 percenkénti kör `claimHeldUnits`-a leszedi az ilyen unitot, és a sor a pruneban elmegy. Csak épp a unit 16:53-kor jött létre, a kör 16:51-kor futott, a következő 17:06-kor — és **dry-runban vagy leállított scannerrel soha** nem javult volna. Egy állapot, ami csak azért nem hibás, mert egy háttérkör tizenöt percen belül rátalál, hibás.
+
+**Mérve, a valódi beragadt soron** (csak olvasva, a te adatodon):
+
+```
+row on the watchlist: yes
+S01: monitored=true episodes=1 downloaded=1
+  E01  ticked=true  status=DOWNLOADED      ← a javítás előtt: ticked=false
+```
+
+És a másik fele, egy pillanatra az egész évadot „megvan"-ra állítva (így semmi nem *tud* létrejönni, tehát scan-kockázat sincs; a hamis library sornak nincs torrent-hashe, a végén törölve):
+
+```
+S01 has 19 episodes on TMDB: E1..E18, E22
+before                                          1 unit  — S1E1
+egesz evad bepipalva, minden resz megvan        1 unit  — S1E1   ← nem jott letre semmi
+E1 bepipalva egyedul, az is megvan              1 unit  — S1E1
+a hamis library sor torolve                     1 unit  — S1E1   (valtozatlan)
+```
+
+**És közben kiderült a harmadik, ami a bejelentésnél is súlyosabb.** Miközben a 17:06-os körre vártam, hogy leszedje a beragadt unitot, a kör **le is szedte** (`show 256695 S1: 1 episode was already downloaded in hun, taken off the watchlist`) — és ugyanabban a körben a `refreshMetadata` → `syncTvSeasons` **visszahozta mind a 18 részt, figyelve**:
+
+```
+17:06:37  taken off the watchlist         majd:  18 unit, mind monitored=true, E2..E18 + E22
+          E2..E10 airDate 2026-05-11..22         ← a kovetkezo kor (17:21) letoltotte volna oket
+```
+
+A mechanizmus: a `syncTvSeasons` egy évadot „figyeltnek" tekint, ha bármelyik unitja monitored, és onnantól **minden olyan epizódot felvesz figyelve, ami a legmagasabb ismert szám fölött van**. A vízjel arra jó, hogy egy alulról bepipálatlan részt ne ajánljon fel újra — de fölülről nem tud védeni, mert **a kipipált résznek nem marad sora**: a `dropIdleUnits` törölte a `monitored=false` unitokat. „Soha nem kértem" és „kifejezetten levettem" tehát ugyanúgy néz ki, és a metaadat-kör az utóbbit új epizódnak olvassa. Vagyis **egy évad végének kipipálása sosem maradt meg** — nem csak ebben a beragadt helyzetben, hanem mindig.
+
+Ez az az osztály, ami 2026-08-09-én 65 GB nem kért letöltést indított (ld. „Csak a figyelt részeknek van sora / Incidens"). Két javítás:
+
+1. **Az elutasítás is tény, tehát sora van.** A `dropIdleUnits` megszűnt: egy levett unit `monitored=false`-szal **megmarad**, és ez az egyetlen hely, ahol egy „nem" élhet. A sor élete nem ezen múlik: a `pruneWatchlistItem` mostantól a **monitored** unitokat számolja, tehát amint semmi nincs figyelve, a watchlist sor megy, és a levett unitok vele mennek (cascade). A `deriveStatus`, a `nextAirDate` és az `episodeCount` is csak a figyelteket nézi — egy levett rész nem tehet egy sort „UPCOMING"-gá és nem számít bele a „3 epizód"-ba.
+2. **Amit a TMDB már felsorolt, az fel volt ajánlva.** Ha kézzel pipálsz be néhány részt egy évadból, a többi mostantól **elutasítottként felíródik**. Enélkül a vízjel fölött minden „új epizódnak" számít: E11 bepipálása egy befejezett évadban csendben E11–E22 figyelését jelentette. Így viszont csak az kerül fel magától, ami tényleg *ezután* jelenik meg — ami az egész szabály eredeti célja volt.
+
+**Mérve** (dobható fiókon, és szándékosan olyan részeken, amiknek a TMDB-n nincs légdátuma — azokat a scanner eleve nem nézi, tehát a mérés közben semmi nem indulhatott el; a végén a fiók is törölve):
+
+```
+E11, E12, E13 bepipalva kezzel   ticked: E11 E12 E13   declined: E2..E10, E14..E18, E22
+E12 es E13 levéve                ticked: E11           declined: +E12 E13
+metaadat-kor lefut               ticked: E11           declined: valtozatlan   ← itt jottek vissza eddig
+az utolso is levéve              a watchlist sor elment (0)
+```
+
+*(E1 egyik listában sem szerepel: azt a library tartalmazza ugyanabban a kiadásban, tehát nincs mit kérni rá — ez a fenti 2. javítás.)*
+
+**A te adatoddal mit tettem.** A 17:06-os kör által visszahozott 18 unitot leszedtem az app saját `stopWatching`-jával, tehát a *Regular Show: The Lost Tapes* lekerült a watchlistről — ez az, amit 16:54-kor kértél, és amit a kör felülírt. A **library sor és a torrent érintetlen**: a letöltött S01E01 megvan. Ha mégis kell belőle több rész, az adatlapon bepipálható, és most már meg is marad.
+
+`tsc --noEmit` és `next lint` tiszta. **Amit nem mértem:** a böngészőben magát a pipát — de a fenti `getTitleState` pontosan az, amit az adatlap kap.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -1300,13 +1542,14 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | [src/lib/media.ts](src/lib/media.ts) | TMDB: metaadat, évadok/epizódok, imdb id (TTL-es cache-en keresztül), multi-search és a közös `toMedia` mappelés |
 | [src/lib/indexer.ts](src/lib/indexer.ts) | torznab: indexerenkénti caps + képesség-alapú film/epizód/évad keresés, seeder-parse, dedup |
 | [src/lib/release.ts](src/lib/release.ts) | minőségi profil, pontozás, hamis-release szűrés, évad/epizód számozás-parser |
-| [src/lib/torrent.ts](src/lib/torrent.ts) | qBittorrent kliens: hozzáadás kategóriával/taggel, hash visszaolvasás, állapot, törlés |
+| [src/lib/torrent.ts](src/lib/torrent.ts) | qBittorrent kliens: hozzáadás kategóriával/taggel, hash visszaolvasás, állapot (a `seeding_time`-mal együtt), törlés |
 | [src/lib/grab.ts](src/lib/grab.ts) | keresés → pontozás → qBittorrent → DB lánc (`planMovieGrab`, `planSeasonGrab`, `planGrabs`, `execute*`) |
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
-| [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped`), sosem dob és sosem lóg |
+| [src/lib/notify.ts](src/lib/notify.ts) | Telegram-értesítések (`ready` / `started` / `dropped` / `deleted`), az install-csatornának névvel; sosem dob és sosem lóg |
+| [src/types/notify.ts](src/types/notify.ts) | miről lehet értesítést kapni — egy lista, amit a registry, a fiók és a két pipa-form is ebből olvas |
 | [src/lib/language.ts](src/lib/language.ts) | egy ember nyelvi szabályai: a sorrendezett lista, az elsődleges nyelv fogalma, és a defaultok, amikkel egy új fiók indul |
 | [src/lib/audience.ts](src/lib/audience.ts) | kinek számít a tiédnek egy letöltés: azonos kiadás, érted letöltött, vagy a kiadások előttről való |
 | [src/lib/settings.ts](src/lib/settings.ts) | a beállítások registryje a defaultjaival + a `Setting` tábla szinkron olvasása — az egyetlen hely, ahol egy beállítás értéke eldől |
@@ -1314,7 +1557,11 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | [src/app/settings/page.tsx](src/app/settings/page.tsx) | az admin felület: al-tabok, forrás-badge, tag-es listák, visszaállítás defaultra |
 | [src/app/log/page.tsx](src/app/log/page.tsx) | a log oldal: szint/forrás/szöveg szűrő, élő követés (SSE), `before=<id>` lapozás |
 | [src/app/api/log/stream/route.ts](src/app/api/log/stream/route.ts) | az élő stream: kurzor a táblán, `Last-Event-ID`-vel folytatható, 15 s-os üresjárati tick |
-| [src/components/tag-input.tsx](src/components/tag-input.tsx) | vesszős érték tag-ekként: felvesz, töröl, sorrend-érzékenynél húzható |
+| [src/components/tag-input.tsx](src/components/tag-input.tsx) | vesszős érték tag-ekként: felvesz, töröl, sorrend-érzékenynél húzható; `options`-szal zárt lista kereshető lenyílóval |
+| [src/components/option-checkboxes.tsx](src/components/option-checkboxes.tsx) | ugyanaz a vesszős érték, de előre ismert értékkészletnél: pipa, nem gépelés |
+| [src/types/language.ts](src/types/language.ts) | a nyelvek katalógusa — amit a release-parser fel tud ismerni, és amit a felület felajánl; egy lista, két irányba |
+| [src/components/option-select.tsx](src/components/option-select.tsx) | pontosan egy érték zárt készletből, kereshetően — a tag-lenyíló egyértékű párja |
+| [src/lib/options.ts](src/lib/options.ts) | a két lenyíló közös illesztése: kód tárolva, név gépelve |
 | [scripts/import-env-settings.ts](scripts/import-env-settings.ts) | egyszeri: a `.env`-ben maradt beállítások átvitele a táblába (a művelet emléke) |
 | [src/lib/payload.ts](src/lib/payload.ts) | mi van *valóban* a torrentben: futtatható a legnagyobb fájl, vagy nincs benne videó |
 | [src/instrumentation.ts](src/instrumentation.ts) | a scheduler indítása szerverindulásnál |
@@ -1326,6 +1573,8 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | [src/lib/sections.ts](src/lib/sections.ts) | a discover nézetek sorainak összeállítása + sorok közötti dedup + hero választás |
 | [src/components/media-row.tsx](src/components/media-row.tsx) | egy vízszintesen görgethető sor (`See more` linkkel) |
 | [src/components/media-grid.tsx](src/components/media-grid.tsx) | lapozó rács végtelen scrollal (genre-szűrt discover) |
+| [src/lib/browse-cache.ts](src/lib/browse-cache.ts) | mit mutatott egy lista, amíg a fül él — ettől van mihez visszagörgetni |
+| [src/components/scroll-restoration.tsx](src/components/scroll-restoration.tsx) | vissza lépve ott folytatódik, ahol voltál: pozíció URL-enként, és megvárja, hogy a lap elég magas legyen |
 | [src/components/media-hero.tsx](src/components/media-hero.tsx) | billboard a lap tetején: backdrop + Download / Watchlist / Details |
 | [src/components/discover-sections.tsx](src/components/discover-sections.tsx) | hero + sorok kirajzolása, mindhárom discover nézethez |
 | [src/app/details/[type]/[id]/page.tsx](src/app/details/[type]/[id]/page.tsx) | az adatlap **szerver** komponense: TMDB-adat lekérése (cache-en át), `notFound()` ismeretlen típusra/id-ra |
@@ -1347,9 +1596,9 @@ docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
-| `GET /api/settings` | a beállítások csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`) és a defaultjával; titok értéke sosem jön vissza |
-| `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése; üres titok nem változtat semmit; szám típusra a nem-szám 400 |
-| `DELETE /api/settings?key=` | vissza a registry defaultjára (default nélküli kulcsnál `unset`) — titoknál ez az egyetlen mód a törlésre |
+| `GET /api/settings` | a beállítások csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`), a defaultjával és — pipálható listánál — a választható értékekkel; **a titok értéke is visszajön** (2026-08-10 óta, ld. „Nyolc apróság") |
+| `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése (titoknál is); szám típusra a nem-szám 400 |
+| `DELETE /api/settings?key=` | vissza a registry defaultjára (default nélküli kulcsnál `unset`) |
 | `GET /api/log?level&source&q&before` | egy lap napló (200 sor), legújabb elöl, + `hasMore`, a szűrőhöz a tábla forrásai darabszámmal, és a stream indulási pontja (`newestId`, szándékosan szűrés nélkül) |
 | `GET /api/log/stream?level&source&q&after` | SSE: `event: entries` egy tömbbel, `id:` mezővel a folytatáshoz; 15 s-onként `: ping` |
 | `DELETE /api/log` | a teljes napló törlése — magáról a törlésről ír egy `WARN` sort |
