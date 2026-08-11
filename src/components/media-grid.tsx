@@ -20,14 +20,25 @@ const key = (media: Media) => `${ media.type }-${ media.id }`;
 type Shown = { items: Media[], page: number, totalPages: number };
 
 /**
+ * A grid in another language is another grid, so it is remounted rather than reset — the
+ * same thing the call site does for a change of genre, and for the same reason: the paging
+ * state lives in refs that a reset would have to unwind in the right order.
+ */
+export function MediaGrid(props: Props) {
+    const { locale } = useLocale();
+
+    return <Grid key={locale} {...props} />;
+}
+
+/**
  * The call site keys this on what it is showing, so a change of genre is a fresh mount
  * rather than something to reset — which is what lets the cache be read straight into the
  * initial state. Coming back to a grid four pages deep gets all four back: the position on
  * the page is meaningless without them, and refetching page one would throw them away.
  */
-export function MediaGrid({ type, category, genre }: Props) {
-    const { t } = useLocale();
-    const cacheKey = `grid:${ type }:${ category }:${ genre || "" }`;
+function Grid({ type, category, genre }: Props) {
+    const { locale, t } = useLocale();
+    const cacheKey = `grid:${ locale }:${ type }:${ category }:${ genre || "" }`;
     const was = cached<Shown>(cacheKey);
 
     const [ items, setItems ] = useState<Media[] | undefined>(was?.items);

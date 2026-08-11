@@ -12,6 +12,11 @@
  * the same navigation session, a reload is supposed to be a fresh look, and a poster list
  * is far too big to be worth serialising.
  *
+ * **The language is part of the key**, at every call site. A listing is TMDB titles and
+ * plot summaries, which come back in the reader's own language, so the same rows in two
+ * languages are two different listings — and remembering them separately is also what makes
+ * switching back and forth instant instead of a fetch each way.
+ *
  * **Freshness is the caller's decision, not this module's.** A discover row shows what it
  * had and refetches quietly behind it (so nothing is stale for longer than a moment, and
  * the page keeps its height while that happens); a paged grid keeps what it had, because

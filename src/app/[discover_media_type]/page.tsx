@@ -29,11 +29,13 @@ const VIEWS: Record<string, { title: MessageKey, description: MessageKey, type: 
 
 export default function Page() {
     const { discover_media_type } = useParams();
-    const { t } = useLocale();
+    const { locale, t } = useLocale();
     const slug = typeof discover_media_type === "string" ? discover_media_type : "";
     const view = VIEWS[slug];
 
-    const genreKey = `genres:${ view?.type || "" }`;
+    // TMDB names the genres, so the chips are in the reader's language too — and the fetch
+    // below runs again when it changes, because this key is its dependency
+    const genreKey = `genres:${ locale }:${ view?.type || "" }`;
 
     const [ genres, setGenres ] = useState<MediaGenre[]>(cached<MediaGenre[]>(genreKey) || []);
     const [ selected, setSelected ] = useState<number | null>(null);
@@ -55,6 +57,13 @@ export default function Page() {
         }
 
         let cancelled = false;
+
+        // this language's chips, if it has been here before — the fetch replaces them
+        const had = cached<MediaGenre[]>(genreKey);
+
+        if (had) {
+            setGenres(had);
+        }
 
         axios.get("/api/genres", { params: { type: view.type } })
             .then(res => {

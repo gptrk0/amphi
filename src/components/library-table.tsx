@@ -128,7 +128,7 @@ const seedText = (value: string | null, t: Translate) => {
 export function LibraryTable() {
     const { refresh } = useWatchlist();
     const { isAdmin } = useSession();
-    const { t } = useLocale();
+    const { locale, t } = useLocale();
     const [ items, setItems ] = useState<LibraryItem[]>();
     const [ filter, setFilter ] = useState<"ALL" | "DOWNLOADING" | "AVAILABLE">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "startedAt", direction: "desc" });
@@ -147,9 +147,11 @@ export function LibraryTable() {
             .catch(err => console.error(err));
     };
 
+    // on mount, and again on a change of language: these rows are TMDB titles, and the poll
+    // below would only catch up to the new language a minute later
     useEffect(() => {
         load();
-    }, [])
+    }, [ locale ])
 
     // it never stops: this table is the whole household's, and the row that appears is
     // as often somebody else's new download as it is a percentage of your own

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
     DEFAULT_LOCALE,
@@ -21,6 +22,16 @@ import {
  * cookie and swaps the dictionary in place: no reload, because every page here draws from
  * state that is already in the browser, and a reload would throw away the scroll position
  * and every listing the browse cache is holding.
+ *
+ * **The words are not the whole page, though.** Titles, plot summaries, genre names and
+ * episode names come from TMDB in the reader's language, and those are already fetched and
+ * sitting in component state — swapping the dictionary alone would leave a Hungarian page
+ * full of English cards. So the change also invalidates what was fetched:
+ *
+ * - `router.refresh()` re-renders whatever the server drew, which is the details page.
+ * - the listings key their fetches and their browse cache entries on the language, so a
+ *   switch is a fresh listing and a switch back is the remembered one.
+ * - the two tables refetch, because their rows carry TMDB names too.
  */
 
 type LocaleContextValue = {
@@ -50,6 +61,7 @@ const remember = (locale: Locale) => {
 
 export function LocaleProvider({ initial, children }: { initial: Locale, children: React.ReactNode }) {
     const [ locale, setLocaleState ] = useState<Locale>(initial);
+    const router = useRouter();
 
     const setLocale = useCallback((next: Locale) => {
         remember(next);
@@ -58,7 +70,11 @@ export function LocaleProvider({ initial, children }: { initial: Locale, childre
         // the language is also on the document, for a screen reader and for the browser's
         // own spellchecking — the server sets it, and this keeps it honest afterwards
         document.documentElement.lang = next;
-    }, []);
+
+        // the cookie is written by now, so anything the server draws is drawn again in the
+        // new language: the details page, and the shell's own `<html lang>`
+        router.refresh();
+    }, [ router ]);
 
     const value = useMemo(() => ({
         locale,

@@ -46,8 +46,10 @@ type Shown = { hero: Media | null, sections: Section[] };
  */
 export function DiscoverSections({ view }: { view: string }) {
     const { revision } = useWatchlist();
-    const { tOr } = useLocale();
-    const key = `sections:${ view }`;
+    const { locale, tOr } = useLocale();
+    // the language is in the key, because these rows are TMDB titles: the same view in two
+    // languages is two listings, and the fetch below is keyed on it too
+    const key = `sections:${ locale }:${ view }`;
     const was = cached<Shown>(key);
 
     const [ hero, setHero ] = useState<Media | null>(was?.hero ?? null);
@@ -63,6 +65,16 @@ export function DiscoverSections({ view }: { view: string }) {
     // is the height and the first paint, not the freshness of a trending row.
     useEffect(() => {
         let cancelled = false;
+
+        // on a language change this component is not remounted, so the initial state above
+        // is still the old language's rows. Whatever this language already had is put up
+        // first, and the fetch replaces it either way
+        const had = cached<Shown>(key);
+
+        if (had) {
+            setHero(had.hero);
+            setSections(had.sections);
+        }
 
         axios.get("/api/discover/sections", { params: { view } })
             .then(res => {

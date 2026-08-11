@@ -21,8 +21,10 @@ type Shown = { items: Media[], page: number, totalPages: number };
  * a details page lose its place.
  */
 function Results({ query }: { query: string }) {
-    const { t } = useLocale();
-    const cacheKey = `search:${ query }`;
+    const { locale, t } = useLocale();
+    // the same query in another language is another set of results — TMDB matches the
+    // localised titles too, so it is not only the words on the cards that differ
+    const cacheKey = `search:${ locale }:${ query }`;
     const was = query ? cached<Shown>(cacheKey) : undefined;
 
     const [ items, setItems ] = useState<Media[] | undefined>(was?.items);
@@ -136,8 +138,11 @@ function Results({ query }: { query: string }) {
 
 function SearchResults() {
     const query = (useSearchParams().get("q") || "").trim();
+    const { locale } = useLocale();
 
-    return <Results key={query} query={query} />;
+    // the language is in the key for the same reason the query is: a fresh mount, with its
+    // own remembered pages, instead of a reset path through the paging refs
+    return <Results key={`${ locale }:${ query }`} query={query} />;
 }
 
 export default function Page() {

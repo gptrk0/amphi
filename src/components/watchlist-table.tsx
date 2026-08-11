@@ -247,7 +247,9 @@ export function WatchlistTable() {
 
     useEffect(() => {
         load();
-    }, [ signature, load ])
+        // `locale` is not read in here, and is a dependency anyway: every row carries a
+        // TMDB title, so the language is part of what the server answered with
+    }, [ signature, load, locale ])
 
     const poster = (item: WatchlistRowItem) => {
         if (! item.media?.poster_img) {
