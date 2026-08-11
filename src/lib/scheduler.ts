@@ -23,7 +23,7 @@ import {
     setSize,
     syncSeedWindow
 } from "@/lib/library";
-import { getMediaMetadata, getTvSeasons, isTmdbConfigured } from "@/lib/media";
+import { getMediaMetadata, getTvSeasons, isTmdbConfigured, RECORD_LANGUAGE } from "@/lib/media";
 import { isIndexerConfigured } from "@/lib/indexer";
 import { normalizeTitle } from "@/lib/release";
 import { BlockReason, blockRelease } from "@/lib/blocklist";
@@ -178,9 +178,15 @@ const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) 
     return torrent;
 };
 
-/** A title instead of a tmdb id, for a line a person reads. The metadata is cached. */
+/**
+ * A title instead of a tmdb id, for a line a person reads. The metadata is cached.
+ *
+ * In the record language, not the reader's: this ends up in the log and in notifications,
+ * and a scan started from the admin page would otherwise write its lines in whatever
+ * language that admin happens to browse in. Half a log in Hungarian is not a log.
+ */
 const titleOf = async (type: ContentType, tmdbId: number) => {
-    const metadata = await getMediaMetadata(toMediaType(type), tmdbId);
+    const metadata = await getMediaMetadata(toMediaType(type), tmdbId, RECORD_LANGUAGE);
 
     return metadata ? metadata.media.name : `TMDB #${ tmdbId }`;
 };

@@ -1,7 +1,7 @@
 import { ContentType, Library as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { LibraryAudience, libraryFilter } from "@/lib/audience";
-import { getMediaMetadata } from "@/lib/media";
+import { getMediaMetadata, RECORD_LANGUAGE } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
 import { removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { addToWatchlist, ensureEpisodeUnits, pruneWatchlistItem, rowsForTitle, toMediaType } from "@/lib/watchlist";
@@ -74,8 +74,13 @@ export const coverText = (keys: string[]) => {
     return `${ where } — ${ episodes.length } episodes`;
 };
 
+/**
+ * What this download is called, for a log line and for the notification that goes with it.
+ * The record language, for the same reason as the log itself: it is written once, and not
+ * for one particular reader.
+ */
 export const libraryLabel = async (item: LibraryRow) => {
-    const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId);
+    const metadata = await getMediaMetadata(toMediaType(item.type), item.tmdbId, RECORD_LANGUAGE);
     const name = metadata ? metadata.media.name : `TMDB #${ item.tmdbId }`;
     const covers = coverText(item.episodes);
 

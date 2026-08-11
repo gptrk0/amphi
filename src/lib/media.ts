@@ -10,7 +10,9 @@ import {
 } from "@/types/media";
 import axios from "axios";
 
+import { DEFAULT_LOCALE, Locale, LOCALES } from "@/i18n";
 import { errorText, logError, LogLevel, logThrottled } from "@/lib/log";
+import { readerLocale } from "@/lib/locale";
 import { loadSettings, settingNumber, settingText } from "@/lib/settings";
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
@@ -60,11 +62,33 @@ const logTmdbFailure = async (err: unknown) => {
     );
 };
 
-const language = () => settingText("TMDB_LANGUAGE");
+/**
+ * Which language TMDB answers in, and it is nobody's setting.
+ *
+ * It used to be two: a language and a region, install wide. Both are gone (2026-08-11).
+ * The interface is already in the reader's language, and a Hungarian page carrying English
+ * titles and English plot summaries is the interface only half translated — so the answer
+ * follows the same cookie the shell does. That also makes the search box work the way the
+ * page reads: ask TMDB in Hungarian and „A bárányok hallgatnak" finds the film.
+ *
+ * The region went with it because it was never an independent choice. It decides whose age
+ * rating to show, and the honest answer for somebody reading in Hungarian is the Hungarian
+ * board — which is what the language already says.
+ */
+const TMDB_LANGUAGES: Record<Locale, string> = { en: "en-US", hu: "hu-HU" };
+
+/**
+ * The language for anything no particular person is reading: a log line, a notification,
+ * the titles a release name is matched against. Those are records and machinery, and both
+ * would be worse for changing with whoever happened to be logged in.
+ */
+export const RECORD_LANGUAGE = TMDB_LANGUAGES[DEFAULT_LOCALE];
+
+const readerLanguage = async () => TMDB_LANGUAGES[await readerLocale()];
 
 // certifications and streaming services are per country, and the language already
 // carries one — "en-US" means the US ratings board and US providers
-const region = () => (settingText("TMDB_REGION") || language().split("-")[1] || "US").toUpperCase();
+const regionOf = (language: string) => (language.split("-")[1] || "US").toUpperCase();
 
 const cacheTtlMs = () => settingNumber("TMDB_CACHE_TTL_MINUTES") * 60 * 1000;
 
@@ -128,7 +152,7 @@ export const toMedia = (data: any, type: Media["type"]): Media => {
     };
 };
 
-export async function fetchMediaMetadata(type: string, id: number): Promise<MediaMetadata | null> {
+export async function fetchMediaMetadata(type: string, id: number, language: string): Promise<MediaMetadata | null> {
     if (! isMediaType(type)) {
         return null;
     }
@@ -137,7 +161,7 @@ export async function fetchMediaMetadata(type: string, id: number): Promise<Medi
         const res = await axios.get(`${ TMDB_BASE_URL }/${ type }/${ id }`, {
             params: {
                 api_key: apiKey(),
-                language: language()
+                language
             }
         });
 
@@ -158,12 +182,34 @@ export async function fetchMediaMetadata(type: string, id: number): Promise<Medi
     return null;
 }
 
-export async function getMediaMetadata(type: string, id: number): Promise<MediaMetadata | null> {
+/**
+ * The language is in the cache key, because the same title in two languages is two
+ * different answers — without it the first reader would decide what the second one sees.
+ * The optional argument is for the callers that must not follow a reader: pass
+ * `RECORD_LANGUAGE` there.
+ */
+export async function getMediaMetadata(type: string, id: number, language?: string): Promise<MediaMetadata | null> {
+    const wanted = language || await readerLanguage();
+
     return await cached(
-        `metadata:${ type }:${ id }`,
-        () => fetchMediaMetadata(type, id),
+        `metadata:${ wanted }:${ type }:${ id }`,
+        () => fetchMediaMetadata(type, id, wanted),
         (value) => value === null
     );
+}
+
+/**
+ * Every name this title is known by that the app can see: the original, plus the localised
+ * one in each language the interface has. What a release name is matched against, and the
+ * reason it is all of them at once — an `ncore` release is named in Hungarian and a
+ * scene release in English, and which of the two a person happens to be reading the page
+ * in has nothing to do with which of them exists.
+ */
+export async function mediaTitles(type: string, id: number): Promise<string[]> {
+    const found = await Promise.all(LOCALES.map(locale => getMediaMetadata(type, id, TMDB_LANGUAGES[locale])));
+    const names = found.flatMap(metadata => metadata ? [ metadata.original_name, metadata.media.name ] : []);
+
+    return [ ...new Set(names.filter(Boolean)) ];
 }
 
 /**
@@ -175,7 +221,7 @@ export async function searchMedia(query: string, page: number): Promise<MediaPag
         const res = await axios.get(`${ TMDB_BASE_URL }/search/multi`, {
             params: {
                 api_key: apiKey(),
-                language: language(),
+                language: await readerLanguage(),
                 include_adult: false,
                 query,
                 page
@@ -222,7 +268,10 @@ export type DiscoverOptions = {
     genre?: string | null;
 };
 
-export async function fetchDiscoverPage({ type, category, page, genre }: DiscoverOptions): Promise<MediaPage> {
+export async function fetchDiscoverPage(
+    { type, category, page, genre }: DiscoverOptions,
+    language: string
+): Promise<MediaPage> {
     // a genre filter is a different endpoint, and tmdb genre ids differ per type
     const byGenre = !! genre && isMediaType(type);
     const path = byGenre ? `/discover/${ type }` : discoverPath(category, type);
@@ -235,7 +284,7 @@ export async function fetchDiscoverPage({ type, category, page, genre }: Discove
         const res = await axios.get(`${ TMDB_BASE_URL }${ path }`, {
             params: {
                 api_key: apiKey(),
-                language: language(),
+                language,
                 page,
                 ...(byGenre ? { with_genres: genre, sort_by: "popularity.desc", include_adult: false } : {})
             }
@@ -262,15 +311,17 @@ export async function fetchDiscoverPage({ type, category, page, genre }: Discove
 }
 
 export async function getDiscoverPage(options: DiscoverOptions): Promise<MediaPage> {
+    const language = await readerLanguage();
+
     return await cached(
-        `discover:${ options.type }:${ options.category }:${ options.genre || "" }:${ options.page }`,
-        () => fetchDiscoverPage(options),
+        `discover:${ language }:${ options.type }:${ options.category }:${ options.genre || "" }:${ options.page }`,
+        () => fetchDiscoverPage(options, language),
         (value) => value.results.length === 0,
         discoverTtlMs()
     );
 }
 
-export async function fetchGenres(type: string): Promise<MediaGenre[]> {
+export async function fetchGenres(type: string, language: string): Promise<MediaGenre[]> {
     if (! isMediaType(type)) {
         return [];
     }
@@ -279,7 +330,7 @@ export async function fetchGenres(type: string): Promise<MediaGenre[]> {
         const res = await axios.get(`${ TMDB_BASE_URL }/genre/${ type }/list`, {
             params: {
                 api_key: apiKey(),
-                language: language()
+                language
             }
         });
 
@@ -293,7 +344,13 @@ export async function fetchGenres(type: string): Promise<MediaGenre[]> {
 }
 
 export async function getGenres(type: string): Promise<MediaGenre[]> {
-    return await cached(`genres:${ type }`, () => fetchGenres(type), (value) => value.length === 0);
+    const language = await readerLanguage();
+
+    return await cached(
+        `genres:${ language }:${ type }`,
+        () => fetchGenres(type, language),
+        (value) => value.length === 0
+    );
 }
 
 export async function fetchImdbId(type: string, id: number): Promise<string | null> {
@@ -392,17 +449,17 @@ const toTrailer = (videos: any) => {
 };
 
 /**
- * The age rating of the configured region. Films carry it per release, shows have
- * one per country.
+ * The age rating of the reader's own country, which is the one their language names. Films
+ * carry it per release, shows have one per country.
  */
-const toCertification = (data: any, type: Media["type"]): string | null => {
+const toCertification = (data: any, type: Media["type"], region: string): string | null => {
     if (type === "tv") {
-        const found = (data.content_ratings?.results || []).find((v: any) => v.iso_3166_1 === region());
+        const found = (data.content_ratings?.results || []).find((v: any) => v.iso_3166_1 === region);
 
         return found?.rating || null;
     }
 
-    const found = (data.release_dates?.results || []).find((v: any) => v.iso_3166_1 === region());
+    const found = (data.release_dates?.results || []).find((v: any) => v.iso_3166_1 === region);
     const rated = (found?.release_dates || []).find((v: any) => v.certification);
 
     return rated?.certification || null;
@@ -415,7 +472,7 @@ const toRow = (value: any, type: Media["type"]): Media[] => {
         .map((item: any) => toMedia(item, isMediaType(item.media_type) ? item.media_type : type));
 };
 
-export async function fetchMediaDetails(type: string, id: number): Promise<MediaDetails | null> {
+export async function fetchMediaDetails(type: string, id: number, language: string): Promise<MediaDetails | null> {
     if (! isMediaType(type)) {
         return null;
     }
@@ -426,7 +483,7 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
         const res = await axios.get(`${ TMDB_BASE_URL }/${ type }/${ id }`, {
             params: {
                 api_key: apiKey(),
-                language: language(),
+                language,
                 append_to_response: [
                     isTv ? "aggregate_credits" : "credits",
                     "videos",
@@ -437,7 +494,7 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
                 ].join(","),
                 // a localised page still wants the english trailer when there is no
                 // local one, and untagged videos are usually the original
-                include_video_language: `${ language().split("-")[0] },en,null`
+                include_video_language: `${ language.split("-")[0] },en,null`
             }
         });
 
@@ -455,7 +512,7 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
             genres: (data.genres || []).map((genre: any) => ({ id: genre.id, name: genre.name })),
             rating: Number(data.vote_average || 0),
             votes: Number(data.vote_count || 0),
-            certification: toCertification(data, type),
+            certification: toCertification(data, type, regionOf(language)),
             homepage: data.homepage || "",
             imdb_id: data.external_ids?.imdb_id || null,
             budget: Number(data.budget || 0),
@@ -490,9 +547,11 @@ export async function fetchMediaDetails(type: string, id: number): Promise<Media
 }
 
 export async function getMediaDetails(type: string, id: number): Promise<MediaDetails | null> {
+    const language = await readerLanguage();
+
     return await cached(
-        `details:${ type }:${ id }`,
-        () => fetchMediaDetails(type, id),
+        `details:${ language }:${ type }:${ id }`,
+        () => fetchMediaDetails(type, id, language),
         (value) => value === null
     );
 }
@@ -500,12 +559,12 @@ export async function getMediaDetails(type: string, id: number): Promise<MediaDe
 /**
  * Seasons and episodes of a show, with air dates. Season 0 (specials) is skipped.
  */
-export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
+export async function fetchTvSeasons(id: number, language: string): Promise<MediaSeason[]> {
     try {
         const res = await axios.get(`${ TMDB_BASE_URL }/tv/${ id }`, {
             params: {
                 api_key: apiKey(),
-                language: language()
+                language
             }
         });
 
@@ -518,7 +577,7 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
             const seasonRes = await axios.get(`${ TMDB_BASE_URL }/tv/${ id }/season/${ seasonNumber }`, {
                 params: {
                     api_key: apiKey(),
-                    language: language()
+                    language
                 }
             });
 
@@ -551,10 +610,12 @@ export async function fetchTvSeasons(id: number): Promise<MediaSeason[]> {
     return [];
 }
 
-export async function getTvSeasons(id: number): Promise<MediaSeason[]> {
+export async function getTvSeasons(id: number, language?: string): Promise<MediaSeason[]> {
+    const wanted = language || await readerLanguage();
+
     return await cached(
-        `seasons:${ id }`,
-        () => fetchTvSeasons(id),
+        `seasons:${ wanted }:${ id }`,
+        () => fetchTvSeasons(id, wanted),
         (value) => value.length === 0
     );
 }

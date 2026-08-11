@@ -8,8 +8,9 @@ export type Media = {
     backdrop_img: string;
 };
 
-// original_name is kept separately because release names use the original title,
-// which differs from the localised one when TMDB_LANGUAGE is not en-US.
+// original_name is kept separately because release names use the original title, which
+// differs from the localised one whenever the reader is not reading in the original
+// language — and the localised one now depends on who is reading.
 export type MediaMetadata = {
     media: Media;
     original_name: string;

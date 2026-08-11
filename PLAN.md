@@ -273,7 +273,7 @@ Ami elkészült / döntések:
 - A sidebar `isActive` a `useParams` helyett `usePathname`-re váltott, különben a `/watchlist` alatt is az "All" menüpont világított volna.
 
 ### Fázis 4 — Keresés ✅
-- [x] `GET /api/search?q&page` — TMDB `search/multi` (`TMDB_LANGUAGE`, `include_adult=false`), a `person` találatok kiszűrve, a meglévő `Media` típusra mappelve. Nincs cache-elve: egy frissen felvitt cím azonnal jelenjen meg.
+- [x] `GET /api/search?q&page` — TMDB `search/multi` (az olvasó nyelvén, `include_adult=false`), a `person` találatok kiszűrve, a meglévő `Media` típusra mappelve. Nincs cache-elve: egy frissen felvitt cím azonnal jelenjen meg.
 - [x] Searchbar bekötése: kontrollált input, 350 ms debounce → `/search?q=…`, `Enter` azonnali keresés, `Escape` ürítés, `/` billentyűvel fókusz. A `/search` oldalon `router.replace` megy `push` helyett, hogy a gépelés ne töltse tele a history-t; a keresősáv más oldalra lépve kiürül, megosztott linken visszatöltődik.
 - [x] `/search?q=…` oldal ugyanazzal a `MediaCard` griddel (badge, jobbklikk-menü, azonnali letöltés), skeleton töltés közben, `Load more` a lapozáshoz.
 - [x] TMDB → `Media` mappelés egy helyre (`toMedia`) — eddig három helyen volt duplikálva. Poszter nélküli találatnál eddig `…/w500null` URL keletkezett; most üres string + `no poster` placeholder a kártyán (keresésnél ez valós eset, kb. minden 20. találat).
@@ -557,7 +557,7 @@ Kérés: az adatlap mutasson meg mindent, ami TMDB-ről megkapható és érdemes
 - Blokkok: hero (backdrop, poszter, cím+év, tagline, korhatár, ★ értékelés szavazatszámmal, játékidő, műfajok, leírás) → Download / Trailer / Stop watching → évadválasztó (sorozat) → szereplők → `Details` rács (státusz, következő epizód, rendező/alkotó/író, dátumok, évad- és epizódszám, eredeti cím és nyelv, hangsávok, csatorna, stúdió, ország, büdzsé, bevétel, TMDB/IMDb/honlap link) → ajánlások és hasonlók.
 - Sorozatnál a stáb **csak az alkotókat** listázza: az `aggregate_credits` minden epizódrendezőt felsorol, ami semmit nem mond arról, ki csinálta a sorozatot.
 - Stúdió- és csatornanevek szövegként, nem logóként: a TMDB logói átlátszó hátterű sötét PNG-k, sötét témában eltűnnének.
-- A korhatár országfüggő: `TMDB_REGION`, alapból a `TMDB_LANGUAGE` régiója (`en-US` → `US`). `HU`-ra állítva magyar besorolás jön (`R` helyett `18`).
+- A korhatár országfüggő: annak az országnak a besorolása, amit az olvasó nyelve megnevez (`hu-HU` → `HU`, `en-US` → `US`), tehát magyarul olvasva `R` helyett `18`. Eredetileg `TMDB_REGION` beállítás volt, 2026-08-11 óta nincs — ld. „A TMDB az olvasó nyelvén beszél".
 - A „Where to watch" (JustWatch-szolgáltatók) rövid ideig szintén szerepelt rajta, de **kérésre kikerült**, a lekérdezéssel és a típusokkal együtt.
 
 #### Bejelentett hibák és javításuk (2026-08-07 → 08)
@@ -1615,6 +1615,22 @@ Kérés: „az oldalon az alapértelmezett nyelv az angol, de hiánytalanul lehe
 
 **Ami maradt, és amit nem mértem.** A böngészőben semmit nem láttam — a fordítások szerveroldali HTML-ből és a szótárból vannak ellenőrizve. És egy valódi hiányosság: **az api saját üzenetei angolul válaszolnak.** 13 route fájlban van `message: "..."`, és négy helyen a kliens ezt közvetlenül tálcára teszi (letöltés indítása, webhook-teszt, scan, és minden szerveroldali validációs hiba). Ehhez a szervernek is kell egy `t` a sütiből — külön kör, nem fér ebbe.
 
+#### A TMDB az olvasó nyelvén beszél (2026-08-11-i kérés) ✅
+
+Kérés: „beállításokban ne kelljen megadni a `TMDB_REGION`-t hanem a user nyelve alapján működjön, pl. aki magyarul nézi az oldalt az magyarul kapja a tmdb-t és magyarul keressen a keresőben".
+
+**Két beállítás ment el, nem egy.** A régió eleve nem volt önálló döntés: azt mondta meg, kinek a korhatár-jelzését mutassuk, és aki magyarul olvas, annak a magyar besorolás a helyes válasz — ezt viszont a nyelv már megnevezi (`hu-HU` → `HU`). A `TMDB_LANGUAGE` pedig azzal veszítette el az értelmét, hogy a felület kétnyelvű lett: ha a lap magyar, de a címek és a leírások angolul jönnek, akkor a felület félig van lefordítva. Így a TMDB nyelve **ugyanaz a süti**, amiből a shell rendereli magát ([media.ts](src/lib/media.ts) `TMDB_LANGUAGES`, [locale.ts](src/lib/locale.ts) `readerLocale`), és a keresőmező is ezt kapja: magyarul kérdezve „A bárányok hallgatnak" megtalálja a filmet.
+
+**Kérésen kívül nincs olvasó.** A scan-kör, a letöltés-szinkron, az `instrumentation.ts` — ott a `cookies()` nem üres választ ad, hanem hibát dob, és ez nem baj, hanem maga a válasz: a `readerLocale` ilyenkor a default nyelvet adja. Ez az a nyelv, amin az app **magának** ír.
+
+**Amit szándékosan nem az olvasó nyelve dönt el** (`RECORD_LANGUAGE`, explicit paraméterként átadva): a napló és az értesítések címei (`titleOf` a schedulerben, `libraryLabel` a libraryben), mert azok rekordok — a felületről indított kézi scan különben abba a nyelvbe írná a sorait, amiben az adminja böngészik, és a félig magyar napló nem napló. Ugyanígy a grabber: `planMovieGrab` / `planSeasonGrab` fixált nyelvvel olvas, mert **mi töltődik le, az nem függhet attól, kinek a böngészője kérte**.
+
+**A címek, amikhez a release-neveket hasonlítjuk, most az összes nyelvből jönnek** (`mediaTitles`): az eredeti cím **és** a lokalizált cím minden nyelven, amit a felület tud. Egy `ncore`-release magyarul van elnevezve, egy scene-release angolul, és ehhez semmi köze annak, ki nyitotta ki épp az oldalt. Ez szigorúan több, mint ami eddig volt (egy nyelv, install-szinten), tehát a párosítás nem lett rosszabb egyetlen release-nél sem.
+
+**A nyelv bekerült a cache-kulcsokba** (`metadata:`, `details:`, `seasons:`, `discover:`, `genres:`) — nélküle az első olvasó döntötte volna el, mit lát a második.
+
+**Mérve** (élő TMDB, valós kulcs): a beállítások TMDB csoportja már csak `TMDB_API_KEY`, `TMDB_CACHE_TTL_MINUTES`, `DISCOVER_CACHE_TTL_MINUTES`. Keresés `silence of the lambs`-ra angolul `The Silence of the Lambs`, magyarul `A Bárányok hallgatnak` magyar leírással; `silo`-ra `Silo` / `A siló`. A `/details/movie/274` korhatára angolul `R`, magyarul `18` — pontosan az, amiért a régió-beállítás fölösleges volt. Műfajok: `Action, Adventure, Animation, Comedy` / `Akció, Kaland, Animációs, Vígjáték`. Kérésen kívül (dobható szkript, futtatva és törölve): a locale `en`, a rekord-nyelv `en-US`, és `mediaTitles(274)` = `["The Silence of the Lambs","A Bárányok hallgatnak"]`. Egy valódi terv-futtatás (keresés, letöltés nélkül) 16 találatot adott, a győztes `The.Silence.of.the.Lambs.1991.1080p.REMASTERED.BluRay.DTS.x264.HuN-Nimphas` — a magyar hangsávos kiadás, magyar címre párosítva is. A migráció (`20260811120000_tmdb_follows_the_reader`) a két sort törli; ezen a telepítésen a `TMDB_LANGUAGE` `hu-HU` volt és `TMDB_REGION` sor nem is létezett, tehát a dobott érték azt mondta, hogy „mindenkinek mindent magyarul" — most ezt a süti mondja, személyenként.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -1693,7 +1709,7 @@ docker build -t aioseerr:test .
 docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {aioseerr: {image: aioseerr:test, ports: !override ["3999:3000"]}}') up -d
 ```
 
-**Nyelv:** a kód, a kommentek és a felület angol. A TMDB metaadat is angolul jön (`TMDB_LANGUAGE`, default `en-US`) — `hu-HU`-ra állítva visszakapható a magyar cím/leírás anélkül, hogy a felület nyelve változna. Ez a terv-dokumentum marad magyar.
+**Nyelv:** a kód és a kommentek angolok. A felület **két nyelven** van (2026-08-11 óta), és a TMDB metaadat azt a nyelvet követi, amit az olvasó választott — beállítás nélkül. A napló, az értesítések és a release-nevekhez hasonlított címek maradnak az egy, rögzített nyelven. Ez a terv-dokumentum marad magyar.
 
 ---
 

@@ -1,0 +1,14 @@
+-- TMDB answers in the reader's own language now, so neither of these is a choice any more.
+--
+-- The interface has been in two languages since 2026-08-11, and a Hungarian page carrying
+-- English titles and English plot summaries is a half translated interface. The language
+-- comes from the same cookie the shell does, and the search box goes with it: asked in
+-- Hungarian, TMDB finds "A bárányok hallgatnak". The region was never independent of it —
+-- it decides whose age rating to show, and the honest answer for somebody reading in
+-- Hungarian is the Hungarian board, which is what the language already says.
+--
+-- Nothing reads either key any more, and a row nothing reads is one that will disagree with
+-- the truth one day. Measured before writing this: this install had TMDB_LANGUAGE = hu-HU
+-- and no TMDB_REGION row at all — so the value being dropped here says "everything in
+-- Hungarian for everybody", which is exactly what the cookie now says per person.
+DELETE FROM "Setting" WHERE "key" IN ('TMDB_LANGUAGE', 'TMDB_REGION');

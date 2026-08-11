@@ -21,14 +21,6 @@ const HU: Record<string, Text> = {
         label: "API kulcs",
         help: "Minden, ami a felfedező oldalakon van, a TMDB-től jön, tehát ez az egyetlen beállítás, ami nélkül az app nem tud elindulni a munkával."
     },
-    TMDB_LANGUAGE: {
-        label: "Nyelv",
-        help: "Azt is eldönti, milyen címekre esik vissza az indexer-keresés."
-    },
-    TMDB_REGION: {
-        label: "Régió",
-        help: "Kinek a korhatár-jelzését mutatjuk. Üresen a nyelvből következik."
-    },
     TMDB_CACHE_TTL_MINUTES: { label: "Metaadat-gyorsítótár (perc)" },
     DISCOVER_CACHE_TTL_MINUTES: {
         label: "Felfedező-sorok gyorsítótára (perc)",

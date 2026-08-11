@@ -72,8 +72,9 @@ export type SettingDef = {
 export const SETTINGS: SettingDef[] = [
     // TMDB
     { key: "TMDB_API_KEY", group: "TMDB", label: "API key", type: "string", secret: true, help: "Everything on the discover pages comes from TMDB, so this is the one setting the app cannot start working without." },
-    { key: "TMDB_LANGUAGE", group: "TMDB", label: "Language", type: "string", default: "en-US", help: "Also decides which titles the indexer search falls back to." },
-    { key: "TMDB_REGION", group: "TMDB", label: "Region", type: "string", placeholder: "US", help: "Whose age rating to show. Taken from the language when empty." },
+    // no language and no region: TMDB answers in the reader's own interface language now,
+    // and the age rating follows the country that language names — see the note on
+    // `TMDB_LANGUAGES` in src/lib/media.ts
     { key: "TMDB_CACHE_TTL_MINUTES", group: "TMDB", label: "Metadata cache (minutes)", type: "number", default: "720" },
     { key: "DISCOVER_CACHE_TTL_MINUTES", group: "TMDB", label: "Discover row cache (minutes)", type: "number", default: "60", help: "Trending moves faster than metadata, so it gets its own, shorter cache." },
 

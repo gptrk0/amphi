@@ -1,8 +1,7 @@
-import { cookies } from "next/headers";
 import { Geist } from "next/font/google";
 
 import { Shell } from "@/components/shell";
-import { localeFrom, LOCALE_COOKIE } from "@/i18n";
+import { readerLocale } from "@/lib/locale";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,13 +14,16 @@ const geistSans = Geist({
  * this side can read one. Everything it used to do is in `Shell`, which is still a client
  * component — so the whole app is drawn in the right language on the first paint and
  * `<html lang>` says which one it is.
+ *
+ * The same `readerLocale` the TMDB reads go through, so the metadata on a page and the words
+ * around it can never end up in two different languages.
  */
 export default async function RootLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const locale = localeFrom((await cookies()).get(LOCALE_COOKIE)?.value);
+    const locale = await readerLocale();
 
     return (
         <html lang={locale} suppressHydrationWarning>

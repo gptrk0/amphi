@@ -1,7 +1,7 @@
 import { ContentType } from "../../prisma/generated/client";
 import { refreshBlocklist } from "@/lib/blocklist";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
-import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
+import { getImdbId, getMediaMetadata, getTvSeasons, mediaTitles, RECORD_LANGUAGE } from "@/lib/media";
 import { languageProfileOf, searchLanguages } from "@/lib/language";
 import {
     getQualityProfile,
@@ -147,7 +147,11 @@ export const planMovieGrab = async (tmdbId: number, context: GrabContext): Promi
     // scoring reads the blocklist synchronously, so it has to be in memory by then
     await refreshBlocklist();
 
-    const metadata = await getMediaMetadata("movie", tmdbId);
+    // pinned, not the reader's language: what gets grabbed cannot depend on whose browser
+    // asked for it. Nothing read here is per language anyway — the original title, the
+    // year, the original language — and the names to match against come from `mediaTitles`,
+    // which knows every language the app has
+    const metadata = await getMediaMetadata("movie", tmdbId, RECORD_LANGUAGE);
 
     if (! metadata) {
         return null;
@@ -160,7 +164,7 @@ export const planMovieGrab = async (tmdbId: number, context: GrabContext): Promi
     });
 
     const selection = selectRelease(releases, context.profile, {
-        titles: [ metadata.original_name, metadata.media.name ],
+        titles: await mediaTitles("movie", tmdbId),
         kind: "movie",
         year: metadata.year,
         originalLanguage: metadata.original_language
@@ -207,8 +211,8 @@ export const planSeasonGrab = async (
 ): Promise<SeasonPlan | null> => {
     await refreshBlocklist();
 
-    const metadata = await getMediaMetadata("tv", tmdbId);
-    const seasons = await getTvSeasons(tmdbId);
+    const metadata = await getMediaMetadata("tv", tmdbId, RECORD_LANGUAGE);
+    const seasons = await getTvSeasons(tmdbId, RECORD_LANGUAGE);
     const season = seasons.find(v => v.season_number === seasonNumber);
 
     if (! metadata || ! season) {
@@ -224,7 +228,7 @@ export const planSeasonGrab = async (
     });
 
     const profile = context.profile;
-    const titles = [ metadata.original_name, metadata.media.name ];
+    const titles = await mediaTitles("tv", tmdbId);
     const now = Date.now();
 
     const episodes: EpisodePlan[] = await mapLimited(season.episodes, episodeConcurrency(), async (episode) => {
@@ -483,7 +487,7 @@ export const grabbedEpisodes = async (
     }
 
     const held = await heldEpisodes(tmdbId, audience(context));
-    const seasons = await getTvSeasons(tmdbId);
+    const seasons = await getTvSeasons(tmdbId, RECORD_LANGUAGE);
 
     const carried = seasons
         .filter(season => extra.includes(season.season_number))
