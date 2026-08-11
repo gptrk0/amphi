@@ -19,10 +19,10 @@ import {
 import Link from "next/link";
 import classNames from "classnames";
 
-import { Button } from "@/components/ui/button";
+import { LanguagePicker } from "@/components/language-picker";
 import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
-import { LOCALES, LOCALE_NAMES, MessageKey } from "@/i18n";
+import { MessageKey } from "@/i18n";
 
 const teko = Teko({ subsets: [ 'latin' ] });
 
@@ -95,7 +95,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const pathname = usePathname();
     const { isAdmin } = useSession();
     const { isMobile, setOpenMobile } = useSidebar();
-    const { locale, setLocale, t } = useLocale();
+    const { t } = useLocale();
 
     const visible = menus.filter(menu => ! menu.admin || isAdmin);
 
@@ -151,28 +151,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 ))}
             </SidebarContent>
 
-            {/* At the bottom, because it is set once and then never again — and in every
-                language's own name, since somebody looking for Hungarian is looking for
-                "Magyar". Two languages is two buttons; a dropdown for two things is a
-                click to find out what the two things are. */}
+            {/* At the bottom, because it is set once and then never again */}
             <SidebarFooter>
-                <div className="space-y-1 px-2 pb-1">
-                    <span className="text-muted-foreground text-xs">{ t("nav.language") }</span>
-
-                    <div className="flex gap-1">
-                        {LOCALES.map(code => (
-                            <Button
-                                key={code}
-                                size="sm"
-                                variant={locale === code ? "default" : "outline"}
-                                className="flex-1 cursor-pointer"
-                                onClick={() => setLocale(code)}
-                            >
-                                { LOCALE_NAMES[code] }
-                            </Button>
-                        ))}
-                    </div>
-                </div>
+                <LanguagePicker />
             </SidebarFooter>
 
             <SidebarRail />
