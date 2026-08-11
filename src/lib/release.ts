@@ -22,13 +22,17 @@ export type QualityProfile = {
     defaultLanguage: string;
     languageFirst: boolean;
     /**
-     * Set, and a release that is not in this language is not a candidate at all — not
-     * a worse one. This is what the scanner runs with, and it is the whole difference
-     * between the two ways a download starts: unattended it takes the primary language
-     * or nothing, while a person at the dialog sees everything and may knowingly take
-     * something else.
+     * Non-empty, and a release in none of these languages is not a candidate at all —
+     * not a worse one. This is what the scanner runs with, and it is the whole
+     * difference between the two ways a download starts: unattended it takes what was
+     * asked for or nothing, while a person at the dialog sees everything and may
+     * knowingly take something else.
+     *
+     * Usually one language. It is a list because an account may say that every language
+     * on its list is acceptable, and because a watchlist row may name one of its own —
+     * see `searchLanguages`. Order still matters for the scoring, not here.
      */
-    requireLanguage: string | null;
+    requireLanguages: string[];
     indexerPriority: string[];
 };
 
@@ -93,7 +97,7 @@ const parseSizeTable = (value: string): Record<string, number> => {
  * why the languages are handed in rather than read here: one search runs for one
  * person's rules, and the same title searched for somebody else is a different search.
  */
-export const getQualityProfile = (language: LanguageProfile, requireLanguage: string | null = null): QualityProfile => {
+export const getQualityProfile = (language: LanguageProfile, requireLanguages: string[] = []): QualityProfile => {
     const priority = settingList("INDEXER_PRIORITY").map(v => v.toLowerCase());
 
     return {
@@ -106,11 +110,13 @@ export const getQualityProfile = (language: LanguageProfile, requireLanguage: st
         minSizeEpisode: parseSizeTable(settingText("QUALITY_MIN_SIZE_EPISODE")),
         preferredCodecs: list(settingText("QUALITY_PREFERRED_CODECS")),
         codecBonus: settingNumber("QUALITY_CODEC_BONUS"),
+        // a language that was asked for outright cannot also be excluded: the exclude
+        // list is about what nobody wants, and this one was named on purpose
         preferredLanguages: language.preferred,
-        excludeLanguages: language.exclude,
+        excludeLanguages: language.exclude.filter(entry => ! requireLanguages.includes(entry)),
         defaultLanguage: language.untagged,
         languageFirst: language.first,
-        requireLanguage,
+        requireLanguages,
         // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
         indexerPriority: priority.length > 0 ? priority : getIndexerIds()
     };
@@ -344,10 +350,16 @@ export const effectiveLanguages = (title: string, profile: { defaultLanguage: st
  * languages counts as the best one the requester wanted — a `HUN.ENG` file is the
  * Hungarian copy for somebody whose first language is Hungarian, and it is not going
  * to be fetched a second time for the English in it.
+ *
+ * What was *asked for* comes first, ahead of the account's usual order: a row that named
+ * German becomes the German copy even for somebody whose list has never heard of German,
+ * or the row would be answered by a download that does not count as its answer.
  */
 export const releaseLanguage = (title: string, profile: QualityProfile) => {
     const languages = effectiveLanguages(title, profile);
-    const wanted = profile.preferredLanguages.find(language => languages.includes(language));
+
+    const wanted = profile.requireLanguages.find(language => languages.includes(language))
+        || profile.preferredLanguages.find(language => languages.includes(language));
 
     return wanted || languages[0];
 };
@@ -470,8 +482,12 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
     // the unattended path: the wrong language is not a worse release here, it is a
     // different film to this person, and taking it would end their search for the one
     // they actually asked for
-    if (profile.requireLanguage && ! effectiveLanguages(release.title, profile).includes(profile.requireLanguage)) {
-        return { release, reason: `not in ${ profile.requireLanguage }` };
+    if (profile.requireLanguages.length > 0) {
+        const languages = effectiveLanguages(release.title, profile);
+
+        if (! languages.some(language => profile.requireLanguages.includes(language))) {
+            return { release, reason: `not in ${ profile.requireLanguages.join(" or ") }` };
+        }
     }
 
     const resolution = parseResolution(release.title);

@@ -2,7 +2,7 @@ import { ContentType } from "../../prisma/generated/client";
 import { refreshBlocklist } from "@/lib/blocklist";
 import { findEpisodeReleases, findMovieReleases, findSeasonReleases, IndexerResult } from "@/lib/indexer";
 import { getImdbId, getMediaMetadata, getTvSeasons } from "@/lib/media";
-import { languageProfileOf, primaryLanguage } from "@/lib/language";
+import { languageProfileOf, searchLanguages } from "@/lib/language";
 import {
     getQualityProfile,
     parseNumbering,
@@ -63,40 +63,52 @@ export type MoviePlan = ReleaseOptions & {
  * Whose search this is, which is now half of what a search *is*.
  *
  * A title is no longer looked for once for the whole house: it is looked for once per
- * language somebody wants it in, and what comes back belongs to the people who wanted
- * that edition. `userIds` is who those people are — whose watchlist units this grab
- * may carry off — and `language` is the edition it is looking for.
+ * set of languages somebody wants it in, and what comes back belongs to the people who
+ * wanted that edition. `userIds` is who those people are — whose watchlist units this
+ * grab may carry off — and `languages` is what it will accept, best first.
  *
- * The scanner builds this with a profile that **rejects** every other language, so it
- * can only ever take what was asked for. The download dialog builds it open, because a
- * person looking at the list may knowingly take something else.
+ * Usually one language. More when an account says every language on its list will do,
+ * and exactly one when a watchlist row named its own.
+ *
+ * The scanner builds this with a profile that **rejects** everything else, so it can only
+ * ever take what was asked for. The download dialog builds it open, because a person
+ * looking at the list may knowingly take something else.
  */
 export type GrabContext = {
     userIds: number[];
-    language: string;
+    languages: string[];
     profile: QualityProfile;
 };
 
 /**
- * The context for a group of people who agree on a primary language. The first one's
- * profile stands for the group: they agree on the language, which is what a search is
- * shaped by, and the rest — the bonus weights, the exclusions — only reorders what is
- * already in the right language.
+ * The context for a group of people who want the same title in the same languages. The
+ * first one's profile stands for the group: they agree on the language, which is what a
+ * search is shaped by, and the rest — the exclusions, the order — only reorders what is
+ * already acceptable.
+ *
+ * `languages` is handed in already resolved, because the caller that has watchlist rows
+ * in hand is the only one that can resolve it: two rows can land in the same group by
+ * different routes — one account's primary and another's row asking for that language by
+ * name — and then no single profile is the right one to ask. Without it the account's own
+ * rule stands, which is what the download dialog wants.
  */
-export const grabContext = async (userIds: number[], options: { strict: boolean }): Promise<GrabContext> => {
-    const language = await languageProfileOf(userIds[0]);
-    const primary = primaryLanguage(language);
+export const grabContext = async (
+    userIds: number[],
+    options: { strict: boolean, languages?: string[] }
+): Promise<GrabContext> => {
+    const profile = await languageProfileOf(userIds[0]);
+    const languages = options.languages?.length ? options.languages : searchLanguages(profile);
 
     return {
         userIds,
-        language: primary,
-        profile: getQualityProfile(language, options.strict ? primary : null)
+        languages,
+        profile: getQualityProfile(profile, options.strict ? languages : [])
     };
 };
 
-/** What a library query means for this search: this edition, or this person's own. */
+/** What a library query means for this search: these editions, or this person's own. */
 export const audience = (context: GrabContext): LibraryAudience => ({
-    language: context.language,
+    languages: context.languages,
     userIds: context.userIds
 });
 

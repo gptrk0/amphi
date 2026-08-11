@@ -47,6 +47,9 @@ const details = (option: GrabOption) => {
         .join(" · ");
 };
 
+// what counts as this person's language here — one, or every one their account accepts
+const wantedText = (preview: DownloadPreview) => preview.language.wanted.join("/").toUpperCase();
+
 const missingText = (preview: DownloadPreview) => {
     if (preview.missingMovie) {
         return "the film";
@@ -173,7 +176,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                     <DialogDescription>
                         {isLoading && "Searching your indexers..."}
 
-                        {! isLoading && haveItAll && `${ held.join(", ") } — already downloaded in ${ preview!.language.primary.toUpperCase() }, so there is nothing left to fetch.`}
+                        {! isLoading && haveItAll && `${ held.join(", ") } — already downloaded in ${ wantedText(preview!) }, so there is nothing left to fetch.`}
 
                         {! isLoading && nothingFound && `Not on your indexers right now${ preview && preview.filtered > 0 ? ` — ${ preview.filtered } result${ preview.filtered > 1 ? "s were" : " was" } filtered out by your quality profile` : "" }. Add it to your watchlist and it will be downloaded as soon as it shows up?`}
 
@@ -203,7 +206,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
 
                         <span>
                             You already have <span className="text-muted-foreground">{ held.join(", ") }</span> in{" "}
-                            <b>{ preview!.language.primary.toUpperCase() }</b>. Downloading again means a second
+                            <b>{ wantedText(preview!) }</b>. Downloading again means a second
                             copy on the disk — worth it if the one you have is a bad rip, and wasted otherwise.
                         </span>
                     </div>
@@ -224,7 +227,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
 
                         <span>
-                            Nothing in <b>{ preview!.language.primary.toUpperCase() }</b> for{" "}
+                            Nothing in <b>{ wantedText(preview!) }</b> for{" "}
                             <span className="text-muted-foreground">{ preview!.language.missing.join(", ") }</span>.
                             Left alone, this would stay on your watchlist until a release in your language turns
                             up — downloading now means watching it in another one.

@@ -82,4 +82,14 @@ export type WatchlistItem = WatchlistEntry & {
 export type WatchlistRowItem = WatchlistItem & {
     id: number;
     owner: { id: number, name: string };
+    /**
+     * What this row asked to be searched in, and what that resolves to.
+     *
+     * `language` is the row's own answer and is empty in the normal case, which means
+     * "whatever my account says". `searchLanguages` is the answer either way — the
+     * account's rule applied, or the row's override — so the table can say what will
+     * actually be looked for without knowing anything about the owner's account.
+     */
+    language: string;
+    searchLanguages: string[];
 };

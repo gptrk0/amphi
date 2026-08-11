@@ -6,6 +6,7 @@ import {
 } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { audienceForUser, LibraryAudience, libraryFilter } from "@/lib/audience";
+import { languageProfileOf, searchLanguages } from "@/lib/language";
 import { getMediaMetadata, getTvSeasons } from "@/lib/media";
 import { WatchlistEntry, WatchlistItem, WatchlistRowItem, WatchlistSeasonItem, WatchlistStatus } from "@/types/watchlist";
 
@@ -312,8 +313,9 @@ export const withMedia = async (item: WatchlistRow, state: LibraryState, withEpi
     const units = item.units;
     const checked = units.map(unit => unit.lastCheckedAt).filter((v): v is Date => !! v);
     // the row's owner, not whoever is looking: the ticks on a row say where *their*
-    // copy is, and a row is always somebody's
-    const held = await libraryEpisodes(item.tmdbId, await audienceForUser(item.userId));
+    // copy is, and a row is always somebody's. The row's own language too, when it named
+    // one — an English copy is what answers a row that asked for English
+    const held = await libraryEpisodes(item.tmdbId, await audienceForUser(item.userId, item.language));
 
     return {
         ...toWatchlistEntry(item, state, key(item.type, item.tmdbId)),
@@ -324,6 +326,8 @@ export const withMedia = async (item: WatchlistRow, state: LibraryState, withEpi
         addedAt: item.addedAt.toISOString(),
         lastCheckedAt: checked.length > 0 ? new Date(Math.max(...checked.map(v => v.getTime()))).toISOString() : null,
         searchAttempts: units.reduce((max, unit) => Math.max(max, unit.searchAttempts), 0),
+        language: item.language,
+        searchLanguages: searchLanguages(await languageProfileOf(item.userId), item.language),
         seasons: toSeasons(units, held, withEpisodes)
     };
 };
@@ -346,7 +350,7 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistRo
         return null;
     }
 
-    const state = await libraryState(await audienceForUser(item.userId));
+    const state = await libraryState(await audienceForUser(item.userId, item.language));
 
     return await withMedia(item, state.get(key(item.type, item.tmdbId)) || EMPTY_STATE, true);
 };
@@ -358,7 +362,7 @@ export const getWatchlistItemWithMedia = async (id: number): Promise<WatchlistRo
  */
 export const getTitleState = async (userId: number, type: ContentType, tmdbId: number): Promise<WatchlistItem | null> => {
     const row = await getWatchlistItemByTmdbId(userId, tmdbId, type);
-    const audience = await audienceForUser(userId);
+    const audience = await audienceForUser(userId, row?.language);
     const state = (await libraryState(audience)).get(key(type, tmdbId)) || EMPTY_STATE;
 
     if (row) {
@@ -634,6 +638,29 @@ export const removeFromWatchlist = async (id: number) => {
 };
 
 /**
+ * Which language this one title is wanted in. Empty hands it back to the account, which
+ * is the normal state and the reason this is stored as "" rather than as a copy of the
+ * account's answer: change the account and every row that never asked for anything of
+ * its own follows it.
+ *
+ * The backoff is reset with it. A row that has spent two days failing to find a
+ * Hungarian release is up to a 24 hour wait by then — and the English search it is now
+ * asking for has never been made once, so making it wait would be answering the old
+ * question. The status is left alone: `SEARCHING` is still true, it just says nothing
+ * about the new language.
+ */
+export const setRequestedLanguage = async (id: number, language: string) => {
+    await prisma.watchlist.update({ where: { id }, data: { language } });
+
+    await prisma.watchlistUnit.updateMany({
+        where: { watchlistId: id },
+        data: { searchAttempts: 0, lastCheckedAt: null }
+    });
+
+    return await getWatchlistItemWithMedia(id);
+};
+
+/**
  * Stop watching: the watchlist is only what is still to be found, so nothing is
  * left to keep the row for. What was already downloaded is a library row and is
  * untouched by this — the torrent client is not asked anything either.
@@ -717,7 +744,7 @@ export const setMonitored = async (
         // back on its next round, and until it does, the show sits on the watchlist for
         // an episode that is already there. Ticking a whole season used to create one for
         // every episode in it, downloaded ones included.
-        const held = new Set((await libraryEpisodes(tmdbId, await audienceForUser(userId))).keys());
+        const held = new Set((await libraryEpisodes(tmdbId, await audienceForUser(userId, row.language))).keys());
 
         if (target.episodeNumbers && target.seasonNumber !== undefined) {
             await ensureEpisodeUnits(row.id, tmdbId, target.seasonNumber, target.episodeNumbers, true, held);

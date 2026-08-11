@@ -30,6 +30,19 @@ export type LanguageProfile = {
      * language quietly loses to a few more seeders and nothing says why.
      */
     first: boolean;
+    /**
+     * Whether the list is a set of acceptable answers or only an order of preference.
+     *
+     * Off — the default — the first language is the only one fetched unattended, and
+     * everything below it is a fallback somebody has to accept by hand at the dialog.
+     * That is the safe direction, and it has one cost: a title that exists in no other
+     * language than the second one on the list is never downloaded at all, and the
+     * watchlist row says "waiting for release" forever.
+     *
+     * On, every language on the list is acceptable and the first one is still preferred,
+     * because the scoring ranks by position in this very list.
+     */
+    acceptAny: boolean;
 };
 
 /**
@@ -40,7 +53,8 @@ export const LANGUAGE_DEFAULTS: LanguageProfile = {
     preferred: [ "hun", "eng" ],
     exclude: [],
     untagged: "eng",
-    first: true
+    first: true,
+    acceptAny: false
 };
 
 export const parseLanguageList = (value: string) => value
@@ -54,11 +68,13 @@ export const toLanguageProfile = (user: {
     excludeLanguages: string;
     defaultLanguage: string;
     languageFirst: boolean;
+    acceptAnyLanguage: boolean;
 }): LanguageProfile => ({
     preferred: parseLanguageList(user.preferredLanguages),
     exclude: parseLanguageList(user.excludeLanguages),
     untagged: user.defaultLanguage.trim().toLowerCase() || LANGUAGE_DEFAULTS.untagged,
-    first: user.languageFirst
+    first: user.languageFirst,
+    acceptAny: user.acceptAnyLanguage
 });
 
 /**
@@ -67,6 +83,31 @@ export const toLanguageProfile = (user: {
  * is the honest answer, because that is what an unlabelled release will be treated as.
  */
 export const primaryLanguage = (profile: LanguageProfile) => profile.preferred[0] || profile.untagged;
+
+/**
+ * Which languages a search may come back with, best first. This is the whole rule, in
+ * one place, and there are exactly three cases:
+ *
+ * - the row named a language: that one and nothing else, because an answer to "what do
+ *   you want" beats a rule about what is usually wanted;
+ * - the account accepts any of its languages: all of them, in the order they are in —
+ *   the scoring reads the same order, so the first is still what it reaches for;
+ * - otherwise: the primary alone, which is the behaviour this app has always had.
+ *
+ * The array is never empty: an account with no languages at all falls back to whatever
+ * an untagged release is taken to be, since that is what it would be judged as anyway.
+ */
+export const searchLanguages = (profile: LanguageProfile, requested?: string | null): string[] => {
+    const own = (requested || "").trim().toLowerCase();
+
+    if (own) {
+        return [ own ];
+    }
+
+    const wanted = profile.acceptAny ? profile.preferred : [ primaryLanguage(profile) ];
+
+    return wanted.length > 0 ? [ ...new Set(wanted) ] : [ profile.untagged ];
+};
 
 /**
  * Whose rules a search runs under. An account that has since been deleted falls back to

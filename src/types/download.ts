@@ -45,11 +45,14 @@ export type DownloadPreview = {
     // every release the quality profile threw away, over the whole request
     filtered: number;
     /**
-     * The account's first language, and the lines that have nothing to offer in it.
-     * A non-empty list is what turns the download button into a question: the scanner
-     * would have gone on waiting, so starting anyway is a choice somebody makes.
+     * The languages a download would count as this person's, and the lines that have
+     * nothing to offer in any of them. A non-empty `missing` is what turns the download
+     * button into a question: the scanner would have gone on waiting, so starting anyway
+     * is a choice somebody makes.
+     *
+     * More than one language when the account accepts every language on its list.
      */
-    language: { primary: string, missing: string[] };
+    language: { wanted: string[], missing: string[] };
     /**
      * Lines this person already has in this edition. Episodes are gone from `choices`
      * — the grab would refuse them anyway — while a film is still offered, because a

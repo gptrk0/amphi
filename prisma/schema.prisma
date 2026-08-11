@@ -77,6 +77,11 @@ model User {
   /// one. There is no weight beside it — the language either wins or it does not, and a
   /// number in between could only be set too low to matter.
   languageFirst      Boolean @default(true)
+  /// Off by default, and the answer to "my primary is Hungarian and this show only
+  /// exists in English, so it will never download": on, the scanner may take **any**
+  /// language on the list above, still preferring the first. Off, only the first one is
+  /// ever fetched unattended and everything else waits for a person to accept it.
+  acceptAnyLanguage  Boolean @default(false)
 
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
@@ -276,6 +281,13 @@ model Watchlist {
   /// show intent is stored instead of guessed. True is "watch this show", false is
   /// "watch these seasons".
   monitorNewSeasons Boolean @default(false)
+
+  /// Which language *this* title is wanted in, when that differs from the account's
+  /// rule. Empty is the normal case and means "whatever my account says", so changing
+  /// the account still moves every row that never asked for anything special. A value
+  /// here is the stronger statement and overrules all of it — including the exclude
+  /// list, because naming a language is not the way anybody asks for nothing.
+  language String @default("")
 
   units WatchlistUnit[]
 

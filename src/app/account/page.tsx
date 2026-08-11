@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { OptionSelect } from "@/components/option-select";
 import { TagInput } from "@/components/tag-input";
@@ -32,6 +33,7 @@ type Account = {
     excludeLanguages: string;
     defaultLanguage: string;
     languageFirst: boolean;
+    acceptAnyLanguage: boolean;
 };
 
 // what to paste, for the two services anybody actually uses
@@ -62,6 +64,7 @@ export default function Page() {
     const [ excluded, setExcluded ] = useState("");
     const [ untagged, setUntagged ] = useState("");
     const [ languageFirst, setLanguageFirst ] = useState(true);
+    const [ acceptAny, setAcceptAny ] = useState(false);
     const [ isSaving, setSaving ] = useState(false);
     const [ isTesting, setTesting ] = useState(false);
 
@@ -74,6 +77,7 @@ export default function Page() {
         setExcluded(data.excludeLanguages);
         setUntagged(data.defaultLanguage);
         setLanguageFirst(data.languageFirst);
+        setAcceptAny(data.acceptAnyLanguage);
     };
 
     useEffect(() => {
@@ -93,7 +97,8 @@ export default function Page() {
                 preferredLanguages: languages,
                 excludeLanguages: excluded,
                 defaultLanguage: untagged,
-                languageFirst
+                languageFirst,
+                acceptAnyLanguage: acceptAny
             });
 
             const res = await axios.get("/api/auth/me");
@@ -232,12 +237,38 @@ export default function Page() {
                     />
 
                     <p className="text-xs text-muted-foreground">
-                        <b>The first one is the only language downloaded for you on its own.</b> If a release
-                        in it does not exist yet, the title stays on your watchlist and is looked for again —
-                        the rest of the list is only offered when you start a download by hand, and taking one
-                        of those is a question you have to answer. Somebody else&apos;s copy in another language
-                        does not count as yours: you each get your own file.
+                        {acceptAny
+                            ? <><b>Any of these will do, the first one for preference.</b> A release in the second
+                                language is taken only when nothing in the first one is there — and once it is
+                                taken, that is your copy of it.</>
+                            : <><b>The first one is the only language downloaded for you on its own.</b> If a release
+                                in it does not exist yet, the title stays on your watchlist and is looked for again —
+                                the rest of the list is only offered when you start a download by hand, and taking
+                                one of those is a question you have to answer.</>}
+                        {" "}Somebody else&apos;s copy in another language does not count as yours: you each get
+                        your own file.
                     </p>
+
+                    <div className="flex items-start gap-3 rounded-md border p-3">
+                        <Switch
+                            className="mt-0.5 cursor-pointer"
+                            checked={acceptAny}
+                            onCheckedChange={setAcceptAny}
+                        />
+
+                        <div className="space-y-1">
+                            <label className="text-sm font-medium">Any language on this list will do</label>
+
+                            <p className="text-xs text-muted-foreground">
+                                Off, and a title that exists in none of your first language is never downloaded
+                                at all — it sits on your watchlist saying &quot;waiting for release&quot; while the
+                                release is out in another language. That is the safe direction and it is the
+                                default, because settling for a language you did not ask for should not happen
+                                behind your back. On, the scanner may take any of them, still preferring the first.
+                                For one title only, the watchlist has a language column.
+                            </p>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="max-w-sm space-y-2">

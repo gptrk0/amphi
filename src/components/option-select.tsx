@@ -27,12 +27,21 @@ type Props = {
     options: readonly TagOption[];
     // what one of them is, for the empty state: "pick a language"
     noun?: string;
+    /**
+     * For a trigger inside something that clips: a table container is `overflow-x-auto`,
+     * and `overflow-x` on its own still turns `overflow-y` into a scroll box — so an
+     * absolutely positioned popup in the last row is cut off by the table's edge. With
+     * this the popup is placed against the viewport instead, and a scroll closes it
+     * rather than leaving it behind where the trigger used to be.
+     */
+    float?: boolean;
 };
 
-export function OptionSelect({ value, onChange, options, noun = "value" }: Props) {
+export function OptionSelect({ value, onChange, options, noun = "value", float = false }: Props) {
     const [ open, setOpen ] = useState(false);
     const [ query, setQuery ] = useState("");
     const [ active, setActive ] = useState(0);
+    const [ at, setAt ] = useState<{ top: number, left: number, width: number }>();
 
     const box = useRef<HTMLDivElement>(null);
     const search = useRef<HTMLInputElement>(null);
@@ -64,6 +73,46 @@ export function OptionSelect({ value, onChange, options, noun = "value" }: Props
             search.current?.focus();
         }
     }, [ open ]);
+
+    /**
+     * A floating popup is placed once, on open, and a scroll *of the page* closes it: it
+     * is positioned against the viewport, so it would otherwise sit where the trigger no
+     * longer is.
+     *
+     * The option list has its own scrollbar, and a scroll inside it must not count. Scroll
+     * events do not bubble, but a capture listener on `window` sees them anyway — so the
+     * first version of this closed the moment anybody tried to scroll the list, which is
+     * the one thing a long list of languages is for. The popup is a DOM child of the
+     * trigger's box even while it is drawn against the viewport, so `contains` is what
+     * tells the two apart.
+     */
+    useEffect(() => {
+        if (! open || ! float) {
+            return;
+        }
+
+        const rect = box.current?.getBoundingClientRect();
+
+        if (rect) {
+            setAt({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+        }
+
+        const away = (event: Event) => {
+            if (event.target instanceof Node && box.current?.contains(event.target)) {
+                return;
+            }
+
+            setOpen(false);
+        };
+
+        window.addEventListener("scroll", away, true);
+        window.addEventListener("resize", away);
+
+        return () => {
+            window.removeEventListener("scroll", away, true);
+            window.removeEventListener("resize", away);
+        };
+    }, [ open, float ]);
 
     const pick = (option: TagOption) => {
         onChange(option.value);
@@ -116,7 +165,13 @@ export function OptionSelect({ value, onChange, options, noun = "value" }: Props
             </button>
 
             {open && (
-                <div className="bg-popover text-popover-foreground absolute z-50 mt-1 w-full rounded-md border p-1 shadow-md">
+                <div
+                    className={classNames(
+                        "bg-popover text-popover-foreground z-50 rounded-md border p-1 shadow-md",
+                        float ? "fixed" : "absolute mt-1 w-full"
+                    )}
+                    style={float && at ? { top: at.top, left: at.left, width: at.width } : undefined}
+                >
                     <input
                         ref={search}
                         className="placeholder:text-muted-foreground w-full bg-transparent px-2 py-1.5 text-sm outline-none"
@@ -127,7 +182,9 @@ export function OptionSelect({ value, onChange, options, noun = "value" }: Props
                         onKeyDown={onKeyDown}
                     />
 
-                    <div role="listbox" className="max-h-56 overflow-auto">
+                    {/* overscroll-contain: at the end of the list the wheel would otherwise
+                        scroll the page instead, which — for a floating popup — closes it */}
+                    <div role="listbox" className="max-h-56 overflow-auto overscroll-contain">
                         {matches.length === 0 && (
                             <p className="text-muted-foreground px-2 py-1.5 text-sm">Nothing matches that.</p>
                         )}

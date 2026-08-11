@@ -84,6 +84,15 @@ export const resolveLanguage = (raw: string) => byAnyName.get(raw.trim().toLower
 export const isLanguage = (raw: string) => resolveLanguage(raw) !== null;
 
 /**
+ * What a person reads for a stored code. Anything unrecognised comes back as itself in
+ * capitals: a code that is not in this list can only be in the database from before it
+ * was, and printing it is more use than printing nothing.
+ */
+export const languageName = (code: string) => {
+    return LANGUAGES.find(entry => entry.code === code)?.name || code.toUpperCase();
+};
+
+/**
  * A stored list, with everything that is not a language dropped and the order and the
  * duplicates dealt with. Used on the way in: a code nothing can ever match would leave a
  * title on a watchlist for good with nothing to say why.

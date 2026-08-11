@@ -268,7 +268,8 @@ export const buildPreview = async (
     // Asked of every line, not of the request as a whole: an episode that exists in
     // your language and one that does not are two different answers, and taking the
     // second is a decision. The dialog turns this into the question it deserves.
-    const short = offered.filter(choice => ! choice.options.some(option => option.languages.includes(context.language)));
+    const short = offered.filter(choice => ! choice.options.some(option =>
+        option.languages.some(language => context.languages.includes(language))));
 
     return {
         planId: stored.id,
@@ -279,7 +280,7 @@ export const buildPreview = async (
         missingMovie: stored.missingMovie,
         filtered,
         language: {
-            primary: context.language,
+            wanted: context.languages,
             missing: short.map(choice => choice.label)
         },
         held: heldLabels

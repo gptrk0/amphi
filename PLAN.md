@@ -1555,6 +1555,36 @@ ugyanaz 500-nál, minden más egyenlő                     -> x264             (
 
 **Mérve:** `tsc --noEmit` és `next lint` tiszta, a migráció felment, `/api/auth/me` már `languageBonus` nélkül és `languageFirst: true`-val válaszol, a settings payloadból eltűnt az `INDEXER_PRIORITY_BONUS` (marad `INDEXER_URL|API_KEY|IDS|PRIORITY|CAPS_TTL_MINUTES`), az `/account`, `/settings`, `/`, `/watchlist` mind 200, a fiók mentése ki-be tudja billenteni a flaget, és egy `languageBonus`-t még küldő régi kliens 200-at kap (a mezőt figyelmen kívül hagyja, nem 500-zal áll meg). **Amit nem:** böngészőben semmit — sem a mobil sheetet, sem az account oldal új formáját. A mérés melléktermékként három „setting changed" sor bekerült a naplóba (a szkript állította a prioritást és a kodek-bónuszt); a sorokat nem töröltem ki, a `Setting` rekordokat igen, tehát mindhárom kulcs újra a defaultján van.
 
+#### „A Silo magyarul nem létezik" — egy kapcsoló és egy oszlop (2026-08-10-i kérés) ✅
+
+Kérés: a „Languages you want, best first" alá egy kapcsoló, ami bekapcsolva **bármelyik** listán szereplő nyelven letölti a találatot (az elsőt továbbra is előnyben részesítve), alapból kikapcsolva; és a watchlist táblában a 2. oszlopban egy **requested language** oszlop, ami alapból a fiók szabálya szerint működik, de konkrét nyelvre állítható, és akkor az felülírja a fiók preferenciáját.
+
+**A probléma, amit megold** (a te megfogalmazásodban): ha az elsődleges nyelv magyar, a scanner a magyart nem preferenciaként, hanem **belépési feltételként** használja — minden más release-t „not in hun" indoklással eldob. Egy sorozat, ami magyarul nem létezik, így soha nem töltődik le, a sor pedig azt írja, hogy „Waiting for release", ami nem igaz: a release megjelent, csak nem magyarul. Reprodukálva, a te Silo-dat használó eldobható fiókon: `[dry-run] show 125988 S1E1: nothing found in hun (attempt 1, next in 1h)`.
+
+**Egy szabály, egy helyen** ([language.ts](src/lib/language.ts) `searchLanguages`), és pontosan három eset van: a sor megnevezett egy nyelvet → az és semmi más; a fiók azt mondja, bármelyik nyelve jó → mind, a lista sorrendjében; egyébként → az első, ahogy eddig. A pontozás ugyanezt a sorrendet olvassa, tehát a „bármelyik" nem rontja el a preferenciát: mérve, ha mindkettő elérhető, a **720p HUN nyer az 5000 seederes 1080p ENG ellen**.
+
+**Ami ehhez át kellett álljon.** A `requireLanguage: string | null` → `requireLanguages: string[]`, a `LibraryAudience.language` → `languages`, a `GrabContext.language` → `languages`. Ez utóbbi nem kozmetika: a „megvan-e már" kérdés eddig egy nyelvre szólt, most halmazra — különben egy fiók, ami elfogadja az angolt, újra letöltené azt, amije már van. A `grabContext` a **feloldott halmazt** kapja, nem a sor nyers értékét, mert két sor ugyanabba a keresési csoportba eshet két különböző úton (az egyik fiók elsődleges nyelve, a másik sorának név szerinti kérése), és akkor egyetlen profil sem a helyes válasz.
+
+**Két apró döntés, ami fontos:**
+- **A név szerinti kérés erősebb a kizárólistánál.** Ha a sor németet kér, miközben a fiók kizárja a németet, a német release **elfogadásra kerül** — a kizárólista arról szól, amit senki nem akar, ezt viszont valaki kifejezetten kérte. Mérve: kérésre `Silo…GERMAN-XX` elfogadva és `ger` kiadásként rögzítve, ugyanaz a release kérés nélkül `language ger not wanted`-tel elutasítva.
+- **A nyelv átállítása nullázza a backoffot.** Egy sor, ami két napig hiába keresett magyarul, akár 24 órás várakozásban áll; az angol keresés viszont még egyszer sem futott le, tehát a várakoztatás a *régi* kérdésre válaszolna. Mérve: átállítás után minden unit `attempts=0, lastChecked=null`.
+
+**Végig mérve, valódi indexereken, dry-runban** (eldobható fiók, Silo S01E01 figyelve, a te adataid érintetlenül; a dry-run a végén visszakapcsolva):
+
+```
+elsődleges hun, sor nem kért semmit   [dry-run] show 125988 S1E1: nothing found in hun (attempt 1, next in 1h)
+a sor angolt kér                      [dry-run] show 125988 S1 pack (eng): grabbing Silo.S01.1080p.WEB.h264-MiXGROUP
+sor törölve + fiókon a kapcsoló be    [dry-run] show 125988 S1 pack (hun/eng): grabbing Silo.S01.1080p.WEB.h264-MiXGROUP
+```
+
+Az api oldalán: a watchlist sor payloadja `language: ""` + `searchLanguages: ["hun","eng"]`; `PATCH /api/watchlist/103` `"klingon"`-ra 400, `"hungarian"`-ra `hun` (a katalógus ugyanúgy megengedő, mint a fiók oldalán), `""`-re vissza a fiók szabályára; **más ember sorára 404** egyszerű usernek, adminnak 200 (ő eddig is le tudta venni a sort valakinek a listájáról). `tsc --noEmit` és `next lint` tiszta, a migráció felment, a `/watchlist`, `/account`, `/library`, `/` mind 200.
+
+**Egy UI-részlet, ami nem látszik a kódból.** Az `OptionSelect` popupja eddig `absolute` volt, a táblázat konténere viszont `overflow-x-auto` — és `overflow-x` önmagában is scroll-boxszá teszi a vertikálist, tehát az utolsó sor lenyílóját a táblázat széle elvágta volna. Ezért a komponens kapott egy `float` módot: a popup a viewporthoz igazodik (`fixed`, a trigger mért pozíciójára), és **az oldal** görgetésére/átméretezésére becsukódik, mert egy lenyíló, ami már nem ott van, ahol a trigger, nem érdemes nyitva.
+
+Ez utóbbi első változata rossz volt, és bejelentésre javítva: a scroll-esemény nem bubble-özik, egy `window`-on lévő **capture** listener viszont a lenyíló *saját* listájának görgetését is látja — így a dropdown becsukódott, amint bárki görgetni próbálta a 34 nyelvet. A popup a trigger boxának DOM-gyereke akkor is, amikor a viewporthoz van rajzolva, tehát a `contains` az, ami a kettőt szétválasztja. Mellé `overscroll-contain` a listára: a lista végén a görgetés különben átcsúszik az oldalra, ami ugyanezt a becsukódást hozta volna vissza.
+
+**Amit nem mértem:** böngészőben az oszlopot és a kapcsolót. És egy ismert, egy körig élő pontatlanság: a watchlist *lista* nézet aggregált „megvan-e" számait a fiók szintű halmaz adja, nem a soronkénti felülírás — így egy **más ember** által letöltött angol kópiát a saját, angolra állított sorod addig nem számol a magáénak, amíg a következő scan-kör `claimHeldUnits`-a rá nem írja a nevedet. Ami *érte* töltődött le, azt a `watchedBy` azonnal a soré teszi.
+
 ---
 
 ## 5. Javasolt sorrend

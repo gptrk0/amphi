@@ -45,7 +45,8 @@ export async function GET() {
             preferredLanguages: row?.preferredLanguages || "",
             excludeLanguages: row?.excludeLanguages || "",
             defaultLanguage: row?.defaultLanguage || LANGUAGE_DEFAULTS.untagged,
-            languageFirst: row?.languageFirst ?? LANGUAGE_DEFAULTS.first
+            languageFirst: row?.languageFirst ?? LANGUAGE_DEFAULTS.first,
+            acceptAnyLanguage: row?.acceptAnyLanguage ?? LANGUAGE_DEFAULTS.acceptAny
         }
     });
 }
@@ -137,7 +138,8 @@ export async function PATCH(req: Request) {
                         ? { excludeLanguages: cleanLanguageList(body.excludeLanguages) }
                         : {}),
                     ...(untagged ? { defaultLanguage: untagged } : {}),
-                    ...(typeof body.languageFirst === "boolean" ? { languageFirst: body.languageFirst } : {})
+                    ...(typeof body.languageFirst === "boolean" ? { languageFirst: body.languageFirst } : {}),
+                    ...(typeof body.acceptAnyLanguage === "boolean" ? { acceptAnyLanguage: body.acceptAnyLanguage } : {})
                 }
             });
         }

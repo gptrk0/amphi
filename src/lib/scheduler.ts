@@ -10,7 +10,7 @@ import {
     planSeasonGrab,
     planSeasonGrabs
 } from "@/lib/grab";
-import { languageProfileOf, primaryLanguage } from "@/lib/language";
+import { languageProfileOf, searchLanguages } from "@/lib/language";
 import {
     claimHeldUnits,
     forgetLibraryItem,
@@ -111,6 +111,11 @@ export const isScanRunning = () => !! globalForScheduler.schedulerRunning;
 const backoffMs = (attempts: number) => Math.min(backoffBaseMs() * 2 ** attempts, maxBackoffMs());
 
 const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
+
+// what this search would accept. Almost always one language, so the common line reads
+// exactly as it did before — and when it is more, the log is where you find out why a
+// show came down in English
+const languageText = (context: { languages: string[] }) => context.languages.join("/");
 
 // the log says when the seed lock lifts, because that is the only thing standing
 // between a finished download and the delete button. Both halves are worth printing: how
@@ -389,23 +394,23 @@ export const scanMovies = async (options: ScanOptions = {}) => {
     // three times for the same thing is how an account gets rate limited — but two
     // people who want it in different languages are two searches, because to them it
     // is two different files.
-    const groups = new Map<string, typeof due>();
-    const primary = new Map<number, string>();
+    const groups = new Map<string, { languages: string[], units: typeof due }>();
 
     for (const unit of due) {
-        const language = primaryLanguage(await languageProfileOf(unit.watchlist.userId));
+        // the row's own answer first, then the account's — see `searchLanguages`
+        const languages = searchLanguages(await languageProfileOf(unit.watchlist.userId), unit.watchlist.language);
+        const key = `${ unit.watchlist.tmdbId }:${ languages.join(",") }`;
 
-        primary.set(unit.watchlist.userId, language);
+        const group = groups.get(key) || { languages, units: [] };
 
-        const key = `${ unit.watchlist.tmdbId }:${ language }`;
-
-        groups.set(key, [ ...(groups.get(key) || []), unit ]);
+        group.units.push(unit);
+        groups.set(key, group);
     }
 
-    for (const [ , wanted ] of groups) {
+    for (const [ , { languages, units: wanted } ] of groups) {
         const tmdbId = wanted[0].watchlist.tmdbId;
         const userIds = [ ...new Set(wanted.map(unit => unit.watchlist.userId)) ];
-        const context = await grabContext(userIds, { strict: true });
+        const context = await grabContext(userIds, { strict: true, languages });
         // The episode side asks this through `heldEpisodes`; a film has no episodes,
         // so it needs its own look. Without it a film that is already in the library
         // — put back on the watchlist by a failed grab, say — is fetched all over
@@ -416,7 +421,7 @@ export const scanMovies = async (options: ScanOptions = {}) => {
             const claimed = isDryRun() ? 0 : await claimHeldUnits(tmdbId, ContentType.MOVIE, audience(context));
 
             await log(
-                `movie ${ tmdbId }: already in the library in ${ context.language }, not searched for`,
+                `movie ${ tmdbId }: already in the library in ${ languageText(context) }, not searched for`,
                 claimed > 0 ? LogLevel.INFO : LogLevel.DEBUG,
                 claimed > 0 ? `${ claimed } waiting list${ claimed > 1 ? "s" : "" } taken off it` : undefined
             );
@@ -427,7 +432,7 @@ export const scanMovies = async (options: ScanOptions = {}) => {
         const plan = await planMovieGrab(tmdbId, context);
 
         if (plan?.release) {
-            await log(`movie ${ tmdbId } (${ context.language }): grabbing ${ plan.release.title }${ wanted.length > 1 ? ` (${ wanted.length } people are waiting for it)` : "" }`);
+            await log(`movie ${ tmdbId } (${ languageText(context) }): grabbing ${ plan.release.title }${ wanted.length > 1 ? ` (${ wanted.length } people are waiting for it)` : "" }`);
 
             grabbed++;
 
@@ -452,7 +457,7 @@ export const scanMovies = async (options: ScanOptions = {}) => {
         // to reset the clock for everybody else who wants it in the same language
         const attempts = Math.max(...wanted.map(unit => unit.searchAttempts)) + 1;
 
-        await log(`movie ${ tmdbId }: nothing suitable found in ${ context.language } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+        await log(`movie ${ tmdbId }: nothing suitable found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
         if (! isDryRun()) {
             await prisma.watchlistUnit.updateMany({
@@ -495,19 +500,20 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
     // by the show, the season and the language: the same season on four lists is one
     // season to search for and one pack to decide about — unless two of those lists
     // want it in different languages, and then it is two of everything
-    const groups = new Map<string, { tmdbId: number, seasonNumber: number, units: typeof due }>();
+    const groups = new Map<string, { tmdbId: number, seasonNumber: number, languages: string[], units: typeof due }>();
 
     for (const unit of due) {
         if (unit.seasonNumber === null) {
             continue;
         }
 
-        const language = primaryLanguage(await languageProfileOf(unit.watchlist.userId));
-        const key = `${ unit.watchlist.tmdbId }:${ unit.seasonNumber }:${ language }`;
+        const languages = searchLanguages(await languageProfileOf(unit.watchlist.userId), unit.watchlist.language);
+        const key = `${ unit.watchlist.tmdbId }:${ unit.seasonNumber }:${ languages.join(",") }`;
 
         const group = groups.get(key) || {
             tmdbId: unit.watchlist.tmdbId,
             seasonNumber: unit.seasonNumber,
+            languages,
             units: []
         };
 
@@ -517,7 +523,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
 
     let lookedAt = 0;
 
-    for (const { tmdbId, seasonNumber, units } of groups.values()) {
+    for (const { tmdbId, seasonNumber, languages, units } of groups.values()) {
         const episodeNumbers = [ ...new Set(units
             .map(unit => unit.episodeNumber)
             .filter((v): v is number => v !== null)) ];
@@ -525,7 +531,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         lookedAt += episodeNumbers.length;
 
         const userIds = [ ...new Set(units.map(unit => unit.watchlist.userId)) ];
-        const context = await grabContext(userIds, { strict: true });
+        const context = await grabContext(userIds, { strict: true, languages });
 
         // episodes somebody else already fetched in this same language are not searched
         // for again, so the units waiting for them have to be taken by that download
@@ -534,7 +540,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
             const claimed = await claimHeldUnits(tmdbId, ContentType.TV, audience(context));
 
             if (claimed > 0) {
-                await log(`show ${ tmdbId } S${ seasonNumber }: ${ claimed } episode${ claimed > 1 ? "s were" : " was" } already downloaded in ${ context.language }, taken off the watchlist`);
+                await log(`show ${ tmdbId } S${ seasonNumber }: ${ claimed } episode${ claimed > 1 ? "s were" : " was" } already downloaded in ${ languageText(context) }, taken off the watchlist`);
             }
         }
 
@@ -547,7 +553,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         const { usePack, grabs } = await planSeasonGrabs(tmdbId, plan, context, { episodeNumbers });
 
         for (const grab of grabs) {
-            await log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` } (${ context.language }): grabbing ${ grab.release.title }`);
+            await log(`show ${ tmdbId } S${ seasonNumber } ${ grab.isPack ? "pack" : `E${ grab.episodeNumbers.join(",E") }` } (${ languageText(context) }): grabbing ${ grab.release.title }`);
         }
 
         grabCount += grabs.length;
@@ -574,7 +580,7 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         for (const [ episodeNumber, waiting ] of missed) {
             const attempts = Math.max(...waiting.map(unit => unit.searchAttempts)) + 1;
 
-            await log(`show ${ tmdbId } S${ seasonNumber }E${ episodeNumber }: nothing found in ${ context.language } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+            await log(`show ${ tmdbId } S${ seasonNumber }E${ episodeNumber }: nothing found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
 
             if (! isDryRun()) {
                 await prisma.watchlistUnit.updateMany({

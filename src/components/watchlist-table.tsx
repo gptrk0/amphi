@@ -12,9 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { OptionSelect } from "@/components/option-select";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
+import { LANGUAGE_OPTIONS, languageName } from "@/types/language";
 import { WatchlistRowItem, WatchlistStatus } from "@/types/watchlist";
 
 type Column = {
@@ -157,6 +159,30 @@ export function WatchlistTable() {
     };
 
     /**
+     * The language this one title is searched in. Empty gives it back to the account's
+     * rule, which is where every row starts — and the row is reloaded rather than patched
+     * in place, because the answer also moves what counts as already had.
+     */
+    const setLanguage = async (item: WatchlistRowItem, language: string) => {
+        const name = item.media?.name || `TMDB #${ item.tmdbId }`;
+
+        try {
+            const res = await axios.patch(`/api/watchlist/${ item.id }`, { language });
+            const wanted: string[] = res.data.result?.searchLanguages || [];
+
+            toast(language
+                ? `${ name } will be looked for in ${ languageName(language) }.`
+                : `${ name } follows your account again — ${ wanted.map(languageName).join(", ") }.`);
+
+        } catch(err) {
+            console.error(err);
+            toast(axios.isAxiosError(err) && err.response?.data?.message || `Could not change the language of ${ name }.`);
+        }
+
+        await load();
+    };
+
+    /**
      * Unlike the scheduled round this one ignores the backoff, so nothing has to
      * wait for its next slot. The release dates still hold: asking for something
      * that is not out yet only finds fakes.
@@ -237,6 +263,30 @@ export function WatchlistTable() {
                     <Link href={`/details/${ item.type }/${ item.tmdbId }`} className="font-medium hover:underline">
                         { item.media?.name || `TMDB #${ item.tmdbId }` }
                     </Link>
+                </div>
+            )
+        },
+        {
+            key: "language",
+            label: "Requested language",
+            // sorts by what will actually be searched, not by whether it was overridden:
+            // the column is there to answer "in what language", and that is the answer
+            value: item => item.searchLanguages.join(","),
+            render: item => (
+                <div className="min-w-[11rem]">
+                    <OptionSelect
+                        value={item.language}
+                        onChange={(next) => setLanguage(item, next)}
+                        options={[
+                            // no language of its own: whatever the owner's account says,
+                            // which is where every row starts
+                            { value: "", label: "Auto" },
+                            ...LANGUAGE_OPTIONS
+                        ]}
+                        noun="language"
+                        // the table container clips, so this one hangs off the viewport
+                        float
+                    />
                 </div>
             )
         },
