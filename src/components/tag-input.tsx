@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } fr
 import { ChevronDown, GripVertical, X } from "lucide-react";
 import classNames from "classnames";
 
+import { useLocale } from "@/context/locale";
 import { matchOptions, optionIndex, optionLabel, TagOption } from "@/lib/options";
 
 /**
@@ -37,11 +38,10 @@ type Props = {
     validate?: (tag: string) => string | null;
     // a closed set: only these can be added, and they are offered in a dropdown
     options?: readonly TagOption[];
-    // what one of them is called in the message about a rejected entry
-    noun?: string;
 };
 
-export function TagInput({ value, onChange, ordered, placeholder, validate, options, noun = "value" }: Props) {
+export function TagInput({ value, onChange, ordered, placeholder, validate, options }: Props) {
+    const { t } = useLocale();
     const tags = split(value);
 
     const [ draft, setDraft ] = useState("");
@@ -84,7 +84,7 @@ export function TagInput({ value, onChange, ordered, placeholder, validate, opti
             const tag = resolve(entry);
 
             if (! tag) {
-                setError(`"${ entry }" is not a ${ noun } — pick one from the list.`);
+                setError(t("input.notOnListTag", { value: entry }));
 
                 return false;
             }
@@ -249,7 +249,7 @@ export function TagInput({ value, onChange, ordered, placeholder, validate, opti
                         ref={input}
                         className="placeholder:text-muted-foreground min-w-24 flex-1 bg-transparent outline-none"
                         value={draft}
-                        placeholder={tags.length === 0 ? (placeholder || "empty") : ""}
+                        placeholder={tags.length === 0 ? (placeholder || t("input.empty")) : ""}
                         autoComplete="off"
                         onChange={(e) => {
                             setDraft(e.target.value);
@@ -318,7 +318,7 @@ export function TagInput({ value, onChange, ordered, placeholder, validate, opti
 
             {error
                 ? <p className="text-destructive text-xs">{ error }</p>
-                : ordered && tags.length > 1 && <p className="text-muted-foreground text-xs">Drag to reorder — the first one wins.</p>}
+                : ordered && tags.length > 1 && <p className="text-muted-foreground text-xs">{ t("input.reorder") }</p>}
         </div>
     );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 
 /**
@@ -11,6 +12,7 @@ import { useSession } from "@/context/session";
  */
 export function AdminOnly({ title, children }: { title: string, children: React.ReactNode }) {
     const { isAdmin, isLoading } = useSession();
+    const { t } = useLocale();
 
     if (isLoading) {
         return <div className="p-4"><Skeleton className="h-32 w-full" /></div>;
@@ -21,9 +23,7 @@ export function AdminOnly({ title, children }: { title: string, children: React.
             <div className="p-4">
                 <h2 className="text-2xl font-semibold tracking-tight">{ title }</h2>
 
-                <p className="pt-2 text-sm text-muted-foreground">
-                    This page is for administrators. Ask one of them if you need something changed.
-                </p>
+                <p className="pt-2 text-sm text-muted-foreground">{ t("adminOnly.note") }</p>
             </div>
         );
     }

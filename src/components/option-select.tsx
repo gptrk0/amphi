@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { ChevronDown } from "lucide-react";
 import classNames from "classnames";
 
+import { useLocale } from "@/context/locale";
 import { matchOptions, TagOption } from "@/lib/options";
 
 /**
@@ -25,8 +26,6 @@ type Props = {
     value: string;
     onChange: (next: string) => void;
     options: readonly TagOption[];
-    // what one of them is, for the empty state: "pick a language"
-    noun?: string;
     /**
      * For a trigger inside something that clips: a table container is `overflow-x-auto`,
      * and `overflow-x` on its own still turns `overflow-y` into a scroll box — so an
@@ -37,7 +36,8 @@ type Props = {
     float?: boolean;
 };
 
-export function OptionSelect({ value, onChange, options, noun = "value", float = false }: Props) {
+export function OptionSelect({ value, onChange, options, float = false }: Props) {
+    const { t } = useLocale();
     const [ open, setOpen ] = useState(false);
     const [ query, setQuery ] = useState("");
     const [ active, setActive ] = useState(0);
@@ -156,7 +156,7 @@ export function OptionSelect({ value, onChange, options, noun = "value", float =
                 onClick={() => setOpen(current => ! current)}
             >
                 <span className={classNames({ "text-muted-foreground": ! chosen })}>
-                    { chosen ? chosen.label : (value ? `not set — "${ value }" is not a ${ noun }` : `pick a ${ noun }`) }
+                    { chosen ? chosen.label : (value ? t("input.notOnList", { value }) : t("input.pick")) }
                 </span>
 
                 {chosen && <span className="text-muted-foreground text-xs">{ chosen.value }</span>}
@@ -176,7 +176,7 @@ export function OptionSelect({ value, onChange, options, noun = "value", float =
                         ref={search}
                         className="placeholder:text-muted-foreground w-full bg-transparent px-2 py-1.5 text-sm outline-none"
                         value={query}
-                        placeholder="Search…"
+                        placeholder={t("input.search")}
                         autoComplete="off"
                         onChange={(e) => { setQuery(e.target.value); setActive(0); }}
                         onKeyDown={onKeyDown}
@@ -186,7 +186,7 @@ export function OptionSelect({ value, onChange, options, noun = "value", float =
                         scroll the page instead, which — for a floating popup — closes it */}
                     <div role="listbox" className="max-h-56 overflow-auto overscroll-contain">
                         {matches.length === 0 && (
-                            <p className="text-muted-foreground px-2 py-1.5 text-sm">Nothing matches that.</p>
+                            <p className="text-muted-foreground px-2 py-1.5 text-sm">{ t("input.nothing") }</p>
                         )}
 
                         {matches.map((option, i) => (

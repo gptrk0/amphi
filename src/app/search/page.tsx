@@ -8,6 +8,7 @@ import { MediaCard } from "@/components/media-card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { cached, remember } from "@/lib/browse-cache";
 import { Media } from "@/types/media";
 
@@ -20,6 +21,7 @@ type Shown = { items: Media[], page: number, totalPages: number };
  * a details page lose its place.
  */
 function Results({ query }: { query: string }) {
+    const { t } = useLocale();
     const cacheKey = `search:${ query }`;
     const was = query ? cached<Shown>(cacheKey) : undefined;
 
@@ -86,11 +88,11 @@ function Results({ query }: { query: string }) {
         <div className="p-4">
             <div className="flex items-center justify-between mb-5">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">Search results</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight">{ t("search.title") }</h2>
                     <p className="text-sm text-muted-foreground">
                         {query
-                            ? `Movies and shows matching "${ query }".`
-                            : "Type something into the search bar above."}
+                            ? t("search.matching", { query })
+                            : t("search.prompt")}
                     </p>
                 </div>
             </div>
@@ -104,7 +106,7 @@ function Results({ query }: { query: string }) {
             </div>}
 
             {query && items && items.length === 0 && (
-                <p className="pt-5 text-sm text-muted-foreground">Nothing found for &quot;{ query }&quot;.</p>
+                <p className="pt-5 text-sm text-muted-foreground">{ t("search.nothing", { query }) }</p>
             )}
 
             {items && items.length > 0 && <>
@@ -122,8 +124,8 @@ function Results({ query }: { query: string }) {
 
                 {page < totalPages && (
                     <div className="flex justify-center pt-8">
-                        <Button variant="outline" disabled={loading} onClick={() => setPage(page + 1)}>
-                            {loading ? "Loading..." : "Load more"}
+                        <Button variant="outline" className="cursor-pointer" disabled={loading} onClick={() => setPage(page + 1)}>
+                            { loading ? t("search.loading") : t("search.loadMore") }
                         </Button>
                     </div>
                 )}

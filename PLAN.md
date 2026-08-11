@@ -1585,6 +1585,32 @@ Ez utóbbi első változata rossz volt, és bejelentésre javítva: a scroll-ese
 
 **Amit nem mértem:** böngészőben az oszlopot és a kapcsolót. És egy ismert, egy körig élő pontatlanság: a watchlist *lista* nézet aggregált „megvan-e" számait a fiók szintű halmaz adja, nem a soronkénti felülírás — így egy **más ember** által letöltött angol kópiát a saját, angolra állított sorod addig nem számol a magáénak, amíg a következő scan-kör `claimHeldUnits`-a rá nem írja a nevedet. Ami *érte* töltődött le, azt a `watchedBy` azonnal a soré teszi.
 
+#### A felület két nyelven (2026-08-11-i kérés) ✅ (a szerver üzenetei nélkül)
+
+Kérés: „az oldalon az alapértelmezett nyelv az angol, de hiánytalanul lehessen használni magyarul is, a user tudja változtatni a navbar alján".
+
+**Miért nincs benne könyvtár.** A `next-intl` és társai a routingot akarják birtokolni: `/hu/...` prefix, middleware-átírás, `[locale]` szegmens minden oldal fölött. Ennek az appnak egy kliens-oldali shellje van és tizenkét oldala alatta, a nyelv pedig **az emberé, nem a címé**: egy telepítésen két ember két nyelven olvassa, és egyiknek sem kell, hogy a könyvjelzői megváltozzanak. Így a választás egy sütiben van, a szótár pedig egy objektum.
+
+**Süti, nem localStorage** — mert a shellt a szerver rendereli: a sütivel az **első festés is a jó nyelven** van, és a `<html lang>` már akkor helyes, amikor egy felolvasó megnézi. A localStorage csak a javascript megérkezése után olvasható, ami minden betöltésen egy angol felvillanás.
+
+**Ehhez a root layout visszaalakult szerver-komponenssé.** Sütit csak az az oldal olvashat, és a `'use client'` a layouton azt jelentette, hogy semmi fölötte nem tud. Minden, amit eddig tett, átkerült a `Shell`-be (ami továbbra is kliens) — a layout már csak a sütit olvassa, kiírja a `<html lang>`-ot, és átadja a nyelvet.
+
+**Az angol a forrás, és ezt a típusrendszer tartja be.** `Messages = typeof en`, a `hu.ts` pedig `Messages`-ként van típusozva: egy kulcs, ami az egyikben megvan és a másikban nincs, **nem fordul le**. Így a „hiánytalanul magyarul" mechanikus tény, nem remény. Mérve: **469 kulcs mindkét nyelven, nincs se hiányzó, se fölösleges.** A `MessageKey` egy rekurzív dotted-path típus, tehát egy elgépelt kulcs is fordítási hiba — pont abban a részben, aminek az egyetlen feladata az, hogy mit írnak a szavak.
+
+**Ami futásidőben derül el, arra `tOr`:** egy felfedező-sor fejléce vagy egy beállítás címkéje olyan kulcs, amit a típus nem ismerhet. Ott a hívó megadja, mit mondjunk helyette — mindig azt az angolt, amit a szerver már küldött. Egy sor, amiről az api később tud, angolul jelenik meg, nem `discover.sections.x.title`-ként.
+
+**A beállítás-regiszter fordítása nem a szótárban van** ([setting-labels.ts](src/lib/setting-labels.ts)), hanem a regiszter mellett. Az 58 beállítás angol címkéje és help szövege a `settings.ts`-ben él, a default és a típus mellett, mert az az egy hely, ami tudja, *mi* egy beállítás. Ha mindezt átmásolnám az `en.ts`-be a „minden nyelvnek minden kulcs" szabály kedvéért, két angol szöveget kellene szinkronban tartani, és amelyik elcsúszik, az lesz az, amit senki nem olvas. Mérve: **58 beállításból 58 help szöveg magyarul van**; hat *címke* szó szerint ugyanaz maradt (`Jackett / Prowlarr URL`, `qBittorrent URL`, `Telegram bot token`, `Chat id`, `Bot API URL`, `Issuer URL`), mert azok tulajdonnevek.
+
+**A váltó a navbar alján van**, `SidebarFooter`-ben, és mindkét nyelv **a saját nevén** szerepel (`English` / `Magyar`) — aki magyart keres, az „Magyar"-t keresi. Két nyelv két gomb; egy lenyíló két dologhoz egy kattintás annak kiderítésére, mi az a két dolog. A váltás nem tölti újra a lapot: kiírja a sütit és kicseréli a szótárat, mert minden oldal olyan állapotból rajzol, ami már a böngészőben van — az újratöltés eldobná a scroll-pozíciót és a browse cache összes listáját.
+
+**Ami szándékosan nem fordul:** a napló és az értesítések. Azok annak a rekordjai, ami történt, akkor, amikor történt — egy sor, ami az olvasó személyétől függően más nyelven jelenik meg, nem rekord. Ugyanígy a release-nevek, az indexer-idk és a nyelv-**kódok** (a nyelvek *nevei* viszont fordulnak: „Magyar", „Angol" — a kód `hun` marad, azt hasonlítjuk release-nevekhez).
+
+**Két apró átalakítás, ami közben kellett.** A felfedező-sorok kulcsai **egyedivé váltak** minden nézetben (`popular` volt „filmek" az egyik lapon és „sorozatok" a másikon — egy kulcs két jelentéssel, amiből egyiket sem lehet leírni). A `TagInput` és az `OptionSelect` pedig elvesztette a `noun` propját: „pick a {noun}" magyarul ragozást kíván, és egy ragozandó főnév egy lefordíthatatlan mondat — a két mező most a saját, főnév nélküli szövegét használja, a fölötte lévő címke pedig eddig is megmondta, miről van szó.
+
+**Mérve:** `tsc --noEmit` és `next lint` tiszta. A süti végig működik a szerverig: `<html lang="en">` süti nélkül, `<html lang="hu">` sütivel; a `/watchlist` **első festésében** angolul `DISCOVER / Watchlist / Library`, magyarul `FELFEDEZÉS / Figyelőlista / Gyűjtemény / Mindenki figyelőlistája`, és a váltó felirata `Language` / `Nyelv`. A szótár-ellenőrzés (dobható szkript, futtatva és törölve) a fenti 469/469-et adta, plusz `download.confirmMany` → „{n} elem letöltése" és a behelyettesítés („3 epizód").
+
+**Ami maradt, és amit nem mértem.** A böngészőben semmit nem láttam — a fordítások szerveroldali HTML-ből és a szótárból vannak ellenőrizve. És egy valódi hiányosság: **az api saját üzenetei angolul válaszolnak.** 13 route fájlban van `message: "..."`, és négy helyen a kliens ezt közvetlenül tálcára teszi (letöltés indítása, webhook-teszt, scan, és minden szerveroldali validációs hiba). Ehhez a szervernek is kell egy `t` a sütiből — külön kör, nem fér ebbe.
+
 ---
 
 ## 5. Javasolt sorrend

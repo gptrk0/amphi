@@ -6,7 +6,13 @@ import { Media } from "@/types/media";
 import { WatchlistStatus } from "@/types/watchlist";
 
 export type Section = {
+    /**
+     * Unique across every view, because the interface translates a row's heading by it —
+     * `popular` meant "films" on one page and "shows" on another, which is one key with
+     * two meanings and no way to write either of them down.
+     */
     key: string;
+    /** English, and only the fallback: what the page shows comes from its dictionary. */
     title: string;
     description: string;
     href: string | null;
@@ -53,20 +59,20 @@ const VIEWS: Record<string, { personal: boolean, sources: Source[] }> = {
     movies: {
         personal: false,
         sources: [
-            { key: "trending", title: "Trending today", description: "What everyone is watching right now.", type: "movie", category: "trending", href: null },
-            { key: "popular", title: "Popular", description: "Most watched films at the moment.", type: "movie", category: "popular", href: null },
-            { key: "upcoming", title: "Coming soon", description: "Films that are not out yet.", type: "movie", category: "upcoming", href: null },
-            { key: "top-rated", title: "All time favourites", description: "The highest rated films on TMDB.", type: "movie", category: "top_rated", href: null }
+            { key: "trending-movies", title: "Trending today", description: "What everyone is watching right now.", type: "movie", category: "trending", href: null },
+            { key: "popular-movies", title: "Popular", description: "Most watched films at the moment.", type: "movie", category: "popular", href: null },
+            { key: "upcoming-movies", title: "Coming soon", description: "Films that are not out yet.", type: "movie", category: "upcoming", href: null },
+            { key: "top-rated-movies", title: "All time favourites", description: "The highest rated films on TMDB.", type: "movie", category: "top_rated", href: null }
         ]
     },
     series: {
         personal: false,
         sources: [
-            { key: "trending", title: "Trending today", description: "What everyone is watching right now.", type: "tv", category: "trending", href: null },
-            { key: "popular", title: "Popular", description: "Most watched shows at the moment.", type: "tv", category: "popular", href: null },
+            { key: "trending-series", title: "Trending today", description: "What everyone is watching right now.", type: "tv", category: "trending", href: null },
+            { key: "popular-series", title: "Popular", description: "Most watched shows at the moment.", type: "tv", category: "popular", href: null },
             { key: "airing-today", title: "Airing today", description: "Episodes landing today.", type: "tv", category: "airing_today", href: null },
             { key: "on-the-air", title: "On the air", description: "Shows with new episodes this week.", type: "tv", category: "on_the_air", href: null },
-            { key: "top-rated", title: "All time favourites", description: "The highest rated shows on TMDB.", type: "tv", category: "top_rated", href: null }
+            { key: "top-rated-series", title: "All time favourites", description: "The highest rated shows on TMDB.", type: "tv", category: "top_rated", href: null }
         ]
     }
 };

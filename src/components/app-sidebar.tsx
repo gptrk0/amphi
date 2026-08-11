@@ -5,6 +5,7 @@ import { Teko } from "next/font/google";
 import {
     Sidebar,
     SidebarContent,
+    SidebarFooter,
     SidebarGroup,
     SidebarGroupContent,
     SidebarGroupLabel,
@@ -18,67 +19,72 @@ import {
 import Link from "next/link";
 import classNames from "classnames";
 
+import { Button } from "@/components/ui/button";
+import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
+import { LOCALES, LOCALE_NAMES, MessageKey } from "@/i18n";
 
 const teko = Teko({ subsets: [ 'latin' ] });
 
+// the labels are keys now, translated where they are drawn — a menu built at module load
+// would be built once, in whatever language the first render happened to be in
 const menus: {
-    title: string,
+    title: MessageKey,
     url: string,
     // hidden from a plain user, because every page under it answers them with a 403
     admin?: boolean,
     items: {
-        title: string;
+        title: MessageKey;
         url: string
     }[]
 }[] = [
     {
-        title: "DISCOVER",
+        title: "nav.discover",
         url: "#",
         items: [
             {
-                title: "All",
+                title: "nav.all",
                 url: "/"
             },
             {
-                title: "Movies",
+                title: "nav.movies",
                 url: "/movies"
             },
             {
-                title: "Series",
+                title: "nav.series",
                 url: "/series"
             }
         ]
     },
     {
-        title: "LIBRARY",
+        title: "nav.collection",
         url: "#",
         items: [
             {
-                title: "Watchlist",
+                title: "nav.watchlist",
                 url: "/watchlist"
             },
             {
-                title: "Library",
+                title: "nav.library",
                 url: "/library"
             }
         ]
     },
     {
-        title: "ADMIN",
+        title: "nav.admin",
         url: "#",
         admin: true,
         items: [
             {
-                title: "Users",
+                title: "nav.users",
                 url: "/users"
             },
             {
-                title: "Settings",
+                title: "nav.settings",
                 url: "/settings"
             },
             {
-                title: "Log",
+                title: "nav.log",
                 url: "/log"
             }
         ]
@@ -89,6 +95,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const pathname = usePathname();
     const { isAdmin } = useSession();
     const { isMobile, setOpenMobile } = useSidebar();
+    const { locale, setLocale, t } = useLocale();
 
     const visible = menus.filter(menu => ! menu.admin || isAdmin);
 
@@ -122,7 +129,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarContent>
                 {visible.map((item, i) => (
                     <SidebarGroup key={i}>
-                        <SidebarGroupLabel>{item.title}</SidebarGroupLabel>
+                        <SidebarGroupLabel>{ t(item.title) }</SidebarGroupLabel>
 
                         <SidebarGroupContent>
                             <SidebarMenu>
@@ -133,7 +140,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                                 you are already on changes no pathname, and the sheet
                                                 would sit there as if the tap had missed */}
                                             <Link href={ item.url } onClick={leave}>
-                                                { item.title }
+                                                { t(item.title) }
                                             </Link>
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
@@ -143,6 +150,30 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     </SidebarGroup>
                 ))}
             </SidebarContent>
+
+            {/* At the bottom, because it is set once and then never again — and in every
+                language's own name, since somebody looking for Hungarian is looking for
+                "Magyar". Two languages is two buttons; a dropdown for two things is a
+                click to find out what the two things are. */}
+            <SidebarFooter>
+                <div className="space-y-1 px-2 pb-1">
+                    <span className="text-muted-foreground text-xs">{ t("nav.language") }</span>
+
+                    <div className="flex gap-1">
+                        {LOCALES.map(code => (
+                            <Button
+                                key={code}
+                                size="sm"
+                                variant={locale === code ? "default" : "outline"}
+                                className="flex-1 cursor-pointer"
+                                onClick={() => setLocale(code)}
+                            >
+                                { LOCALE_NAMES[code] }
+                            </Button>
+                        ))}
+                    </div>
+                </div>
+            </SidebarFooter>
 
             <SidebarRail />
         </Sidebar>

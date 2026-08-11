@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
+import { Translate } from "@/i18n";
 import { DownloadPreview, GrabChoice, GrabOption } from "@/types/download";
 
 type Props = {
@@ -50,9 +52,22 @@ const details = (option: GrabOption) => {
 // what counts as this person's language here — one, or every one their account accepts
 const wantedText = (preview: DownloadPreview) => preview.language.wanted.join("/").toUpperCase();
 
-const missingText = (preview: DownloadPreview) => {
+/**
+ * A line's own name. The api builds it from season and episode numbers, which need no
+ * translating — apart from exactly two words it can put in one, and this is where those
+ * two are turned back into the reader's language.
+ */
+const lineLabel = (label: string, t: Translate) => {
+    if (label === "Movie") {
+        return t("common.movie");
+    }
+
+    return label.endsWith(" pack") ? `${ label.slice(0, -5) } ${ t("download.pack") }` : label;
+};
+
+const missingText = (preview: DownloadPreview, t: Translate) => {
     if (preview.missingMovie) {
-        return "the film";
+        return t("common.film");
     }
 
     return preview.missing
@@ -66,6 +81,8 @@ function ChoiceRow({ choice, picked, onPick, single }: {
     onPick: (guid: string) => void;
     single: boolean;
 }) {
+    const { t } = useLocale();
+
     // a single line has nothing to compare itself to, so it opens straight away
     const [ isOpen, setOpen ] = useState(single);
 
@@ -82,8 +99,8 @@ function ChoiceRow({ choice, picked, onPick, single }: {
 
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                        <span className="font-medium">{ choice.label }</span>
-                        <span className="text-xs text-muted-foreground">{ choice.options.length } releases</span>
+                        <span className="font-medium">{ lineLabel(choice.label, t) }</span>
+                        <span className="text-xs text-muted-foreground">{ t("download.releases", { n: choice.options.length }) }</span>
                     </div>
 
                     <div className="truncate text-sm text-muted-foreground">{ selected?.title }</div>
@@ -107,14 +124,14 @@ function ChoiceRow({ choice, picked, onPick, single }: {
                         <div className="min-w-0 flex-1">
                             <div className="truncate text-sm">{ option.title }</div>
                             <div className="text-xs text-muted-foreground">
-                                { details(option) }{ index === 0 ? " · best match" : "" }
+                                { details(option) }{ index === 0 ? ` · ${ t("download.bestMatch") }` : "" }
                             </div>
                         </div>
                     </button>
                 ))}
 
                 {choice.filtered > 0 && <div className="p-2 text-xs text-muted-foreground">
-                    { choice.filtered } more result{ choice.filtered > 1 ? "s were" : " was" } filtered out by your quality profile.
+                    { t(choice.filtered === 1 ? "download.filteredOne" : "download.filtered", { n: choice.filtered }) }
                 </div>}
             </div>}
         </div>
@@ -127,6 +144,7 @@ function ChoiceRow({ choice, picked, onPick, single }: {
  * could not be found at all is offered to the watchlist instead.
  */
 export function ReleasePicker({ open, name, preview, isLoading, isStarting, picks, onPick, onCancel, onConfirm }: Props) {
+    const { t } = useLocale();
     const [ watchMissing, setWatchMissing ] = useState(false);
     const [ acceptOtherLanguage, setAcceptOtherLanguage ] = useState(false);
     const [ acceptDuplicate, setAcceptDuplicate ] = useState(false);
@@ -170,17 +188,22 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>
-                        { haveItAll ? `You already have ${ name }` : nothingFound ? `Nothing available for ${ name }` : `Download ${ name }` }
+                        { t(haveItAll ? "download.titleHave" : nothingFound ? "download.titleNothing" : "download.titleDownload", { name }) }
                     </DialogTitle>
 
                     <DialogDescription>
-                        {isLoading && "Searching your indexers..."}
+                        {isLoading && t("download.searching")}
 
-                        {! isLoading && haveItAll && `${ held.join(", ") } — already downloaded in ${ wantedText(preview!) }, so there is nothing left to fetch.`}
+                        {! isLoading && haveItAll && t("download.haveAll", {
+                            lines: held.map(label => lineLabel(label, t)).join(", "),
+                            languages: wantedText(preview!)
+                        })}
 
-                        {! isLoading && nothingFound && `Not on your indexers right now${ preview && preview.filtered > 0 ? ` — ${ preview.filtered } result${ preview.filtered > 1 ? "s were" : " was" } filtered out by your quality profile` : "" }. Add it to your watchlist and it will be downloaded as soon as it shows up?`}
+                        {! isLoading && nothingFound && (preview && preview.filtered > 0
+                            ? t("download.notFoundFiltered", { n: preview.filtered })
+                            : t("download.notFound"))}
 
-                        {! isLoading && ! nothingFound && ! haveItAll && "Pick a release for each line. The first one is what your quality profile would have taken."}
+                        {! isLoading && ! nothingFound && ! haveItAll && t("download.pickHint")}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -204,11 +227,10 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                     <div className="flex items-start gap-2 text-sm">
                         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
 
-                        <span>
-                            You already have <span className="text-muted-foreground">{ held.join(", ") }</span> in{" "}
-                            <b>{ wantedText(preview!) }</b>. Downloading again means a second
-                            copy on the disk — worth it if the one you have is a bad rip, and wasted otherwise.
-                        </span>
+                        <span>{ t("download.duplicate", {
+                            lines: held.map(label => lineLabel(label, t)).join(", "),
+                            languages: wantedText(preview!)
+                        }) }</span>
                     </div>
 
                     <label className="flex cursor-pointer items-start gap-2 pl-6 text-sm">
@@ -218,7 +240,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             className="mt-0.5"
                         />
 
-                        <span>I know, download it again.</span>
+                        <span>{ t("download.duplicateAccept") }</span>
                     </label>
                 </div>}
 
@@ -226,12 +248,10 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                     <div className="flex items-start gap-2 text-sm">
                         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
 
-                        <span>
-                            Nothing in <b>{ wantedText(preview!) }</b> for{" "}
-                            <span className="text-muted-foreground">{ preview!.language.missing.join(", ") }</span>.
-                            Left alone, this would stay on your watchlist until a release in your language turns
-                            up — downloading now means watching it in another one.
-                        </span>
+                        <span>{ t("download.wrongLanguage", {
+                            languages: wantedText(preview!),
+                            lines: preview!.language.missing.map(label => lineLabel(label, t)).join(", ")
+                        }) }</span>
                     </div>
 
                     <label className="flex cursor-pointer items-start gap-2 pl-6 text-sm">
@@ -241,7 +261,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             className="mt-0.5"
                         />
 
-                        <span>That is fine, download it anyway.</span>
+                        <span>{ t("download.wrongLanguageAccept") }</span>
                     </label>
                 </div>}
 
@@ -255,16 +275,13 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             className="mt-0.5"
                         />
 
-                        <span>
-                            Nothing found for <span className="text-muted-foreground">{ missingText(preview!) }</span>.
-                            Put it on my watchlist and download it as soon as it shows up.
-                        </span>
+                        <span>{ t("download.watchMissing", { lines: missingText(preview!, t) }) }</span>
                     </label>
                 </>}
 
                 <DialogFooter>
                     <Button variant="outline" className="cursor-pointer" onClick={close}>
-                        { nothingFound ? "No thanks" : haveItAll ? "Close" : "Cancel" }
+                        { nothingFound ? t("download.noThanks") : haveItAll ? t("download.close") : t("common.cancel") }
                     </Button>
 
                     {haveItAll
@@ -276,7 +293,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             onClick={() => onConfirm(true)}
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isStarting })} />
-                            Add to watchlist
+                            { t("download.addToWatchlist") }
                         </Button>
                         : <Button
                             className="cursor-pointer"
@@ -288,7 +305,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                             onClick={confirm}
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isStarting })} />
-                            Download { choices.length > 1 ? `${ choices.length } items` : "" }
+                            { choices.length > 1 ? t("download.confirmMany", { n: choices.length }) : t("download.confirm") }
                         </Button>}
                 </DialogFooter>
             </DialogContent>

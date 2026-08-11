@@ -16,6 +16,7 @@ import { Badge } from "./ui/badge"
 import { WatchlistBadge } from "./watchlist-badge"
 import { useWatchlist } from "@/context/watchlist"
 import { useDownload } from "@/context/download"
+import { useLocale } from "@/context/locale"
 import { Media } from "@/types/media"
 import Link from "next/link"
 
@@ -36,6 +37,7 @@ export function MediaCard({
 }: Props) {
     const { getEntry, add, remove } = useWatchlist();
     const { startDownload } = useDownload();
+    const { t } = useLocale();
     const entry = getEntry(media.type, media.id);
 
     return (
@@ -75,10 +77,10 @@ export function MediaCard({
                 <ContextMenuContent className="w-56">
                     {entry?.monitored
                         ? <ContextMenuItem className="cursor-pointer" onClick={() => remove(media.type, media.id, media.name)}>
-                            <BookmarkX /> Stop watching
+                            <BookmarkX /> { t("discover.card.stopWatching") }
                         </ContextMenuItem>
                         : <ContextMenuItem className="cursor-pointer" onClick={() => add(media.type, media.id, media.name)}>
-                            <Bookmark /> Add to watchlist
+                            <Bookmark /> { t("discover.card.addToWatchlist") }
                         </ContextMenuItem>}
 
                     {media.type === "movie" && <>
@@ -88,7 +90,7 @@ export function MediaCard({
                             className="cursor-pointer"
                             onClick={() => startDownload({ type: media.type, tmdbId: media.id, name: media.name })}
                         >
-                            <Download /> Download now
+                            <Download /> { t("discover.card.downloadNow") }
                         </ContextMenuItem>
                     </>}
                 </ContextMenuContent>

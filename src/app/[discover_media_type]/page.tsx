@@ -8,24 +8,28 @@ import { DiscoverSections } from "@/components/discover-sections";
 import { MediaGrid } from "@/components/media-grid";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { useLocale } from "@/context/locale";
 import { cached, remember } from "@/lib/browse-cache";
+import { MessageKey } from "@/i18n";
 import { MediaGenre } from "@/types/media";
 
-const VIEWS: Record<string, { title: string, description: string, type: "movie" | "tv" }> = {
+// the words are keys, because this page is drawn in whichever language the reader chose
+const VIEWS: Record<string, { title: MessageKey, description: MessageKey, type: "movie" | "tv" }> = {
     movies: {
-        title: "Movies",
-        description: "Browse what is out and what is coming.",
+        title: "discover.movies.title",
+        description: "discover.movies.description",
         type: "movie"
     },
     series: {
-        title: "Series",
-        description: "Browse what is on and what is next.",
+        title: "discover.series.title",
+        description: "discover.series.description",
         type: "tv"
     }
 };
 
 export default function Page() {
     const { discover_media_type } = useParams();
+    const { t } = useLocale();
     const slug = typeof discover_media_type === "string" ? discover_media_type : "";
     const view = VIEWS[slug];
 
@@ -81,11 +85,11 @@ export default function Page() {
     return (
         <div className="p-4">
             <div className="mb-5 space-y-1">
-                <h2 className="text-2xl font-semibold tracking-tight">{ view.title }</h2>
+                <h2 className="text-2xl font-semibold tracking-tight">{ t(view.title) }</h2>
                 <p className="text-sm text-muted-foreground">
                     {active
-                        ? `${ active.name }, most popular first.`
-                        : view.description}
+                        ? t("discover.genreLine", { genre: active.name })
+                        : t(view.description)}
                 </p>
             </div>
 

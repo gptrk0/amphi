@@ -9,7 +9,9 @@ import { BookmarkX, Download, ExternalLink, Play, Star } from "lucide-react";
 import { MediaDetails, MediaPerson } from "@/types/media";
 import { WatchlistItem } from "@/types/watchlist";
 import { useDownload } from "@/context/download";
+import { useLocale } from "@/context/locale";
 import { useWatchlist } from "@/context/watchlist";
+import { Locale, Translate } from "@/i18n";
 import { CastRow } from "@/components/cast-row";
 import { Fact, FactGrid } from "@/components/fact-grid";
 import { MediaRow } from "@/components/media-row";
@@ -20,42 +22,54 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { episodeKey, SeasonInfo, SeasonPicker } from "@/components/season-picker";
 
-const runtimeText = (minutes: number | null, isTv: boolean) => {
+// every one of these takes the translator rather than reaching for a global: they are
+// module level, and a language is a property of the render, not of the module
+const runtimeText = (minutes: number | null, isTv: boolean, t: Translate) => {
     if (! minutes) {
         return "";
     }
 
     if (isTv) {
-        return `${ minutes } min / episode`;
+        return t("details.facts.perEpisode", { n: minutes });
     }
 
     const hours = Math.floor(minutes / 60);
 
-    return hours > 0 ? `${ hours }h ${ minutes % 60 }m` : `${ minutes }m`;
+    return hours > 0
+        ? t("details.facts.hoursMinutes", { h: hours, m: minutes % 60 })
+        : t("details.facts.minutes", { m: minutes });
 };
 
-const money = (value: number) => {
+const money = (value: number, locale: Locale, t: Translate) => {
     if (! value) {
         return "";
     }
 
     if (value >= 1000000000) {
-        return `$${ (value / 1000000000).toFixed(1) }B`;
+        return t("details.facts.billions", { n: (value / 1000000000).toFixed(1) });
     }
 
-    return value >= 1000000 ? `$${ Math.round(value / 1000000) }M` : `$${ value.toLocaleString("en-US") }`;
+    if (value >= 1000000) {
+        return t("details.facts.millions", { n: Math.round(value / 1000000) });
+    }
+
+    return t("details.facts.dollars", { n: value.toLocaleString(dateLocale(locale)) });
 };
 
 const votes = (value: number) => {
     return value >= 1000 ? `${ (value / 1000).toFixed(1) }k` : String(value);
 };
 
-const dateText = (value: string | null | undefined) => {
+// a Hungarian page writes "2026. aug. 11.", an English one "11 Aug 2026" — the same date
+// formatted by whoever is reading it
+const dateLocale = (locale: Locale) => locale === "hu" ? "hu-HU" : "en-GB";
+
+const dateText = (value: string | null | undefined, locale: Locale) => {
     if (! value) {
         return "";
     }
 
-    return new Date(value).toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "numeric" });
+    return new Date(value).toLocaleDateString(dateLocale(locale), { year: "numeric", month: "short", day: "numeric" });
 };
 
 /**
@@ -93,6 +107,7 @@ type Props = {
 };
 
 export function DetailsView({ type, tmdbId, details, seasons }: Props) {
+    const { locale, t } = useLocale();
     const [item, setItem] = useState<WatchlistItem>();
     // "<season>:<episode>" keys — the watchlist state, mirrored so a tick is instant
     const [monitored, setMonitored] = useState<Set<string>>(new Set());
@@ -195,7 +210,7 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
 
         } catch(err) {
             console.error(err);
-            toast("Could not update the watchlist.");
+            toast(t("details.updateFailed"));
 
         } finally {
             setSaving(false);
@@ -216,30 +231,38 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
     }
 
     const facts: Fact[] = [
-        { label: "Status", value: details.status },
+        // `details.status` is TMDB's own word ("Returning Series") and stays as it is: it
+        // is what TMDB says about the show, not something this app has an opinion on
+        { label: t("details.facts.status"), value: details.status },
         ...(details.next_episode ? [ {
-            label: "Next episode",
-            value: `S${ String(details.next_episode.season_number).padStart(2, "0") }E${ String(details.next_episode.episode_number).padStart(2, "0") } · ${ dateText(details.next_episode.air_date) || "date unknown" }`
+            label: t("details.facts.nextEpisode"),
+            value: `S${ String(details.next_episode.season_number).padStart(2, "0") }E${ String(details.next_episode.episode_number).padStart(2, "0") } · ${ dateText(details.next_episode.air_date, locale) || t("details.facts.dateUnknown") }`
         } ] : []),
         ...crewFacts(details.crew),
-        { label: isTv ? "First aired" : "Released", value: dateText(media.date) },
-        ...(isTv ? [ { label: "Last aired", value: dateText(details.last_air_date) } ] : []),
-        ...(isTv ? [ { label: "Episodes", value: `${ details.season_count } season${ details.season_count === 1 ? "" : "s" }, ${ details.episode_count } episodes` } ] : []),
-        { label: "Runtime", value: runtimeText(details.runtime, isTv) },
-        { label: "Original title", value: details.original_name !== media.name ? details.original_name : "" },
-        { label: "Original language", value: details.original_language ? details.original_language.toUpperCase() : "" },
-        { label: "Spoken languages", value: details.languages.join(", ") },
-        ...(isTv ? [ { label: "Network", value: details.networks.map(network => network.name).join(", ") } ] : []),
-        { label: "Studio", value: details.companies.slice(0, 3).map(company => company.name).join(", ") },
-        { label: "Country", value: details.countries.join(", ") },
-        { label: "Budget", value: money(details.budget) },
-        { label: "Revenue", value: money(details.revenue) },
+        { label: isTv ? t("details.facts.firstAired") : t("details.facts.released"), value: dateText(media.date, locale) },
+        ...(isTv ? [ { label: t("details.facts.lastAired"), value: dateText(details.last_air_date, locale) } ] : []),
+        ...(isTv ? [ {
+            label: t("details.facts.episodes"),
+            value: t(details.season_count === 1 ? "details.facts.oneSeason" : "details.facts.seasonCount", {
+                seasons: details.season_count ?? 0,
+                episodes: details.episode_count ?? 0
+            })
+        } ] : []),
+        { label: t("details.facts.runtime"), value: runtimeText(details.runtime, isTv, t) },
+        { label: t("details.facts.originalTitle"), value: details.original_name !== media.name ? details.original_name : "" },
+        { label: t("details.facts.originalLanguage"), value: details.original_language ? details.original_language.toUpperCase() : "" },
+        { label: t("details.facts.spokenLanguages"), value: details.languages.join(", ") },
+        ...(isTv ? [ { label: t("details.facts.network"), value: details.networks.map(network => network.name).join(", ") } ] : []),
+        { label: t("details.facts.studio"), value: details.companies.slice(0, 3).map(company => company.name).join(", ") },
+        { label: t("details.facts.country"), value: details.countries.join(", ") },
+        { label: t("details.facts.budget"), value: money(details.budget, locale, t) },
+        { label: t("details.facts.revenue"), value: money(details.revenue, locale, t) },
         {
-            label: "Links",
+            label: t("details.facts.links"),
             value: <span className="flex flex-wrap gap-3">
                 <Link href={`https://www.themoviedb.org/${ media.type }/${ media.id }`}>TMDB</Link>
                 {details.imdb_id && <Link href={`https://www.imdb.com/title/${ details.imdb_id }`}>IMDb</Link>}
-                {details.homepage && <Link href={details.homepage}>Website</Link>}
+                {details.homepage && <Link href={details.homepage}>{ t("details.facts.website") }</Link>}
             </span>
         }
     ];
@@ -271,12 +294,12 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                             className="w-[160px] shrink-0 rounded-lg shadow-lg md:w-[220px]"
                         />
                         : <div className="flex h-[240px] w-[160px] shrink-0 items-center justify-center rounded-lg bg-muted text-sm text-muted-foreground md:h-[330px] md:w-[220px]">
-                            no poster
+                            { t("details.noPoster") }
                         </div>}
 
                     <div className="min-w-0 flex-1 space-y-4 md:pt-6">
                         <div className="flex flex-wrap items-center gap-2">
-                            <Badge>{ isTv ? "series" : "movie" }</Badge>
+                            <Badge>{ isTv ? t("details.series") : t("details.movie") }</Badge>
                             {details.certification && <Badge variant="outline">{ details.certification }</Badge>}
                             <WatchlistBadge entry={entry} />
                         </div>
@@ -297,22 +320,23 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                                 <span className="text-muted-foreground">({ votes(details.votes) })</span>
                             </span>}
 
-                            {details.runtime && <span className="text-muted-foreground">{ runtimeText(details.runtime, isTv) }</span>}
+                            {details.runtime && <span className="text-muted-foreground">{ runtimeText(details.runtime, isTv, t) }</span>}
 
                             {details.genres.map(genre => (
                                 <Badge key={genre.id} variant="secondary">{ genre.name }</Badge>
                             ))}
                         </div>
 
-                        <p className="max-w-3xl text-sm leading-relaxed">{ media.overview || "No overview yet." }</p>
+                        <p className="max-w-3xl text-sm leading-relaxed">{ media.overview || t("details.noOverview") }</p>
 
                         <div className="flex flex-wrap gap-3 pt-2">
                             {/* not disabled with nothing ticked any more: it asks instead,
                                 in the same dialog a poster or the billboard now opens */}
                             <Button className="cursor-pointer" onClick={download}>
                                 <Download />
-                                Download
-                                { isTv && pickedCount > 0 ? ` ${ pickedCount } episode${ pickedCount > 1 ? "s" : "" }` : "" }
+                                { isTv && pickedCount > 0
+                                    ? t(pickedCount === 1 ? "details.downloadEpisode" : "details.downloadEpisodes", { n: pickedCount })
+                                    : t("details.download") }
                             </Button>
 
                             {details.trailer && <Button
@@ -320,7 +344,7 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                                 className="cursor-pointer"
                                 onClick={() => setTrailerOpen(true)}
                             >
-                                <Play /> Trailer
+                                <Play /> { t("details.trailer") }
                             </Button>}
 
                             {entry?.monitored && <Button
@@ -328,18 +352,15 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                                 className="cursor-pointer"
                                 onClick={() => remove(type, tmdbId, media.name)}
                             >
-                                <BookmarkX /> Stop watching
+                                <BookmarkX /> { t("details.stopWatching") }
                             </Button>}
                         </div>
                     </div>
                 </div>
 
                 {isTv && <div className="max-w-2xl">
-                    <h3 className="text-lg font-semibold tracking-tight">Seasons</h3>
-                    <p className="text-sm text-muted-foreground">
-                        Tick what you want — a whole season or single episodes. Ticking puts it on your
-                        watchlist right away, unticking takes it off.
-                    </p>
+                    <h3 className="text-lg font-semibold tracking-tight">{ t("details.seasons.title") }</h3>
+                    <p className="text-sm text-muted-foreground">{ t("details.seasons.hint") }</p>
 
                     <Separator className="my-3" />
 
@@ -352,13 +373,13 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
                     />
                 </div>}
 
-                <CastRow title="Cast" people={details.cast} />
+                <CastRow title={t("details.cast")} people={details.cast} />
 
                 <FactGrid facts={facts} />
 
-                <MediaRow title="Recommendations" items={details.recommendations} />
+                <MediaRow title={t("details.recommendations")} items={details.recommendations} />
 
-                <MediaRow title="More like this" items={details.similar} />
+                <MediaRow title={t("details.similar")} items={details.similar} />
             </div>
         </div>
 

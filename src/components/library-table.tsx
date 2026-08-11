@@ -21,8 +21,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
+import { MessageKey, Translate } from "@/i18n";
 import { LibraryItem } from "@/types/library";
 
 type Column = {
@@ -39,26 +41,28 @@ type Column = {
 const POLL_MS = 5000;
 const IDLE_POLL_MS = 20000;
 
-const FILTERS: { label: string, value: "ALL" | "DOWNLOADING" | "AVAILABLE" }[] = [
-    { label: "All", value: "ALL" },
-    { label: "Downloading", value: "DOWNLOADING" },
-    { label: "Ready to watch", value: "AVAILABLE" }
+const FILTERS: { label: MessageKey, value: "ALL" | "DOWNLOADING" | "AVAILABLE" }[] = [
+    { label: "libraryPage.filters.all", value: "ALL" },
+    { label: "libraryPage.filters.downloading", value: "DOWNLOADING" },
+    { label: "libraryPage.filters.available", value: "AVAILABLE" }
 ];
 
-const speed = (bytesPerSecond: number) => {
+const speed = (bytesPerSecond: number, t: Translate) => {
     if (bytesPerSecond < 1024 * 1024) {
-        return `${ Math.round(bytesPerSecond / 1024) } kB/s`;
+        return t("libraryPage.kbPerSecond", { n: Math.round(bytesPerSecond / 1024) });
     }
 
-    return `${ (bytesPerSecond / (1024 * 1024)).toFixed(1) } MB/s`;
+    return t("libraryPage.mbPerSecond", { n: (bytesPerSecond / (1024 * 1024)).toFixed(1) });
 };
 
-const remaining = (seconds: number | null) => {
+const remaining = (seconds: number | null, t: Translate) => {
     if (seconds === null) {
         return "";
     }
 
-    return seconds < 3600 ? `${ Math.round(seconds / 60) }m left` : `${ Math.round(seconds / 3600) }h left`;
+    return seconds < 3600
+        ? t("libraryPage.minutesLeft", { n: Math.round(seconds / 60) })
+        : t("libraryPage.hoursLeft", { n: Math.round(seconds / 3600) });
 };
 
 /**
@@ -75,7 +79,7 @@ const sizeText = (bytes: number | null) => {
     return gb >= 1 ? `${ gb.toFixed(gb >= 10 ? 0 : 1) } GB` : `${ Math.max(Math.round(bytes / 1024 ** 2), 1) } MB`;
 };
 
-const ago = (value: string | null) => {
+const ago = (value: string | null, t: Translate) => {
     if (! value) {
         return "—";
     }
@@ -83,16 +87,18 @@ const ago = (value: string | null) => {
     const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
 
     if (minutes < 60) {
-        return `${ Math.max(minutes, 1) }m ago`;
+        return t("common.minutesAgo", { n: Math.max(minutes, 1) });
     }
 
     const hours = Math.round(minutes / 60);
 
-    return hours < 48 ? `${ hours }h ago` : `${ Math.round(hours / 24) }d ago`;
+    return hours < 48
+        ? t("common.hoursAgo", { n: hours })
+        : t("common.daysAgo", { n: Math.round(hours / 24) });
 };
 
 /** How long until a moment that has consequences. Empty once it has passed. */
-const untilText = (value: string | null) => {
+const untilText = (value: string | null, t: Translate) => {
     if (! value) {
         return "";
     }
@@ -103,14 +109,16 @@ const untilText = (value: string | null) => {
         return "";
     }
 
-    return hours < 48 ? `${ hours }h` : `${ Math.ceil(hours / 24) } days`;
+    return hours < 48
+        ? t("libraryPage.hours", { n: hours })
+        : t("libraryPage.days", { n: Math.ceil(hours / 24) });
 };
 
 /** How much of the seed time is left, which is the only thing blocking a delete. */
-const seedText = (value: string | null) => {
-    const left = untilText(value);
+const seedText = (value: string | null, t: Translate) => {
+    const left = untilText(value, t);
 
-    return left ? `${ left } left` : "";
+    return left ? t("libraryPage.timeLeft", { time: left }) : "";
 };
 
 /**
@@ -120,6 +128,7 @@ const seedText = (value: string | null) => {
 export function LibraryTable() {
     const { refresh } = useWatchlist();
     const { isAdmin } = useSession();
+    const { t } = useLocale();
     const [ items, setItems ] = useState<LibraryItem[]>();
     const [ filter, setFilter ] = useState<"ALL" | "DOWNLOADING" | "AVAILABLE">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "startedAt", direction: "desc" });
@@ -160,12 +169,12 @@ export function LibraryTable() {
             await axios.patch(`/api/library/${ item.id }`, { deleteRequested, deleteFiles });
 
             toast(deleteRequested
-                ? `${ name(item) } will be deleted when its seed time is up.`
-                : `${ name(item) } is staying.`);
+                ? t("libraryPage.markedToast", { name: name(item) })
+                : t("libraryPage.stayingToast", { name: name(item) }));
 
         } catch(err) {
             console.error(err);
-            toast(`Could not update ${ name(item) }.`);
+            toast(t("libraryPage.updateFailed", { name: name(item) }));
 
         } finally {
             await load();
@@ -179,12 +188,12 @@ export function LibraryTable() {
             await axios.delete(`/api/library/${ item.id }`, { params: { files: deleteFiles ? 1 : 0 } });
 
             toast(deleteFiles
-                ? `${ name(item) } and its files were deleted.`
-                : `${ name(item) } was removed, the files were kept.`);
+                ? t("libraryPage.deletedToast", { name: name(item) })
+                : t("libraryPage.removedKeptToast", { name: name(item) }));
 
         } catch(err) {
             console.error(err);
-            toast(`Could not delete ${ name(item) }.`);
+            toast(t("libraryPage.deleteFailed", { name: name(item) }));
 
         } finally {
             await load();
@@ -194,7 +203,7 @@ export function LibraryTable() {
 
     const poster = (item: LibraryItem) => {
         if (! item.media?.poster_img) {
-            return <div className="flex h-[48px] w-[32px] shrink-0 items-center justify-center rounded-sm border text-[8px] text-muted-foreground">no<br />img</div>;
+            return <div className="flex h-[48px] w-[32px] shrink-0 items-center justify-center rounded-sm border text-[8px] text-muted-foreground">{ t("libraryPage.noImage") }</div>;
         }
 
         return <Image src={item.media.poster_img} alt="" width={32} height={48} className="shrink-0 rounded-sm" />;
@@ -203,7 +212,7 @@ export function LibraryTable() {
     const columns: Column[] = [
         {
             key: "name",
-            label: "Title",
+            label: t("libraryPage.columns.title"),
             value: item => item.media?.name?.toLowerCase() || String(item.tmdbId),
             render: item => (
                 <div className="flex items-center gap-3">
@@ -221,7 +230,7 @@ export function LibraryTable() {
         },
         {
             key: "release",
-            label: "Release",
+            label: t("libraryPage.columns.release"),
             value: item => item.releaseTitle.toLowerCase(),
             render: item => (
                 <span className="block max-w-[22rem] truncate text-xs text-muted-foreground" title={item.releaseTitle}>
@@ -231,7 +240,7 @@ export function LibraryTable() {
         },
         {
             key: "language",
-            label: "Language",
+            label: t("libraryPage.columns.language"),
             value: item => item.language,
             // the same film can be here twice, once per language, and then this column
             // is the only thing telling the two rows apart
@@ -243,7 +252,7 @@ export function LibraryTable() {
         },
         {
             key: "watchers",
-            label: "Requested by",
+            label: t("libraryPage.columns.watchers"),
             value: item => item.watchers.join(", ").toLowerCase(),
             // the file is the household's, the wanting was not: this is the only place
             // that still says whose download it was, once the watchlist rows are gone
@@ -258,7 +267,7 @@ export function LibraryTable() {
         },
         {
             key: "size",
-            label: "Size",
+            label: t("libraryPage.columns.size"),
             value: item => item.sizeBytes ?? 0,
             render: item => (
                 <span className="text-xs whitespace-nowrap text-muted-foreground">
@@ -268,13 +277,13 @@ export function LibraryTable() {
         },
         {
             key: "status",
-            label: "Status",
+            label: t("libraryPage.columns.status"),
             value: item => item.status,
             render: item => (
                 <div className="min-w-[8rem]">
                     {item.status === "AVAILABLE"
-                        ? <Badge>Ready to watch</Badge>
-                        : <Badge variant="secondary">Downloading</Badge>}
+                        ? <Badge>{ t("libraryPage.ready") }</Badge>
+                        : <Badge variant="secondary">{ t("libraryPage.downloading") }</Badge>}
 
                     {item.download && item.status === "DOWNLOADING" && <>
                         <div className="my-1 h-1 w-24 overflow-hidden rounded-full bg-muted">
@@ -287,28 +296,28 @@ export function LibraryTable() {
                         <div className="text-xs text-muted-foreground">
                             { [
                                 `${ Math.round(item.download.progress * 100) }%`,
-                                speed(item.download.downloadSpeed),
-                                remaining(item.download.eta)
+                                speed(item.download.downloadSpeed, t),
+                                remaining(item.download.eta, t)
                             ].filter(Boolean).join(" · ") }
                         </div>
                     </>}
 
                     {item.status === "DOWNLOADING" && ! item.download && (
-                        <div className="text-xs text-muted-foreground">not in the client</div>
+                        <div className="text-xs text-muted-foreground">{ t("libraryPage.notInClient") }</div>
                     )}
                 </div>
             )
         },
         {
             key: "seed",
-            label: "Seeding",
+            label: t("libraryPage.columns.seed"),
             value: item => item.seedUntil || "",
             render: item => {
                 if (item.status !== "AVAILABLE") {
                     return <span className="text-muted-foreground">—</span>;
                 }
 
-                const left = seedText(item.seedUntil);
+                const left = seedText(item.seedUntil, t);
 
                 return (
                     <div className="min-w-[7rem]">
@@ -316,15 +325,15 @@ export function LibraryTable() {
                             className={classNames("flex items-center gap-1", { "text-muted-foreground": ! left })}
                             // it is qBittorrent's own seeding time, so this moves out again
                             // while the torrent is paused rather than counting down anyway
-                            title="Counted from qBittorrent's own seeding time — a paused torrent is not serving it."
+                            title={t("libraryPage.seedTooltip")}
                         >
                             {left && <Clock className="size-3" />}
-                            { left || "free to delete" }
+                            { left || t("libraryPage.freeToDelete") }
                         </div>
 
                         {item.deleteRequested && (
                             <div className="text-xs text-destructive">
-                                { left ? "goes when the time is up" : "deleting..." }
+                                { left ? t("libraryPage.goesWhenUp") : t("libraryPage.deletingNow") }
                             </div>
                         )}
 
@@ -333,9 +342,9 @@ export function LibraryTable() {
                         {! item.deleteRequested && item.expiresAt && (
                             <div
                                 className="text-xs text-muted-foreground"
-                                title="The retention time under Settings / Library. The files go with it."
+                                title={t("libraryPage.retentionTooltip")}
                             >
-                                { untilText(item.expiresAt) ? `deleted in ${ untilText(item.expiresAt) }` : "deleted any moment now" }
+                                { untilText(item.expiresAt, t) ? t("libraryPage.deletedIn", { time: untilText(item.expiresAt, t) }) : t("libraryPage.deletedNow") }
                             </div>
                         )}
                     </div>
@@ -344,9 +353,9 @@ export function LibraryTable() {
         },
         {
             key: "startedAt",
-            label: "Added",
+            label: t("libraryPage.columns.added"),
             value: item => item.startedAt,
-            render: item => <span className="text-muted-foreground">{ ago(item.startedAt) }</span>
+            render: item => <span className="text-muted-foreground">{ ago(item.startedAt, t) }</span>
         },
         {
             key: "actions",
@@ -355,13 +364,13 @@ export function LibraryTable() {
             // deleting is the one action here that cannot be undone, and the files
             // belong to everybody — so it is an administrator's
             render: item => ! isAdmin
-                ? (item.deleteRequested ? <span className="text-xs text-muted-foreground">marked</span> : null)
+                ? (item.deleteRequested ? <span className="text-xs text-muted-foreground">{ t("libraryPage.marked") }</span> : null)
                 : (item.deleteRequested
                 ? <Button
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title="Keep it after all"
+                    title={t("libraryPage.keepTitle")}
                     onClick={() => mark(item, false)}
                 >
                     <Undo2 />
@@ -370,7 +379,7 @@ export function LibraryTable() {
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title={item.seeding ? "Still seeding — mark it for deletion" : "Delete"}
+                    title={item.seeding ? t("libraryPage.markTitle") : t("libraryPage.deleteTitle")}
                     onClick={() => setDeleting(item)}
                 >
                     <Trash2 />
@@ -400,12 +409,8 @@ export function LibraryTable() {
     return (
         <div className="p-4">
             <div className="space-y-1">
-                <h2 className="text-2xl font-semibold tracking-tight">Library</h2>
-                <p className="text-sm text-muted-foreground">
-                    Everything the house has and everything on its way. A finished download seeds for a while
-                    before it can be deleted, and then goes on its own — with its files — once the retention
-                    time under Settings / Library is up.
-                </p>
+                <h2 className="text-2xl font-semibold tracking-tight">{ t("libraryPage.title") }</h2>
+                <p className="text-sm text-muted-foreground">{ t("libraryPage.intro") }</p>
             </div>
 
             <Separator className="my-5" />
@@ -419,7 +424,7 @@ export function LibraryTable() {
                         className="cursor-pointer"
                         onClick={() => setFilter(option.value)}
                     >
-                        { option.label }
+                        { t(option.label) }
                     </Button>
                 ))}
             </div>
@@ -428,9 +433,9 @@ export function LibraryTable() {
                 {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
             </div>}
 
-            {items && sorted.length === 0 && <p className="text-sm text-muted-foreground">
-                Nothing here yet — whatever the app downloads shows up in this list.
-            </p>}
+            {items && sorted.length === 0 && (
+                <p className="text-sm text-muted-foreground">{ t("libraryPage.empty") }</p>
+            )}
 
             {items && sorted.length > 0 && <Table>
                 <TableHeader>
@@ -472,19 +477,21 @@ export function LibraryTable() {
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>
-                            { deleting?.seeding ? "Mark for deletion" : "Delete" } { deleting ? name(deleting) : "this" }?
+                            { t(deleting?.seeding ? "libraryPage.markQuestion" : "libraryPage.deleteQuestion", {
+                                name: deleting ? name(deleting) : t("libraryPage.thisOne")
+                            }) }
                         </DialogTitle>
 
                         <DialogDescription>
                             {deleting?.seeding
-                                ? `This is still seeding for another ${ seedText(deleting.seedUntil) }. It stays until then and goes by itself the moment the time is up.`
-                                : "The torrent is removed from qBittorrent either way, and it will not be downloaded again. Do you want to keep the files on disk?"}
+                                ? t("libraryPage.seedingNote", { time: seedText(deleting.seedUntil, t) })
+                                : t("libraryPage.deleteNote")}
                         </DialogDescription>
                     </DialogHeader>
 
                     <DialogFooter>
                         <Button variant="outline" className="cursor-pointer" onClick={() => setDeleting(null)}>
-                            Cancel
+                            { t("common.cancel") }
                         </Button>
 
                         <Button
@@ -492,7 +499,7 @@ export function LibraryTable() {
                             className="cursor-pointer"
                             onClick={() => deleting?.seeding ? mark(deleting, true, false) : destroy(deleting!, false)}
                         >
-                            Keep the files
+                            { t("libraryPage.keepFiles") }
                         </Button>
 
                         <Button
@@ -500,7 +507,7 @@ export function LibraryTable() {
                             className="cursor-pointer"
                             onClick={() => deleting?.seeding ? mark(deleting, true, true) : destroy(deleting!, true)}
                         >
-                            <Trash2 /> Delete the files too
+                            <Trash2 /> { t("libraryPage.deleteFiles") }
                         </Button>
                     </DialogFooter>
                 </DialogContent>

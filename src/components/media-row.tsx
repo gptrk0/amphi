@@ -6,6 +6,7 @@ import { ChevronRight } from "lucide-react";
 import { MediaCard } from "@/components/media-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { Media } from "@/types/media";
 
 type Props = {
@@ -16,6 +17,8 @@ type Props = {
 };
 
 export function MediaRow({ title, description, href, items }: Props) {
+    const { t } = useLocale();
+
     // an empty row would be a header with nothing under it
     if (items && items.length === 0) {
         return null;
@@ -31,7 +34,7 @@ export function MediaRow({ title, description, href, items }: Props) {
 
                 {href && (
                     <Link href={href} className="flex shrink-0 items-center text-sm text-muted-foreground hover:text-foreground">
-                        See more <ChevronRight className="size-4" />
+                        { t("discover.seeMore") } <ChevronRight className="size-4" />
                     </Link>
                 )}
             </div>

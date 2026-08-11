@@ -5,6 +5,8 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import classNames from "classnames";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { useLocale } from "@/context/locale";
+import { MessageKey, Translate } from "@/i18n";
 import { SeasonInfo } from "@/types/media";
 import { WatchlistItem, WatchStatus } from "@/types/watchlist";
 
@@ -22,19 +24,19 @@ type Props = {
 
 export const episodeKey = (seasonNumber: number, episodeNumber: number) => `${ seasonNumber }:${ episodeNumber }`;
 
-const STATUS_TEXT: Record<WatchStatus, string> = {
-    PENDING: "",
-    SEARCHING: "waiting for release",
-    DOWNLOADING: "downloading",
-    DOWNLOADED: "downloaded",
-    FAILED: "not found"
+// PENDING says nothing worth saying next to an episode: it is on the list and that is
+// what the tick already shows
+const statusText = (status: WatchStatus, t: Translate) => {
+    return status === "PENDING" ? "" : t(`seasonPicker.status.${ status }` as MessageKey);
 };
 
 const aired = (airDate: string | null) => !! airDate && new Date(airDate).getTime() <= Date.now();
 
-const shortDate = (airDate: string | null) => airDate ? airDate.slice(0, 10) : "no date yet";
-
 export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: Props) {
+    const { t } = useLocale();
+
+    const shortDate = (airDate: string | null) => airDate ? airDate.slice(0, 10) : t("seasonPicker.noDate");
+
     // null until the user opens or closes something; the watchlist decides until then
     const [ expanded, setExpanded ] = useState<number[] | null>(null);
 
@@ -99,10 +101,10 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
                                 <span className="text-sm">
                                     <span className="font-medium">{ season.name }</span>
                                     <span className="text-muted-foreground">
-                                        { " — " }{ season.episode_count } episodes
+                                        { " — " }{ t("seasonPicker.episodes", { n: season.episode_count }) }
                                         { season.air_date ? ` (${ season.air_date.split("-")[0] })` : "" }
-                                        { picked.length > 0 ? ` — ${ picked.length } watched` : "" }
-                                        { downloaded > 0 ? ` — ${ downloaded } downloaded` : "" }
+                                        { picked.length > 0 ? ` — ${ t("seasonPicker.watched", { n: picked.length }) }` : "" }
+                                        { downloaded > 0 ? ` — ${ t("seasonPicker.downloaded", { n: downloaded }) }` : "" }
                                     </span>
                                 </span>
                             </button>
@@ -132,7 +134,7 @@ export function SeasonPicker({ seasons, item, monitored, onToggle, disabled }: P
                                             { episode.name }
                                             <span className="text-muted-foreground">
                                                 { ` — ${ shortDate(episode.air_date) }` }
-                                                { status && STATUS_TEXT[status] ? ` — ${ STATUS_TEXT[status] }` : "" }
+                                                { status && statusText(status, t) ? ` — ${ statusText(status, t) }` : "" }
                                             </span>
                                         </span>
                                     </label>

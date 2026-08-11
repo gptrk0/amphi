@@ -5,6 +5,7 @@ import axios from "axios";
 
 import { MediaCard } from "@/components/media-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { cached, remember } from "@/lib/browse-cache";
 import { Media } from "@/types/media";
 
@@ -25,6 +26,7 @@ type Shown = { items: Media[], page: number, totalPages: number };
  * the page is meaningless without them, and refetching page one would throw them away.
  */
 export function MediaGrid({ type, category, genre }: Props) {
+    const { t } = useLocale();
     const cacheKey = `grid:${ type }:${ category }:${ genre || "" }`;
     const was = cached<Shown>(cacheKey);
 
@@ -105,7 +107,7 @@ export function MediaGrid({ type, category, genre }: Props) {
     }, [ loading, page, totalPages ]);
 
     if (items && items.length === 0) {
-        return <p className="pt-5 text-sm text-muted-foreground">Nothing to show here.</p>;
+        return <p className="pt-5 text-sm text-muted-foreground">{ t("discover.empty") }</p>;
     }
 
     return (

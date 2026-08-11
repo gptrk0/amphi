@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import axios from "axios";
 import { toast } from "sonner";
 
+import { useLocale } from "@/context/locale";
 import { WatchlistEntry } from "@/types/watchlist";
 
 type WatchlistContextValue = {
@@ -33,6 +34,7 @@ export const WatchlistContext = createContext<WatchlistContextValue>({
 export const useWatchlist = () => useContext(WatchlistContext);
 
 export function WatchlistProvider({ children }: { children: React.ReactNode }) {
+    const { t } = useLocale();
     const [ entries, setEntries ] = useState<WatchlistEntry[]>([]);
     const [ isLoading, setLoading ] = useState(true);
     const [ revision, setRevision ] = useState(0);
@@ -85,15 +87,17 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
                 }
             ]);
 
-            toast(res.data.message || `${ name || "Media" } added to your watchlist!`);
+            // the client's own words rather than the api's: it knows what it just asked
+            // for, and a message assembled on the server would arrive in one language
+            toast(t("watchlistToast.added", { name: name || t("watchlistToast.media") }));
             touch();
 
         } catch(err) {
             console.error(err);
 
-            toast(`Could not add ${ name || "media" } to your watchlist.`);
+            toast(t("watchlistToast.addFailed", { name: name || t("watchlistToast.mediaLower") }));
         }
-    }, [ touch ]);
+    }, [ touch, t ]);
 
     /**
      * Stop watching, which is not the same as deleting: what is already downloaded
@@ -112,18 +116,18 @@ export function WatchlistProvider({ children }: { children: React.ReactNode }) {
         try {
             await axios.delete(`/api/watchlist/${ entry.id }`);
 
-            toast(`${ name || "Media" } is no longer watched.`);
+            toast(t("watchlistToast.removed", { name: name || t("watchlistToast.media") }));
 
         } catch(err) {
             console.error(err);
 
-            toast(`Could not stop watching ${ name || "media" }.`);
+            toast(t("watchlistToast.removeFailed", { name: name || t("watchlistToast.mediaLower") }));
 
         } finally {
             await refresh();
             touch();
         }
-    }, [ entries, refresh, touch ]);
+    }, [ entries, refresh, touch, t ]);
 
     // a fresh object here would re-render every consumer on every render of this
     // provider, and a media grid is over a hundred of them

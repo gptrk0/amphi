@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { AuthState } from "@/types/user";
 
 const teko = Teko({ subsets: [ 'latin' ] });
@@ -23,6 +24,7 @@ const safeNext = (value: string | null) => {
 function LoginForm() {
     const router = useRouter();
     const params = useSearchParams();
+    const { t } = useLocale();
     const next = safeNext(params.get("next"));
 
     const [ state, setState ] = useState<AuthState>();
@@ -54,9 +56,9 @@ function LoginForm() {
             })
             .catch(err => {
                 console.error(err);
-                setError("The server did not answer.");
+                setError(t("auth.serverSilent"));
             });
-    }, [ router, next ])
+    }, [ router, next, t ])
 
     const submit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -73,7 +75,7 @@ function LoginForm() {
         } catch(err) {
             const message = axios.isAxiosError(err) ? err.response?.data?.message : null;
 
-            setError(message || "Signing in failed.");
+            setError(message || t("auth.signInFailed"));
             setBusy(false);
         }
     };
@@ -91,14 +93,14 @@ function LoginForm() {
                     onClick={() => { window.location.href = `/api/auth/oidc/start?next=${ encodeURIComponent(next) }`; }}
                 >
                     <KeyRound />
-                    Continue with single sign-on
+                    { t("auth.sso") }
                 </Button>
             )}
 
             {state.oidc.enabled && state.passwordLogin && (
                 <div className="flex items-center gap-3">
                     <Separator className="flex-1" />
-                    <span className="text-xs text-muted-foreground">or</span>
+                    <span className="text-xs text-muted-foreground">{ t("auth.or") }</span>
                     <Separator className="flex-1" />
                 </div>
             )}
@@ -108,7 +110,7 @@ function LoginForm() {
                     <Input
                         type="email"
                         autoComplete="username"
-                        placeholder="you@example.com"
+                        placeholder={t("auth.email")}
                         value={email}
                         onChange={event => setEmail(event.target.value)}
                         autoFocus
@@ -117,7 +119,7 @@ function LoginForm() {
                     <Input
                         type="password"
                         autoComplete="current-password"
-                        placeholder="Password"
+                        placeholder={t("auth.password")}
                         value={password}
                         onChange={event => setPassword(event.target.value)}
                     />
@@ -125,14 +127,14 @@ function LoginForm() {
                     <Button type="submit" className="w-full cursor-pointer" disabled={isBusy}>
                         <Loader2 className={classNames("animate-spin", { "hidden": ! isBusy })} />
                         <LogIn className={classNames({ "hidden": isBusy })} />
-                        Sign in
+                        { t("auth.signIn") }
                     </Button>
                 </form>
             )}
 
             {! state.passwordLogin && ! state.oidc.enabled && (
                 <p className="text-sm text-muted-foreground">
-                    There is no way to sign in configured. Somebody with access to the database has to fix that.
+                    { t("auth.noWayIn") }
                 </p>
             )}
 

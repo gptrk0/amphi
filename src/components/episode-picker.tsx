@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { episodeKey, SeasonPicker } from "@/components/season-picker";
 import { SeasonSelection } from "@/context/download";
+import { useLocale } from "@/context/locale";
 import { SeasonInfo } from "@/types/media";
 import { WatchlistItem } from "@/types/watchlist";
 
@@ -60,6 +61,7 @@ const watchedKeys = (item?: WatchlistItem) => {
 };
 
 export function EpisodePicker({ open, name, seasons, item, onCancel, onConfirm }: Props) {
+    const { t } = useLocale();
     const [ picked, setPicked ] = useState<Set<string>>(new Set());
 
     // the watchlist is the starting point, and it arrives after the dialog does
@@ -109,12 +111,9 @@ export function EpisodePicker({ open, name, seasons, item, onCancel, onConfirm }
         <Dialog open={open} onOpenChange={(next) => { if (! next) { onCancel(); } }}>
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
-                    <DialogTitle>What to download from { name }?</DialogTitle>
+                    <DialogTitle>{ t("download.episodes.title", { name }) }</DialogTitle>
 
-                    <DialogDescription>
-                        Tick the episodes, then the releases are searched for exactly those. Nothing here
-                        touches your watchlist — what is already on it starts off ticked.
-                    </DialogDescription>
+                    <DialogDescription>{ t("download.episodes.description") }</DialogDescription>
                 </DialogHeader>
 
                 {! seasons && <div className="space-y-2">
@@ -122,10 +121,7 @@ export function EpisodePicker({ open, name, seasons, item, onCancel, onConfirm }
                 </div>}
 
                 {seasons && seasons.length === 0 && (
-                    <p className="text-muted-foreground text-sm">
-                        TMDB lists no episodes for this yet, so there is nothing to pick — it will be
-                        searched for as soon as one is announced if you put it on your watchlist.
-                    </p>
+                    <p className="text-muted-foreground text-sm">{ t("download.episodes.empty") }</p>
                 )}
 
                 {seasons && seasons.length > 0 && (
@@ -139,7 +135,7 @@ export function EpisodePicker({ open, name, seasons, item, onCancel, onConfirm }
 
                 <DialogFooter>
                     <Button variant="outline" className="cursor-pointer" onClick={onCancel}>
-                        Cancel
+                        { t("common.cancel") }
                     </Button>
 
                     <Button
@@ -151,7 +147,9 @@ export function EpisodePicker({ open, name, seasons, item, onCancel, onConfirm }
                         })))}
                     >
                         <Download />
-                        { count === 0 ? "Pick an episode" : `Search for ${ count } episode${ count === 1 ? "" : "s" }` }
+                        { count === 0
+                            ? t("download.episodes.pick")
+                            : t(count === 1 ? "download.episodes.searchOne" : "download.episodes.search", { n: count }) }
                     </Button>
                 </DialogFooter>
             </DialogContent>

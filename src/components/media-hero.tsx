@@ -8,11 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWatchlist } from "@/context/watchlist";
 import { useDownload } from "@/context/download";
+import { useLocale } from "@/context/locale";
 import { Media } from "@/types/media";
 
 export function MediaHero({ media }: { media: Media }) {
     const { getEntry, add, remove } = useWatchlist();
     const { startDownload } = useDownload();
+    const { t } = useLocale();
     const entry = getEntry(media.type, media.id);
     const details = `/details/${ media.type }/${ media.id }`;
 
@@ -31,7 +33,7 @@ export function MediaHero({ media }: { media: Media }) {
 
             <div className="absolute inset-x-0 bottom-0 space-y-3 p-6 md:max-w-2xl md:p-8">
                 <div className="flex items-center gap-2">
-                    <Badge>{ media.type }</Badge>
+                    <Badge>{ t(media.type === "movie" ? "details.movie" : "details.series") }</Badge>
                     {media.date && <span className="text-sm text-muted-foreground">{ media.date.split("-")[0] }</span>}
                 </div>
 
@@ -43,22 +45,22 @@ export function MediaHero({ media }: { media: Media }) {
                     {/* series need their seasons picked first, so they go to the detail page */}
                     {media.type === "movie"
                         ? <Button onClick={() => startDownload({ type: media.type, tmdbId: media.id, name: media.name })}>
-                            <Download /> Download
+                            <Download /> { t("discover.hero.download") }
                         </Button>
                         : <Button asChild>
-                            <Link href={details}><Download /> Download</Link>
+                            <Link href={details}><Download /> { t("discover.hero.download") }</Link>
                         </Button>}
 
                     {entry
                         ? <Button variant="secondary" onClick={() => remove(media.type, media.id, media.name)}>
-                            <BookmarkX /> Remove
+                            <BookmarkX /> { t("discover.hero.remove") }
                         </Button>
                         : <Button variant="secondary" onClick={() => add(media.type, media.id, media.name)}>
-                            <Bookmark /> Watchlist
+                            <Bookmark /> { t("discover.hero.watchlist") }
                         </Button>}
 
                     <Button variant="ghost" asChild>
-                        <Link href={details}><Info /> Details</Link>
+                        <Link href={details}><Info /> { t("discover.hero.details") }</Link>
                     </Button>
                 </div>
             </div>

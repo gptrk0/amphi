@@ -16,6 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { TagInput } from "@/components/tag-input";
 import { AdminOnly } from "@/components/admin-only";
+import { useLocale } from "@/context/locale";
+import { MessageKey } from "@/i18n";
+import { settingGroup, settingHelp, settingLabel, settingPlaceholder } from "@/lib/setting-labels";
 
 type SettingItem = {
     key: string;
@@ -41,29 +44,35 @@ type SettingItem = {
 // cannot be one — see the note on `state` in the api route
 type OidcInfo = { callbackUrl: string, fromPublicUrl: boolean };
 
-const SOURCE: Record<SettingItem["source"], { text: string, variant: "default" | "secondary" | "outline" }> = {
-    database: { text: "edited", variant: "default" },
-    default: { text: "default", variant: "secondary" },
-    unset: { text: "not set", variant: "outline" }
+const SOURCE: Record<SettingItem["source"], { text: MessageKey, variant: "default" | "secondary" | "outline" }> = {
+    database: { text: "settingsPage.source.database", variant: "default" },
+    default: { text: "settingsPage.source.default", variant: "secondary" },
+    unset: { text: "settingsPage.source.unset", variant: "outline" }
 };
 
 const isOn = (value: string) => value.trim() === "1" || value.trim().toLowerCase() === "true";
 
 const slug = (group: string) => group.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-// a size table entry is `resolution:gb`, and half an entry silently drops out of the
-// parsed table instead of failing
-const tableEntry = (tag: string) => {
-    const [ name, size, ...rest ] = tag.split(":");
-
-    if (! name || ! size || rest.length > 0 || ! Number.isFinite(Number(size))) {
-        return "Write it as 1080p:2 — a resolution and its size in GB.";
-    }
-
-    return null;
-};
-
 function SettingsPage() {
+    const { locale, t, tOr } = useLocale();
+
+    // a size table entry is `resolution:gb`, and half an entry silently drops out of the
+    // parsed table instead of failing. Inside the component, because what it says back is
+    // a sentence and sentences have a language
+    const tableEntry = (tag: string) => {
+        const [ name, size, ...rest ] = tag.split(":");
+
+        if (! name || ! size || rest.length > 0 || ! Number.isFinite(Number(size))) {
+            return t("settingsPage.tableHint");
+        }
+
+        return null;
+    };
+
+    /** What this setting is called and what it says about itself, in the reader's language. */
+    const label = (item: SettingItem) => settingLabel(locale, item.key, item.label);
+    const help = (item: SettingItem) => settingHelp(locale, item.key, item.help);
     const [ items, setItems ] = useState<SettingItem[]>();
     const [ oidc, setOidc ] = useState<OidcInfo>();
     const [ values, setValues ] = useState<Record<string, string>>({});
@@ -81,10 +90,10 @@ function SettingsPage() {
     const copy = async (value: string) => {
         try {
             await navigator.clipboard.writeText(value);
-            toast("Copied.");
+            toast(t("settingsPage.callback.copied"));
 
         } catch {
-            toast("The browser would not let this page copy — select the address by hand.");
+            toast(t("settingsPage.callback.copyFailed"));
         }
     };
 
@@ -96,9 +105,9 @@ function SettingsPage() {
             .then(res => load(res.data))
             .catch(err => {
                 console.error(err);
-                toast("Could not read the settings.");
+                toast(t("settingsPage.readFailed"));
             });
-    }, []);
+    }, [ t ]);
 
     // only what actually changed is sent, secrets included: the field holds the real
     // value now, so an untouched one compares equal and never reaches the api
@@ -129,11 +138,11 @@ function SettingsPage() {
             const res = await axios.put("/api/settings", { values: dirty });
 
             load(res.data);
-            toast(`${ res.data.changed } setting${ res.data.changed === 1 ? "" : "s" } saved.`);
+            toast(t(res.data.changed === 1 ? "settingsPage.savedOne" : "settingsPage.saved", { n: res.data.changed }));
 
         } catch(err) {
             console.error(err);
-            toast(axios.isAxiosError(err) && err.response?.data?.message || "Could not save the settings.");
+            toast(axios.isAxiosError(err) && err.response?.data?.message || t("settingsPage.saveFailed"));
 
         } finally {
             setSaving(false);
@@ -145,7 +154,7 @@ function SettingsPage() {
         // for a key with a default this is harmless. For one without — an api key, a
         // password, a url — there is nothing to fall back to and nothing to undo it with,
         // so a misclick would cost the value itself. That happened once already.
-        if (! item.hasDefault && ! window.confirm(`Clear ${ item.label }? It has no default to fall back on, so you will have to type it in again.`)) {
+        if (! item.hasDefault && ! window.confirm(t("settingsPage.clearConfirm", { label: label(item) }))) {
             return;
         }
 
@@ -153,11 +162,11 @@ function SettingsPage() {
             const res = await axios.delete("/api/settings", { params: { key: item.key } });
 
             load(res.data);
-            toast(item.hasDefault ? `${ item.label } is back to its default.` : `${ item.label } is cleared.`);
+            toast(t(item.hasDefault ? "settingsPage.backToDefault" : "settingsPage.cleared", { label: label(item) }));
 
         } catch(err) {
             console.error(err);
-            toast("Could not clear the setting.");
+            toast(t("settingsPage.clearFailed"));
         }
     };
 
@@ -184,7 +193,7 @@ function SettingsPage() {
                         checked={isOn(value)}
                         onCheckedChange={(checked) => set(checked ? "1" : "0")}
                     />
-                    <span className="text-sm text-muted-foreground">{ isOn(value) ? "on" : "off" }</span>
+                    <span className="text-sm text-muted-foreground">{ t(isOn(value) ? "settingsPage.on" : "settingsPage.off") }</span>
                 </div>
             );
         }
@@ -201,7 +210,7 @@ function SettingsPage() {
                     value={value}
                     onChange={set}
                     ordered={item.ordered}
-                    placeholder={item.placeholder}
+                    placeholder={settingPlaceholder(locale, item.key, item.placeholder)}
                     validate={item.type === "table" ? tableEntry : undefined}
                 />
             );
@@ -212,7 +221,7 @@ function SettingsPage() {
                 type="text"
                 inputMode={item.type === "number" ? "numeric" : undefined}
                 value={value}
-                placeholder={item.placeholder}
+                placeholder={settingPlaceholder(locale, item.key, item.placeholder)}
                 autoComplete="off"
                 onChange={(e) => set(e.target.value)}
             />
@@ -225,19 +234,16 @@ function SettingsPage() {
         <div className="p-4 md:p-8">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">Settings</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight">{ t("settingsPage.title") }</h2>
                     <p className="max-w-2xl text-sm text-muted-foreground">
-                        Everything the app reads lives here — the environment is only used to find the
-                        database. A field you have not touched follows its default and is not stored;
-                        clearing one hands it back. Changes take effect on the next search or scan
-                        round, without a restart.
+                        { t("settingsPage.intro") }
                     </p>
                 </div>
 
                 <Button className="shrink-0 cursor-pointer" onClick={save} disabled={isSaving || dirtyCount === 0}>
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isSaving })} />
                     <Save className={classNames({ "hidden": isSaving })} />
-                    { dirtyCount > 0 ? `Save ${ dirtyCount } change${ dirtyCount === 1 ? "" : "s" }` : "Save" }
+                    { dirtyCount === 0 ? t("settingsPage.save") : t(dirtyCount === 1 ? "settingsPage.saveOne" : "settingsPage.saveCount", { n: dirtyCount }) }
                 </Button>
             </div>
 
@@ -253,7 +259,7 @@ function SettingsPage() {
                 <TabsList className="h-auto flex-wrap justify-start">
                     {groups.map(group => (
                         <TabsTrigger key={group} value={group} className="cursor-pointer">
-                            { group }
+                            { settingGroup(group, tOr) }
 
                             {dirtyGroups.has(group) && <span className="bg-primary size-1.5 rounded-full" />}
                         </TabsTrigger>
@@ -265,10 +271,10 @@ function SettingsPage() {
                         {group === "Access" && oidc && (
                             <div className="mt-4 space-y-2 rounded-md border bg-muted/40 p-4">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-sm font-medium">Callback address for the provider</span>
+                                    <span className="text-sm font-medium">{ t("settingsPage.callback.label") }</span>
 
                                     <Badge variant={oidc.fromPublicUrl ? "default" : "secondary"}>
-                                        { oidc.fromPublicUrl ? "from the public address below" : "read from this page's own address" }
+                                        { t(oidc.fromPublicUrl ? "settingsPage.callback.fromPublic" : "settingsPage.callback.fromRequest") }
                                     </Badge>
                                 </div>
 
@@ -284,16 +290,13 @@ function SettingsPage() {
                                         onClick={() => copy(oidc.callbackUrl)}
                                     >
                                         <Copy />
-                                        Copy
+                                        { t("settingsPage.callback.copy") }
                                     </Button>
                                 </div>
 
                                 <p className="text-xs text-muted-foreground">
-                                    Allow this at the provider exactly as it stands — Authentik and Keycloak call it
-                                    a redirect URI, Google an authorised redirect URI. A provider that has not been
-                                    told about it refuses the sign-in on its own page, before this app hears anything
-                                    about it.
-                                    {! oidc.fromPublicUrl && " Right now it is guessed from the address you opened this page on. Behind a proxy that rewrites the host, fill in the public address below and this follows it."}
+                                    { t("settingsPage.callback.note") }
+                                    {! oidc.fromPublicUrl && t("settingsPage.callback.guessed")}
                                 </p>
                             </div>
                         )}
@@ -306,11 +309,11 @@ function SettingsPage() {
                                 >
                                     <div className="min-w-0 space-y-1">
                                         <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-sm font-medium">{ item.label }</span>
-                                            <Badge variant={SOURCE[item.source].variant}>{ SOURCE[item.source].text }</Badge>
+                                            <span className="text-sm font-medium">{ label(item) }</span>
+                                            <Badge variant={SOURCE[item.source].variant}>{ t(SOURCE[item.source].text) }</Badge>
                                         </div>
 
-                                        {item.help && <p className="text-xs text-muted-foreground">{ item.help }</p>}
+                                        {help(item) && <p className="text-xs text-muted-foreground">{ help(item) }</p>}
 
                                         <code className="text-[11px] text-muted-foreground">{ item.key }</code>
                                     </div>
@@ -323,8 +326,8 @@ function SettingsPage() {
                                             size="sm"
                                             className="cursor-pointer"
                                             title={item.hasDefault
-                                                ? `Back to the default${ item.default ? `: ${ item.default }` : "" }`
-                                                : `Clear ${ item.label } — there is no default to fall back on`}
+                                                ? (item.default ? t("settingsPage.resetTitleValue", { value: item.default }) : t("settingsPage.resetTitle"))
+                                                : t("settingsPage.clearTitle", { label: label(item) })}
                                             onClick={() => reset(item)}
                                         >
                                             { item.hasDefault ? <RotateCcw /> : <Trash2 className="text-destructive" /> }
@@ -341,8 +344,10 @@ function SettingsPage() {
 }
 
 export default function Page() {
+    const { t } = useLocale();
+
     return (
-        <AdminOnly title="Settings">
+        <AdminOnly title={t("settingsPage.title")}>
             <SettingsPage />
         </AdminOnly>
     );

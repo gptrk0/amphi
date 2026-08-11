@@ -10,6 +10,7 @@ import classNames from "classnames";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { AuthState } from "@/types/user";
 
 const teko = Teko({ subsets: [ 'latin' ] });
@@ -21,6 +22,7 @@ const teko = Teko({ subsets: [ 'latin' ] });
  */
 export default function Page() {
     const router = useRouter();
+    const { t } = useLocale();
 
     const [ ready, setReady ] = useState(false);
     const [ email, setEmail ] = useState("");
@@ -50,7 +52,7 @@ export default function Page() {
         event.preventDefault();
 
         if (password !== again) {
-            setError("The two passwords are not the same.");
+            setError(t("auth.mismatch"));
 
             return;
         }
@@ -66,7 +68,7 @@ export default function Page() {
         } catch(err) {
             const message = axios.isAxiosError(err) ? err.response?.data?.message : null;
 
-            setError(message || "Could not create the account.");
+            setError(message || t("auth.createFailed"));
             setBusy(false);
         }
     };
@@ -78,7 +80,7 @@ export default function Page() {
                     <span className={classNames(teko.className, "text-6xl")}>aioseerr</span>
 
                     <p className="text-sm text-muted-foreground">
-                        Nobody has an account here yet. The first one is the administrator.
+                        { t("auth.setupIntro") }
                     </p>
                 </div>
 
@@ -88,14 +90,14 @@ export default function Page() {
                     <Input
                         type="email"
                         autoComplete="username"
-                        placeholder="you@example.com"
+                        placeholder={t("auth.email")}
                         value={email}
                         onChange={event => setEmail(event.target.value)}
                         autoFocus
                     />
 
                     <Input
-                        placeholder="Your name"
+                        placeholder={t("auth.yourName")}
                         value={name}
                         onChange={event => setName(event.target.value)}
                     />
@@ -103,7 +105,7 @@ export default function Page() {
                     <Input
                         type="password"
                         autoComplete="new-password"
-                        placeholder="Password, at least 8 characters"
+                        placeholder={t("auth.newPassword")}
                         value={password}
                         onChange={event => setPassword(event.target.value)}
                     />
@@ -111,7 +113,7 @@ export default function Page() {
                     <Input
                         type="password"
                         autoComplete="new-password"
-                        placeholder="The same again"
+                        placeholder={t("auth.again")}
                         value={again}
                         onChange={event => setAgain(event.target.value)}
                     />
@@ -119,7 +121,7 @@ export default function Page() {
                     <Button type="submit" className="w-full cursor-pointer" disabled={isBusy || ! email || ! name.trim()}>
                         <Loader2 className={classNames("animate-spin", { "hidden": ! isBusy })} />
                         <ShieldCheck className={classNames({ "hidden": isBusy })} />
-                        Create the administrator
+                        { t("auth.createAdmin") }
                     </Button>
 
                     {error && <p className="text-sm text-destructive">{ error }</p>}

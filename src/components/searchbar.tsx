@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
 import { Input } from "./ui/input"
+import { useLocale } from "@/context/locale"
 
 const SEARCH_PATH = "/search";
 const DEBOUNCE_MS = 350;
@@ -20,6 +21,7 @@ const currentQuery = () => {
 export function SearchBar(props: React.ComponentProps<"div">) {
     const router = useRouter();
     const pathname = usePathname();
+    const { t } = useLocale();
     const inputRef = useRef<HTMLInputElement>(null);
     const [ value, setValue ] = useState("");
 
@@ -75,7 +77,7 @@ export function SearchBar(props: React.ComponentProps<"div">) {
             <Input
                 ref={inputRef}
                 value={value}
-                placeholder="Search for movies and shows..."
+                placeholder={t("header.searchPlaceholder")}
                 className="pl-8"
                 onChange={e => setValue(e.currentTarget.value)}
                 onKeyDown={e => {

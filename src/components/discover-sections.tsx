@@ -9,6 +9,7 @@ import { MediaHero } from "@/components/media-hero";
 import { MediaRow } from "@/components/media-row";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useLocale } from "@/context/locale";
 import { useWatchlist } from "@/context/watchlist";
 import { cached, remember } from "@/lib/browse-cache";
 import { Section } from "@/lib/sections";
@@ -19,21 +20,19 @@ import { Media } from "@/types/media";
  * hero skeleton that never resolves reads as broken. This says what is missing instead.
  */
 function SetupNotice() {
+    const { t } = useLocale();
+
     return (
         <div className="flex min-h-[300px] flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center">
             <KeyRound className="text-muted-foreground size-8" />
 
             <div className="space-y-1">
-                <h2 className="text-xl font-semibold tracking-tight">Add a TMDB API key to get started</h2>
-                <p className="text-muted-foreground max-w-md text-sm">
-                    Every poster, title and release date comes from TMDB, so nothing can be listed
-                    until the key is in. It is free — sign up at themoviedb.org, then paste the key
-                    on the settings page.
-                </p>
+                <h2 className="text-xl font-semibold tracking-tight">{ t("discover.setup.title") }</h2>
+                <p className="text-muted-foreground max-w-md text-sm">{ t("discover.setup.body") }</p>
             </div>
 
             <Button asChild>
-                <Link href="/settings#tmdb">Open settings</Link>
+                <Link href="/settings#tmdb">{ t("discover.setup.open") }</Link>
             </Button>
         </div>
     );
@@ -47,6 +46,7 @@ type Shown = { hero: Media | null, sections: Section[] };
  */
 export function DiscoverSections({ view }: { view: string }) {
     const { revision } = useWatchlist();
+    const { tOr } = useLocale();
     const key = `sections:${ view }`;
     const was = cached<Shown>(key);
 
@@ -107,8 +107,9 @@ export function DiscoverSections({ view }: { view: string }) {
                 {sections?.map(section => (
                     <MediaRow
                         key={section.key}
-                        title={section.title}
-                        description={section.description}
+                        // by the row's key, with what the server sent as the fallback
+                        title={tOr(`discover.sections.${ section.key }.title`, section.title)}
+                        description={tOr(`discover.sections.${ section.key }.description`, section.description)}
                         href={section.href}
                         items={section.items}
                     />

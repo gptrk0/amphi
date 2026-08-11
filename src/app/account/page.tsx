@@ -16,9 +16,10 @@ import { Switch } from "@/components/ui/switch";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { OptionSelect } from "@/components/option-select";
 import { TagInput } from "@/components/tag-input";
+import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
-import { LANGUAGE_OPTIONS } from "@/types/language";
-import { NOTIFY_EVENTS } from "@/types/notify";
+import { useLanguageOptions } from "@/lib/language-labels";
+import { useNotifyOptions } from "@/lib/notify-labels";
 
 type Account = {
     id: number;
@@ -55,6 +56,9 @@ const EXAMPLES = [
  */
 export default function Page() {
     const { refresh } = useSession();
+    const { t } = useLocale();
+    const languageOptions = useLanguageOptions();
+    const notifyOptions = useNotifyOptions();
 
     const [ account, setAccount ] = useState<Account>();
     const [ name, setName ] = useState("");
@@ -106,10 +110,10 @@ export default function Page() {
             load(res.data.account);
             await refresh();
 
-            toast("Saved.");
+            toast(t("account.saved"));
 
         } catch(err) {
-            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || "Could not save that.");
+            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || t("account.saveFailed"));
 
         } finally {
             setSaving(false);
@@ -126,7 +130,7 @@ export default function Page() {
             toast(res.data.message);
 
         } catch(err) {
-            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || "The webhook could not be called.");
+            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || t("account.webhookFailed"));
 
         } finally {
             setTesting(false);
@@ -140,10 +144,10 @@ export default function Page() {
     return (
         <div className="max-w-2xl p-4 md:p-8">
             <div className="space-y-1">
-                <h2 className="text-2xl font-semibold tracking-tight">Your account</h2>
+                <h2 className="text-2xl font-semibold tracking-tight">{ t("account.title") }</h2>
 
                 <p className="text-sm text-muted-foreground">
-                    { account.email } · { account.role === "ADMIN" ? "administrator" : "user" }
+                    { t("account.who", { email: account.email, role: account.role === "ADMIN" ? t("userMenu.administrator") : t("userMenu.user") }) }
                 </p>
             </div>
 
@@ -151,19 +155,17 @@ export default function Page() {
 
             <div className="space-y-6">
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">Name</label>
+                    <label className="text-sm font-medium">{ t("account.name") }</label>
 
                     <Input value={name} onChange={event => setName(event.target.value)} />
 
-                    <p className="text-xs text-muted-foreground">
-                        What the log and the watchlist call you. It cannot be empty.
-                    </p>
+                    <p className="text-xs text-muted-foreground">{ t("account.nameHint") }</p>
                 </div>
 
                 <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                        <label className="text-sm font-medium">Your webhook</label>
-                        {! account.webhookUrl && <Badge variant="outline">off</Badge>}
+                        <label className="text-sm font-medium">{ t("account.webhook") }</label>
+                        {! account.webhookUrl && <Badge variant="outline">{ t("account.webhookOff") }</Badge>}
                     </div>
 
                     <div className="flex gap-2">
@@ -181,17 +183,14 @@ export default function Page() {
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isTesting })} />
                             <Send className={classNames({ "hidden": isTesting })} />
-                            Test
+                            { t("account.test") }
                         </Button>
                     </div>
 
-                    <p className="text-xs text-muted-foreground">
-                        A URL the app calls when something of <b>yours</b> happens — never anybody else&apos;s
-                        downloads. Put <code>{"{message}"}</code> in it and it is fetched with the text filled in;
-                        leave it without one and it is posted to as JSON (<code>content</code>), which is what a
-                        Discord webhook wants. <code>{"{title}"}</code>, <code>{"{detail}"}</code> and{" "}
-                        <code>{"{event}"}</code> are the other placeholders. Empty turns it off.
-                    </p>
+                    {/* the placeholders stay in the sentence rather than being marked up:
+                        one translated string is one thing to keep right, and `{message}`
+                        reads as a placeholder without a `<code>` around it */}
+                    <p className="text-xs text-muted-foreground">{ t("account.webhookHint") }</p>
 
                     <div className="space-y-1 rounded-md border p-3">
                         {EXAMPLES.map(example => (
@@ -202,7 +201,7 @@ export default function Page() {
                                     type="button"
                                     className="cursor-pointer break-all text-left font-mono text-muted-foreground hover:text-foreground"
                                     onClick={() => setWebhook(example.url)}
-                                    title="Use this as a starting point"
+                                    title={t("account.exampleTitle")}
                                 >
                                     { example.url }
                                 </button>
@@ -212,41 +211,29 @@ export default function Page() {
                 </div>
 
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">What to send you</label>
+                    <label className="text-sm font-medium">{ t("account.events") }</label>
 
-                    <OptionCheckboxes value={events} onChange={setEvents} options={NOTIFY_EVENTS} />
+                    <OptionCheckboxes value={events} onChange={setEvents} options={notifyOptions} />
 
-                    <p className="text-xs text-muted-foreground">
-                        Only ever about your own downloads. Nothing ticked sends nothing, and so does an
-                        empty webhook above.
-                    </p>
+                    <p className="text-xs text-muted-foreground">{ t("account.eventsHint") }</p>
                 </div>
 
                 <Separator />
 
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">Languages you want, best first</label>
+                    <label className="text-sm font-medium">{ t("account.languages") }</label>
 
                     <TagInput
                         value={languages}
                         onChange={setLanguages}
                         ordered
-                        options={LANGUAGE_OPTIONS}
-                        noun="language"
-                        placeholder="pick a language"
+                        options={languageOptions}
+                        placeholder={t("account.pickLanguage")}
                     />
 
                     <p className="text-xs text-muted-foreground">
-                        {acceptAny
-                            ? <><b>Any of these will do, the first one for preference.</b> A release in the second
-                                language is taken only when nothing in the first one is there — and once it is
-                                taken, that is your copy of it.</>
-                            : <><b>The first one is the only language downloaded for you on its own.</b> If a release
-                                in it does not exist yet, the title stays on your watchlist and is looked for again —
-                                the rest of the list is only offered when you start a download by hand, and taking
-                                one of those is a question you have to answer.</>}
-                        {" "}Somebody else&apos;s copy in another language does not count as yours: you each get
-                        your own file.
+                        <b>{ t(acceptAny ? "account.languagesHintAny" : "account.languagesHintFirst") }</b>
+                        {" "}{ t("account.languagesHintShared") }
                     </p>
 
                     <div className="flex items-start gap-3 rounded-md border p-3">
@@ -257,34 +244,23 @@ export default function Page() {
                         />
 
                         <div className="space-y-1">
-                            <label className="text-sm font-medium">Any language on this list will do</label>
+                            <label className="text-sm font-medium">{ t("account.acceptAny") }</label>
 
-                            <p className="text-xs text-muted-foreground">
-                                Off, and a title that exists in none of your first language is never downloaded
-                                at all — it sits on your watchlist saying &quot;waiting for release&quot; while the
-                                release is out in another language. That is the safe direction and it is the
-                                default, because settling for a language you did not ask for should not happen
-                                behind your back. On, the scanner may take any of them, still preferring the first.
-                                For one title only, the watchlist has a language column.
-                            </p>
+                            <p className="text-xs text-muted-foreground">{ t("account.acceptAnyHint") }</p>
                         </div>
                     </div>
                 </div>
 
                 <div className="max-w-sm space-y-2">
-                    <label className="text-sm font-medium">Untagged release counts as</label>
+                    <label className="text-sm font-medium">{ t("account.untagged") }</label>
 
                     <OptionSelect
                         value={untagged}
                         onChange={setUntagged}
-                        options={LANGUAGE_OPTIONS}
-                        noun="language"
+                        options={languageOptions}
                     />
 
-                    <p className="text-xs text-muted-foreground">
-                        Most releases carry no language tag at all. This is what they are taken to be —
-                        and with a first language that is not this, an untagged release is not yours.
-                    </p>
+                    <p className="text-xs text-muted-foreground">{ t("account.untaggedHint") }</p>
                 </div>
 
                 <div className="space-y-2">
@@ -296,38 +272,33 @@ export default function Page() {
                             checked={languageFirst}
                             onCheckedChange={(checked) => setLanguageFirst(checked === true)}
                         />
-                        Language outranks resolution
+                        { t("account.languageFirst") }
                     </label>
 
                     <p className="text-xs text-muted-foreground">
-                        On, which is how a new account starts: a 720p release in your language beats a
-                        1080p one that is not. Off means the sharpest copy wins and the language is only
-                        a tie-breaker — there is no setting between the two, because a language that
-                        merely counts for something is a language that loses to a few more seeders.
+                        { t("account.languageFirstHint") }
                     </p>
                 </div>
 
                 <div className="space-y-2">
-                    <label className="text-sm font-medium">Languages you never want</label>
+                    <label className="text-sm font-medium">{ t("account.excluded") }</label>
 
                     <TagInput
                         value={excluded}
                         onChange={setExcluded}
-                        options={LANGUAGE_OPTIONS}
-                        noun="language"
-                        placeholder="pick a language"
+                        options={languageOptions}
+                        placeholder={t("account.pickLanguage")}
                     />
 
                     <p className="text-xs text-muted-foreground">
-                        Only applies to what you start by hand, and never to a release in the title&apos;s own
-                        original language — otherwise a Japanese film would become unobtainable.
+                        { t("account.excludedHint") }
                     </p>
                 </div>
 
                 <Button className="cursor-pointer" onClick={save} disabled={isSaving || ! name.trim()}>
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isSaving })} />
                     <Save className={classNames({ "hidden": isSaving })} />
-                    Save
+                    { t("common.save") }
                 </Button>
             </div>
 
@@ -339,10 +310,7 @@ export default function Page() {
             {account.linkedToProvider && ! account.hasPassword && <>
                 <Separator className="my-8" />
 
-                <p className="text-sm text-muted-foreground">
-                    This account signs in through the identity provider and has no password here. An administrator
-                    can give it one.
-                </p>
+                <p className="text-sm text-muted-foreground">{ t("account.providerOnly") }</p>
             </>}
         </div>
     );

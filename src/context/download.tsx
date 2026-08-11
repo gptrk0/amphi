@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { EpisodePicker } from "@/components/episode-picker";
 import { ReleasePicker } from "@/components/release-picker";
+import { useLocale } from "@/context/locale";
 import { useWatchlist } from "@/context/watchlist";
 import { DownloadPreview } from "@/types/download";
 import { SeasonInfo } from "@/types/media";
@@ -36,6 +37,7 @@ export const useDownload = () => useContext(DownloadContext);
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
     const { add, refresh } = useWatchlist();
+    const { t } = useLocale();
 
     const [ target, setTarget ] = useState<DownloadTarget | null>(null);
     const [ preview, setPreview ] = useState<DownloadPreview | null>(null);
@@ -73,13 +75,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         } catch(err) {
             console.error(err);
 
-            toast(axios.isAxiosError(err) && err.response?.data?.message || "Could not search the indexers.");
+            toast(axios.isAxiosError(err) && err.response?.data?.message || t("download.searchFailed"));
             setTarget(null);
 
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [ t ]);
 
     /**
      * The episode list and whatever of it is already being watched, for the picker. Both
@@ -102,10 +104,10 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         } catch(err) {
             console.error(err);
 
-            toast("Could not read the episode list.");
+            toast(t("download.episodes.loadFailed"));
             setPicking(null);
         }
-    }, []);
+    }, [ t ]);
 
     /**
      * A film goes straight to the release search. A show with nothing chosen is asked
@@ -164,8 +166,8 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             });
         }
 
-        toast(`${ wanted.name } is on your watchlist, the missing parts will follow.`);
-    }, [ add ]);
+        toast(t("download.watchRest", { name: wanted.name }));
+    }, [ add, t ]);
 
     const confirm = useCallback(async (watchMissing: boolean) => {
         if (! target || ! preview) {
@@ -194,19 +196,19 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             // the plan is only kept for a while, and searching again is the only
             // honest answer — the dialog stays open and refills itself
             if (axios.isAxiosError(err) && err.response?.status === 410) {
-                toast("The search results expired, searching again...");
+                toast(t("download.expired"));
 
                 void search(target);
 
             } else {
-                toast(axios.isAxiosError(err) && err.response?.data?.message || "Could not start the download.");
+                toast(axios.isAxiosError(err) && err.response?.data?.message || t("download.startFailed"));
             }
 
         } finally {
             setStarting(false);
             await refresh();
         }
-    }, [ target, preview, picks, refresh, search, watchTheRest ]);
+    }, [ target, preview, picks, refresh, search, watchTheRest, t ]);
 
     // the dialog's own state lives here, so without this every keystroke of a search
     // in progress would re-render the page behind it

@@ -1,20 +1,9 @@
-'use client';
-
+import { cookies } from "next/headers";
 import { Geist } from "next/font/google";
-import { usePathname } from "next/navigation";
-import { ThemeProvider } from "@/components/providers/theme-provider";
-import { AppSidebar } from "@/components/app-sidebar";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+
+import { Shell } from "@/components/shell";
+import { localeFrom, LOCALE_COOKIE } from "@/i18n";
 import "./globals.css";
-import { Separator } from "@radix-ui/react-separator";
-import { SearchBar } from "@/components/searchbar";
-import { ScrollRestoration } from "@/components/scroll-restoration";
-import { ModeToggle } from "@/components/ui/mode-toggle";
-import { Toaster } from "@/components/ui/sonner";
-import { UserMenu } from "@/components/user-menu";
-import { SessionProvider } from "@/context/session";
-import { WatchlistProvider } from "@/context/watchlist";
-import { DownloadProvider } from "@/context/download";
 
 const geistSans = Geist({
     variable: "--font-geist-sans",
@@ -22,70 +11,22 @@ const geistSans = Geist({
 });
 
 /**
- * The two pages that are reached without being signed in. They get no sidebar, no
- * search and none of the providers behind them — every one of those asks the server
- * for something the caller is not allowed to have yet, and a login page that fires
- * three 401s before it draws is a login page that looks broken.
+ * A server component again, for one reason: the chosen language is in a cookie, and only
+ * this side can read one. Everything it used to do is in `Shell`, which is still a client
+ * component — so the whole app is drawn in the right language on the first paint and
+ * `<html lang>` says which one it is.
  */
-const BARE = [ "/login", "/setup" ];
-
-export default function RootLayout({
+export default async function RootLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const pathname = usePathname();
-    const bare = BARE.includes(pathname);
+    const locale = localeFrom((await cookies()).get(LOCALE_COOKIE)?.value);
 
     return (
-        <html lang="en" suppressHydrationWarning>
+        <html lang={locale} suppressHydrationWarning>
             <body className={`${geistSans.variable} antialiased`}>
-                <ThemeProvider
-                    attribute="class"
-                    defaultTheme="system"
-                    enableSystem
-                    disableTransitionOnChange
-                >
-                    {bare && <>
-                        { children }
-                        <Toaster />
-                    </>}
-
-                    {! bare && <SessionProvider>
-                        <WatchlistProvider>
-                            <DownloadProvider>
-                                <SidebarProvider>
-                                    <AppSidebar />
-
-                                    <SidebarInset>
-                                        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-                                            <SidebarTrigger className="-ml-1" />
-
-                                            <Separator
-                                                orientation="vertical"
-                                                className="mr-2 data-[orientation=vertical]:h-4"
-                                            />
-
-                                            <SearchBar />
-
-                                            <div className="flex w-full items-center justify-end gap-1">
-                                                <UserMenu />
-                                                <ModeToggle />
-                                            </div>
-                                        </header>
-
-                                        { children }
-                                        <Toaster />
-
-                                        {/* stepping back into a listing lands where you
-                                            were, which no listing here can do on its own */}
-                                        <ScrollRestoration />
-                                    </SidebarInset>
-                                </SidebarProvider>
-                            </DownloadProvider>
-                        </WatchlistProvider>
-                    </SessionProvider>}
-                </ThemeProvider>
+                <Shell locale={locale}>{ children }</Shell>
             </body>
         </html>
     );

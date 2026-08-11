@@ -25,6 +25,7 @@ import {
     DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 
 // two letters off whatever there is to work with, which beats a stock avatar nobody
@@ -38,6 +39,7 @@ const initials = (name: string) => {
 
 export function UserMenu() {
     const { state, isLoading, signOut, refresh } = useSession();
+    const { t } = useLocale();
 
     const [ open, setOpen ] = useState(false);
     const [ current, setCurrent ] = useState("");
@@ -56,7 +58,7 @@ export function UserMenu() {
         try {
             await axios.patch("/api/auth/me", { currentPassword: current, password: next });
 
-            toast("Your password is changed — every other browser was signed out.");
+            toast(t("userMenu.password.done"));
             setOpen(false);
             setCurrent("");
             setNext("");
@@ -64,7 +66,7 @@ export function UserMenu() {
             await refresh();
 
         } catch(err) {
-            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || "Could not change it.");
+            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || t("userMenu.password.failed"));
 
         } finally {
             setBusy(false);
@@ -89,7 +91,7 @@ export function UserMenu() {
                         <div className="font-medium">{ user.name }</div>
 
                         <div className="text-xs font-normal text-muted-foreground">
-                            { user.email } · { user.isAdmin ? "administrator" : "user" }
+                            { user.email } · { user.isAdmin ? t("userMenu.administrator") : t("userMenu.user") }
                         </div>
                     </DropdownMenuLabel>
 
@@ -98,20 +100,20 @@ export function UserMenu() {
                     <DropdownMenuItem asChild className="cursor-pointer">
                         <Link href="/account">
                             <UserCog />
-                            Your account
+                            { t("userMenu.account") }
                         </Link>
                     </DropdownMenuItem>
 
                     {user.hasPassword && (
                         <DropdownMenuItem className="cursor-pointer" onClick={() => setOpen(true)}>
                             <KeyRound />
-                            Change password
+                            { t("userMenu.changePassword") }
                         </DropdownMenuItem>
                     )}
 
                     <DropdownMenuItem className="cursor-pointer" onClick={signOut}>
                         <LogOut />
-                        Sign out
+                        { t("userMenu.signOut") }
                     </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
@@ -119,19 +121,16 @@ export function UserMenu() {
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Change your password</DialogTitle>
+                        <DialogTitle>{ t("userMenu.password.title") }</DialogTitle>
 
-                        <DialogDescription>
-                            The old one is asked for even though you are signed in — an unattended browser should
-                            not be enough to take an account over. Every other browser is signed out.
-                        </DialogDescription>
+                        <DialogDescription>{ t("userMenu.password.description") }</DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-3">
                         <Input
                             type="password"
                             autoComplete="current-password"
-                            placeholder="Your current password"
+                            placeholder={t("userMenu.password.current")}
                             value={current}
                             onChange={event => setCurrent(event.target.value)}
                         />
@@ -139,18 +138,20 @@ export function UserMenu() {
                         <Input
                             type="password"
                             autoComplete="new-password"
-                            placeholder="The new one, at least 8 characters"
+                            placeholder={t("userMenu.password.next")}
                             value={next}
                             onChange={event => setNext(event.target.value)}
                         />
                     </div>
 
                     <DialogFooter>
-                        <Button variant="outline" className="cursor-pointer" onClick={() => setOpen(false)}>Cancel</Button>
+                        <Button variant="outline" className="cursor-pointer" onClick={() => setOpen(false)}>
+                            { t("common.cancel") }
+                        </Button>
 
                         <Button className="cursor-pointer" onClick={change} disabled={isBusy || ! current || ! next}>
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isBusy })} />
-                            Change it
+                            { t("userMenu.password.submit") }
                         </Button>
                     </DialogFooter>
                 </DialogContent>

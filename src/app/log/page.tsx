@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useLocale } from "@/context/locale";
+import { MessageKey } from "@/i18n";
 
 type Level = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -35,11 +37,11 @@ type Entry = {
 type Filter = { level: string, source: string, q: string };
 
 // the lowest level to show, so "Warnings" includes errors
-const LEVELS: { label: string, value: string }[] = [
-    { label: "Everything", value: "" },
-    { label: "Info", value: "INFO" },
-    { label: "Warnings", value: "WARN" },
-    { label: "Errors", value: "ERROR" }
+const LEVELS: { label: MessageKey, value: string }[] = [
+    { label: "logPage.levels.all", value: "" },
+    { label: "logPage.levels.info", value: "INFO" },
+    { label: "logPage.levels.warn", value: "WARN" },
+    { label: "logPage.levels.error", value: "ERROR" }
 ];
 
 const LEVEL_STYLE: Record<Level, string> = {
@@ -87,6 +89,7 @@ const toQuery = (filter: Filter, extra: Record<string, number> = {}) => {
 };
 
 function LogPage() {
+    const { t } = useLocale();
     const [ entries, setEntries ] = useState<Entry[]>();
     const [ sources, setSources ] = useState<{ source: string, count: number }[]>([]);
     const [ hasMore, setHasMore ] = useState(false);
@@ -138,13 +141,13 @@ function LogPage() {
             })
             .catch(err => {
                 console.error(err);
-                toast("Could not read the log.");
+                toast(t("logPage.readFailed"));
             });
 
         return () => {
             cancelled = true;
         };
-    }, [ level, source, query, reload ]);
+    }, [ level, source, query, reload, t ]);
 
     useEffect(() => {
         if (! isLive || streamKey === 0) {
@@ -201,7 +204,7 @@ function LogPage() {
 
         } catch(err) {
             console.error(err);
-            toast("Could not read the log.");
+            toast(t("logPage.readFailed"));
 
         } finally {
             setLoadingMore(false);
@@ -209,33 +212,31 @@ function LogPage() {
     };
 
     const clear = async () => {
-        if (! window.confirm("Clear the whole log? Every entry goes, including the ones this page is not showing.")) {
+        if (! window.confirm(t("logPage.clearConfirm"))) {
             return;
         }
 
         try {
             const res = await axios.delete("/api/log");
 
-            toast(`${ res.data.cleared } entr${ res.data.cleared === 1 ? "y" : "ies" } cleared.`);
+            toast(t(res.data.cleared === 1 ? "logPage.clearedOne" : "logPage.cleared", { n: res.data.cleared }));
             setReload(value => value + 1);
 
         } catch(err) {
             console.error(err);
-            toast("Could not clear the log.");
+            toast(t("logPage.clearFailed"));
         }
     };
 
-    const sourceLabel = source || "Every source";
+    const sourceLabel = source || t("logPage.everySource");
 
     return (
         <div className="p-4 md:p-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">Log</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight">{ t("logPage.title") }</h2>
                     <p className="max-w-2xl text-sm text-muted-foreground">
-                        What the app did while nobody was watching — every grab, every release it
-                        threw away and every setting that was changed. New lines arrive as they
-                        happen. Old ones are dropped after the retention set under Settings / Log.
+                        { t("logPage.intro") }
                     </p>
                 </div>
 
@@ -249,12 +250,12 @@ function LogPage() {
                             "bg-muted-foreground/40": ! isLive
                         })} />
 
-                        Live
+                        { t("logPage.live") }
                     </label>
 
                     <Button variant="outline" size="sm" className="cursor-pointer" onClick={clear}>
                         <Trash2 />
-                        Clear
+                        { t("logPage.clear") }
                     </Button>
                 </div>
             </div>
@@ -270,7 +271,7 @@ function LogPage() {
                         className="cursor-pointer"
                         onClick={() => setLevel(item.value)}
                     >
-                        { item.label }
+                        { t(item.label) }
                     </Button>
                 ))}
 
@@ -284,7 +285,7 @@ function LogPage() {
 
                     <DropdownMenuContent align="start">
                         <DropdownMenuRadioGroup value={source} onValueChange={setSource}>
-                            <DropdownMenuRadioItem value="" className="cursor-pointer">Every source</DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="" className="cursor-pointer">{ t("logPage.everySource") }</DropdownMenuRadioItem>
 
                             {sources.map(item => (
                                 <DropdownMenuRadioItem key={item.source} value={item.source} className="cursor-pointer">
@@ -299,7 +300,7 @@ function LogPage() {
 
                 <Input
                     className="w-full sm:max-w-64"
-                    placeholder="Search the text"
+                    placeholder={t("logPage.searchText")}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                 />
@@ -310,7 +311,7 @@ function LogPage() {
             </div>}
 
             {entries && entries.length === 0 && <p className="text-sm text-muted-foreground">
-                { level || source || query ? "Nothing matches that." : "Nothing has been logged yet." }
+                { level || source || query ? t("logPage.nothingMatches") : t("logPage.nothingYet") }
             </p>}
 
             {entries && entries.length > 0 && <div className="divide-y">
@@ -341,7 +342,7 @@ function LogPage() {
             {entries && hasMore && <div className="pt-4">
                 <Button variant="outline" className="cursor-pointer" onClick={loadMore} disabled={isLoadingMore}>
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isLoadingMore })} />
-                    Load older entries
+                    { t("logPage.loadOlder") }
                 </Button>
             </div>}
         </div>
@@ -349,8 +350,10 @@ function LogPage() {
 }
 
 export default function Page() {
+    const { t } = useLocale();
+
     return (
-        <AdminOnly title="Log">
+        <AdminOnly title={t("logPage.title")}>
             <LogPage />
         </AdminOnly>
     );

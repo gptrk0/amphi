@@ -13,10 +13,12 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { OptionSelect } from "@/components/option-select";
+import { useLocale } from "@/context/locale";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
-import { LANGUAGE_OPTIONS, languageName } from "@/types/language";
+import { MessageKey, Translate } from "@/i18n";
+import { languageLabel, useLanguageOptions } from "@/lib/language-labels";
 import { WatchlistRowItem, WatchlistStatus } from "@/types/watchlist";
 
 type Column = {
@@ -30,54 +32,56 @@ type Column = {
     everybody?: boolean;
 };
 
-const STATUS_FILTERS: { label: string, value: WatchlistStatus | "ALL" }[] = [
-    { label: "All", value: "ALL" },
-    { label: "Watchlisted", value: "PENDING" },
-    { label: "Not out yet", value: "UPCOMING" },
-    { label: "Waiting for release", value: "SEARCHING" }
+const STATUS_FILTERS: { label: MessageKey, value: WatchlistStatus | "ALL" }[] = [
+    { label: "watchlistPage.all", value: "ALL" },
+    { label: "status.PENDING", value: "PENDING" },
+    { label: "status.UPCOMING", value: "UPCOMING" },
+    { label: "status.SEARCHING", value: "SEARCHING" }
 ];
 
-const ago = (value: string | null) => {
+const ago = (value: string | null, t: Translate) => {
     if (! value) {
-        return "never";
+        return t("common.never");
     }
 
     const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
 
     if (minutes < 1) {
-        return "just now";
+        return t("common.justNow");
     }
 
     if (minutes < 60) {
-        return `${ minutes }m ago`;
+        return t("common.minutesAgo", { n: minutes });
     }
 
     const hours = Math.round(minutes / 60);
 
-    return hours < 48 ? `${ hours }h ago` : `${ Math.round(hours / 24) }d ago`;
+    return hours < 48 ? t("common.hoursAgo", { n: hours }) : t("common.daysAgo", { n: Math.round(hours / 24) });
 };
 
 /**
  * Why an item is sitting there doing nothing: it is not out yet. Without the date the
  * row shows "never checked" and reads like a scanner that gave up.
  */
-const airText = (value: string | null) => {
+const airText = (value: string | null, locale: string, t: Translate) => {
     if (! value) {
         return "";
     }
 
     const date = new Date(value);
     const days = Math.ceil((date.getTime() - Date.now()) / 86400000);
-    const text = date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const text = date.toLocaleDateString(locale === "hu" ? "hu-HU" : "en-GB", { day: "numeric", month: "short" });
 
-    return days > 0 ? `out ${ text }, in ${ days } day${ days === 1 ? "" : "s" }` : `out ${ text }`;
+    return days > 0
+        ? t(days === 1 ? "watchlistPage.outTomorrow" : "watchlistPage.outIn", { date: text, n: days })
+        : t("watchlistPage.outOn", { date: text });
 };
 
 /**
  * The wait until the next round, as a clock. Seconds only matter near the end, so
  * above a minute it counts in minutes and seconds and nothing jumps about.
  */
-const untilText = (deadline: number | null, now: number) => {
+const untilText = (deadline: number | null, now: number, t: Translate) => {
     if (! deadline) {
         return "";
     }
@@ -85,16 +89,16 @@ const untilText = (deadline: number | null, now: number) => {
     const seconds = Math.max(Math.round((deadline - now) / 1000), 0);
 
     if (seconds === 0) {
-        return "next scan: any moment";
+        return t("watchlistPage.nextScanAny");
     }
 
     if (seconds < 60) {
-        return `next scan in ${ seconds }s`;
+        return t("watchlistPage.nextScanSeconds", { n: seconds });
     }
 
     const minutes = Math.floor(seconds / 60);
 
-    return `next scan in ${ minutes }:${ String(seconds % 60).padStart(2, "0") }`;
+    return t("watchlistPage.nextScanIn", { time: `${ minutes }:${ String(seconds % 60).padStart(2, "0") }` });
 };
 
 /**
@@ -104,6 +108,8 @@ const untilText = (deadline: number | null, now: number) => {
 export function WatchlistTable() {
     const { entries, refresh } = useWatchlist();
     const { isAdmin } = useSession();
+    const { locale, t, tOr } = useLocale();
+    const languageOptions = useLanguageOptions();
     const [ items, setItems ] = useState<WatchlistRowItem[]>();
     // the whole house by default: this table is where somebody goes to see what the app
     // is looking for, and half of that is other people's. The server is what decides
@@ -146,12 +152,12 @@ export function WatchlistTable() {
             const res = await axios.delete(`/api/watchlist/${ item.id }`);
 
             toast(res.data.kept
-                ? `${ name } is partly off the watchlist.`
-                : `${ name } is off the watchlist.`);
+                ? t("watchlistPage.offListPartly", { name })
+                : t("watchlistPage.offList", { name }));
 
         } catch(err) {
             console.error(err);
-            toast(`Could not take ${ name } off the watchlist.`);
+            toast(t("watchlistPage.offListFailed", { name }));
         }
 
         await refresh();
@@ -171,12 +177,12 @@ export function WatchlistTable() {
             const wanted: string[] = res.data.result?.searchLanguages || [];
 
             toast(language
-                ? `${ name } will be looked for in ${ languageName(language) }.`
-                : `${ name } follows your account again — ${ wanted.map(languageName).join(", ") }.`);
+                ? t("watchlistPage.languageSet", { name, language: languageLabel(language, tOr) })
+                : t("watchlistPage.languageAuto", { name, languages: wanted.map(code => languageLabel(code, tOr)).join(", ") }));
 
         } catch(err) {
             console.error(err);
-            toast(axios.isAxiosError(err) && err.response?.data?.message || `Could not change the language of ${ name }.`);
+            toast(axios.isAxiosError(err) && err.response?.data?.message || t("watchlistPage.languageFailed", { name }));
         }
 
         await load();
@@ -189,12 +195,12 @@ export function WatchlistTable() {
      */
     const scan = () => {
         setScanning(true);
-        toast("Checking every watched item on your indexers...");
+        toast(t("watchlistPage.scanStarted"));
 
         axios.post("/api/scan", { force: true })
             .then(res => {
                 toast(res.data.dryRun
-                    ? `${ res.data.message } SCAN_DRY_RUN is on, so nothing was actually downloaded.`
+                    ? t("watchlistPage.scanDryRun", { message: res.data.message })
                     : res.data.message);
 
                 // the round that just ran is the round: the wait starts over
@@ -204,7 +210,7 @@ export function WatchlistTable() {
             })
             .catch(err => {
                 console.error(err);
-                toast(err.response?.data?.message || "Scan failed.");
+                toast(err.response?.data?.message || t("watchlistPage.scanFailed"));
             })
             .finally(() => setScanning(false));
     };
@@ -254,7 +260,7 @@ export function WatchlistTable() {
     const columns: Column[] = [
         {
             key: "name",
-            label: "Title",
+            label: t("watchlistPage.columns.title"),
             value: item => item.media?.name?.toLowerCase() || String(item.tmdbId),
             render: item => (
                 <div className="flex items-center gap-3">
@@ -268,7 +274,7 @@ export function WatchlistTable() {
         },
         {
             key: "language",
-            label: "Requested language",
+            label: t("watchlistPage.columns.language"),
             // sorts by what will actually be searched, not by whether it was overridden:
             // the column is there to answer "in what language", and that is the answer
             value: item => item.searchLanguages.join(","),
@@ -281,9 +287,8 @@ export function WatchlistTable() {
                             // no language of its own: whatever the owner's account says,
                             // which is where every row starts
                             { value: "", label: "Auto" },
-                            ...LANGUAGE_OPTIONS
+                            ...languageOptions
                         ]}
-                        noun="language"
                         // the table container clips, so this one hangs off the viewport
                         float
                     />
@@ -292,52 +297,52 @@ export function WatchlistTable() {
         },
         {
             key: "owner",
-            label: "Added by",
+            label: t("watchlistPage.columns.owner"),
             everybody: true,
             value: item => item.owner.name.toLowerCase(),
             render: item => <span className="text-muted-foreground">{ item.owner.name }</span>
         },
         {
             key: "type",
-            label: "Type",
+            label: t("watchlistPage.columns.type"),
             value: item => item.type,
-            render: item => <span className="text-muted-foreground">{ item.type === "tv" ? "Series" : "Movie" }</span>
+            render: item => <span className="text-muted-foreground">{ item.type === "tv" ? t("common.series") : t("common.movie") }</span>
         },
         {
             key: "status",
-            label: "Status",
+            label: t("watchlistPage.columns.status"),
             value: item => item.status,
             render: item => <WatchlistBadge entry={item} />
         },
         {
             key: "wanted",
-            label: "Still wanted",
+            label: t("watchlistPage.columns.wanted"),
             value: item => item.episodeCount,
             render: item => (
                 <div className="min-w-[7rem]">
-                    <div>{ item.type === "tv" ? `${ item.episodeCount - item.downloadedCount } episodes` : "the film" }</div>
+                    <div>{ item.type === "tv" ? t("watchlistPage.episodesLeft", { n: item.episodeCount - item.downloadedCount }) : t("common.film") }</div>
 
                     {item.nextAirDate && (
-                        <div className="text-xs text-muted-foreground">{ airText(item.nextAirDate) }</div>
+                        <div className="text-xs text-muted-foreground">{ airText(item.nextAirDate, locale, t) }</div>
                     )}
                 </div>
             )
         },
         {
             key: "addedAt",
-            label: "Added",
+            label: t("watchlistPage.columns.added"),
             value: item => item.addedAt,
-            render: item => <span className="text-muted-foreground">{ ago(item.addedAt) }</span>
+            render: item => <span className="text-muted-foreground">{ ago(item.addedAt, t) }</span>
         },
         {
             key: "lastCheckedAt",
-            label: "Last checked",
+            label: t("watchlistPage.columns.lastChecked"),
             value: item => item.lastCheckedAt || "",
-            render: item => <span className="text-muted-foreground">{ ago(item.lastCheckedAt) }</span>
+            render: item => <span className="text-muted-foreground">{ ago(item.lastCheckedAt, t) }</span>
         },
         {
             key: "searchAttempts",
-            label: "Attempts",
+            label: t("watchlistPage.columns.attempts"),
             value: item => item.searchAttempts,
             render: item => <span className="text-muted-foreground">{ item.searchAttempts || "—" }</span>
         },
@@ -350,7 +355,7 @@ export function WatchlistTable() {
                     variant="ghost"
                     size="sm"
                     className="cursor-pointer"
-                    title="Stop watching — anything already downloaded stays in the library"
+                    title={t("watchlistPage.stopWatchingTitle")}
                     onClick={() => stopWatching(item)}
                 >
                     <BookmarkX />
@@ -365,7 +370,7 @@ export function WatchlistTable() {
             : { key, direction: "asc" });
     };
 
-    const countdown = isScanning ? "scanning..." : untilText(nextScanAt, now);
+    const countdown = isScanning ? t("watchlistPage.scanning") : untilText(nextScanAt, now, t);
 
     const shown = columns.filter(column => ! column.everybody || everybody);
 
@@ -386,10 +391,9 @@ export function WatchlistTable() {
         <div className="p-4">
             <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">{ everybody ? "Everybody's watchlist" : "Your watchlist" }</h2>
+                    <h2 className="text-2xl font-semibold tracking-tight">{ t(everybody ? "watchlistPage.titleEverybody" : "watchlistPage.titleMine") }</h2>
                     <p className="text-sm text-muted-foreground">
-                        What is being looked for{ everybody ? " by anybody here" : " for you" }. As soon as a release turns up it is
-                        downloaded, and it moves to the library — which is shared, however many people were waiting for it.
+                        { t(everybody ? "watchlistPage.introEverybody" : "watchlistPage.introMine") }
                     </p>
                 </div>
 
@@ -400,11 +404,11 @@ export function WatchlistTable() {
                         className="cursor-pointer"
                         onClick={scan}
                         disabled={isScanning}
-                        title="Check everything you watch that is already out, without waiting for its next slot"
+                        title={t("watchlistPage.scanTitle")}
                     >
                         <Loader2 className={classNames("animate-spin", { "hidden": ! isScanning })} />
                         <RefreshCw className={classNames({ "hidden": isScanning })} />
-                        Scan now
+                        { t("watchlistPage.scanNow") }
                     </Button>}
 
                     <span className="text-xs text-muted-foreground">{ countdown }</span>
@@ -421,7 +425,7 @@ export function WatchlistTable() {
                         className="cursor-pointer"
                         onClick={() => setEverybody(false)}
                     >
-                        Mine
+                        { t("watchlistPage.mine") }
                     </Button>
 
                     <Button
@@ -430,7 +434,7 @@ export function WatchlistTable() {
                         className="cursor-pointer"
                         onClick={() => setEverybody(true)}
                     >
-                        Everybody
+                        { t("watchlistPage.everybody") }
                     </Button>
 
                     <Separator orientation="vertical" className="mx-1 h-8" />
@@ -444,7 +448,7 @@ export function WatchlistTable() {
                         className="cursor-pointer"
                         onClick={() => setStatus(filter.value)}
                     >
-                        { filter.label }
+                        { t(filter.label) }
                     </Button>
                 ))}
             </div>
@@ -454,9 +458,7 @@ export function WatchlistTable() {
             </div>}
 
             {items && sorted.length === 0 && <p className="text-sm text-muted-foreground">
-                { everybody
-                    ? "Nobody is waiting for anything at the moment."
-                    : "Your watchlist is empty — add something from a details page or by right clicking a poster." }
+                { t(everybody ? "watchlistPage.emptyEverybody" : "watchlistPage.emptyMine") }
             </p>}
 
             {items && sorted.length > 0 && <Table>
