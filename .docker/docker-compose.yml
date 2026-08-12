@@ -27,7 +27,7 @@ services:
             POSTGRES_PASSWORD: ${DATABASE_PASS}
             POSTGRES_DB: ${DATABASE_NAME}
         volumes:
-            - postgres-data:/var/lib/postgresql/data
+            - .db-data:/var/lib/postgresql/data
         healthcheck:
             # the container is up long before postgres is listening, and on a first run it
             # restarts itself once while it creates the cluster
@@ -35,6 +35,3 @@ services:
             interval: 5s
             timeout: 5s
             retries: 12
-
-volumes:
-    postgres-data:
