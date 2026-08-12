@@ -16,12 +16,15 @@ import {
 import { settingNumber, settingText } from "@/lib/settings";
 import { addRelease } from "@/lib/torrent";
 import { LibraryAudience } from "@/lib/audience";
+import { logWarn } from "@/lib/log";
 import {
     GrabbedEpisode,
     heldEpisodes,
     libraryTag,
+    LibraryRow,
     moveToLibrary,
     restoreToWatchlist,
+    rowHoldingTorrent,
     seasonStarted,
     setTorrentHash
 } from "@/lib/library";
@@ -135,6 +138,35 @@ export type StartedDownload = {
     // the library row this became, which is also who to tell about it
     libraryId: number;
     watchedBy: number[];
+};
+
+/**
+ * The hash the client answered with, if this row may write it down.
+ *
+ * It is refused when another live row is already following that torrent. Two rows on one
+ * torrent is never a true statement about the library: they would both claim its name, its
+ * size and its seed time, and the first deletion would take the other one's files. So the
+ * grab is treated as not started — which puts the request back on the watchlist, where a
+ * later round can pick a release of its own.
+ */
+const ownHash = async (item: LibraryRow, hash: string | null, releaseTitle: string) => {
+    if (! hash) {
+        return null;
+    }
+
+    const owner = await rowHoldingTorrent(hash, item.id);
+
+    if (! owner) {
+        return hash;
+    }
+
+    await logWarn(
+        "download",
+        `${ releaseTitle }: the client answered with a torrent that library row #${ owner.id } already follows`,
+        `torrent ${ hash.slice(0, 8) } — left alone, and this request goes back on the watchlist`
+    );
+
+    return null;
 };
 
 export type PlannedGrab = {
@@ -307,7 +339,8 @@ export const executeMovieGrab = async (
         requestedBy
     });
 
-    const hash = await addRelease(release, libraryTag(item.id), moviePath());
+    const added = await addRelease(release, await libraryTag(item.id), moviePath());
+    const hash = await ownHash(item, added, release.title);
 
     if (! hash) {
         await restoreToWatchlist(item);
@@ -527,7 +560,8 @@ export const executeSeasonGrab = async (
             requestedBy: options.requestedBy ?? null
         });
 
-        const hash = await addRelease(grab.release, libraryTag(item.id), tvPath());
+        const added = await addRelease(grab.release, await libraryTag(item.id), tvPath());
+        const hash = await ownHash(item, added, grab.release.title);
 
         if (hash) {
             await setTorrentHash(item.id, hash);

@@ -235,10 +235,21 @@ export const getTorrentFiles = async (hash: string): Promise<TorrentFile[]> => {
     }
 };
 
-export const findTorrentByTag = async (tag: string): Promise<TorrentStatus | null> => {
+/**
+ * The torrent an add just created, recognised by the tag it was given.
+ *
+ * `ignore` is what the client already held a moment earlier, and skipping it is the point:
+ * a tag says "somebody wanted this to be found by that name", not "this is the torrent
+ * that was just added". One that was already there under the same tag belongs to whoever
+ * put it there — a run of this app with its own database, or an install sharing the client
+ * — and taking it would tie the row to a torrent it never asked for.
+ */
+const findAddedTorrentByTag = async (tag: string, ignore: Set<string>): Promise<TorrentStatus | null> => {
     const torrents = await listManagedTorrents();
 
-    return torrents.find(torrent => torrent.tags.includes(tag)) || null;
+    const found = torrents.find(torrent => torrent.tags.includes(tag) && ! ignore.has(torrent.hash.toLowerCase()));
+
+    return found || null;
 };
 
 // enough to recognise the same release under a different punctuation
@@ -273,9 +284,17 @@ export const addTag = async (hash: string, tag: string) => {
  * A release the client already holds never turns up under the new tag, so the last
  * word is a lookup by name — that one is adopted and tagged, because "you already
  * have this" is a started download, not a failed one.
+ *
+ * The client is read once **before** the add, because the tag alone cannot tell the
+ * torrent this call created from one that was carrying that tag already. Fetching the
+ * `.torrent` from the indexer takes about a second, so an older namesake would win that
+ * race every single time — which is how a Silo episode ended up following a Regular Show
+ * torrent on 2026-08-11. Only a hash that was not there a moment ago is this add's.
  */
 export const addRelease = async (release: IndexerResult, tag: string, savePath = ""): Promise<string | null> => {
     await ensureCategory();
+
+    const before = new Set((await listManagedTorrents()).map(torrent => torrent.hash.toLowerCase()));
 
     await request("/api/v2/torrents/add", form({
         urls: release.link,
@@ -285,7 +304,7 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
     }));
 
     for (let attempt = 0; attempt < 10; attempt++) {
-        const torrent = await findTorrentByTag(tag);
+        const torrent = await findAddedTorrentByTag(tag, before);
 
         if (torrent) {
             return torrent.hash;

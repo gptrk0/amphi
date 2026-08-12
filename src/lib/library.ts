@@ -1,6 +1,7 @@
 import { ContentType, Library as LibraryRow, LibraryStatus } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { LibraryAudience, libraryFilter } from "@/lib/audience";
+import { installId } from "@/lib/install";
 import { getMediaMetadata, RECORD_LANGUAGE } from "@/lib/media";
 import { settingNumber } from "@/lib/settings";
 import { removeTorrent, TorrentStatus } from "@/lib/torrent";
@@ -40,8 +41,31 @@ const retentionMs = () => Math.max(settingNumber("LIBRARY_RETENTION_DAYS"), 0) *
 /**
  * One tag scheme for everything, because a download is one row now: the torrent is
  * read back by the id of the row that is waiting for it.
+ *
+ * The install's own id is in there because a row id is only unique inside one database,
+ * while a tag in qBittorrent outlives every database that ever wrote it. A second install
+ * on the same client, or a recreated one, hands out id 12 again — and the lookup then
+ * finds the *old* torrent that still carries `aioseerr-12`. On 2026-08-11 that is how the
+ * Devil Wears Prada 2 row came to follow a stranger's Obsession torrent while the film it
+ * actually downloaded sat in the client with nothing pointing at it. See `installId`.
  */
-export const libraryTag = (itemId: number) => `aioseerr-${ itemId }`;
+export const libraryTag = async (itemId: number) => `aioseerr-${ await installId() }-${ itemId }`;
+
+/**
+ * The live row that is already following this torrent, if there is one. Two rows on one
+ * hash is never right: they finish together, they both claim its name and size, and the
+ * first deletion takes the other one's files with it. So a hash somebody else holds is
+ * refused at the grab rather than written down.
+ */
+export const rowHoldingTorrent = async (torrentHash: string, exceptId: number) => {
+    return await prisma.library.findFirst({
+        where: {
+            torrentHash: { equals: torrentHash, mode: "insensitive" },
+            removedAt: null,
+            id: { not: exceptId }
+        }
+    });
+};
 
 /**
  * Inside the seed window, which is the only thing that blocks a delete. The date it reads

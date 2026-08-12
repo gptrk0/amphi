@@ -1633,6 +1633,60 @@ Kérés: „beállításokban ne kelljen megadni a `TMDB_REGION`-t hanem a user 
 
 **Mérve** (élő TMDB, valós kulcs): a beállítások TMDB csoportja már csak `TMDB_API_KEY`, `TMDB_CACHE_TTL_MINUTES`, `DISCOVER_CACHE_TTL_MINUTES`. Keresés `silence of the lambs`-ra angolul `The Silence of the Lambs`, magyarul `A Bárányok hallgatnak` magyar leírással; `silo`-ra `Silo` / `A siló`. A `/details/movie/274` korhatára angolul `R`, magyarul `18` — pontosan az, amiért a régió-beállítás fölösleges volt. Műfajok: `Action, Adventure, Animation, Comedy` / `Akció, Kaland, Animációs, Vígjáték`. Kérésen kívül (dobható szkript, futtatva és törölve): a locale `en`, a rekord-nyelv `en-US`, és `mediaTitles(274)` = `["The Silence of the Lambs","A Bárányok hallgatnak"]`. Egy valódi terv-futtatás (keresés, letöltés nélkül) 16 találatot adott, a győztes `The.Silence.of.the.Lambs.1991.1080p.REMASTERED.BluRay.DTS.x264.HuN-Nimphas` — a magyar hangsávos kiadás, magyar címre párosítva is. A migráció (`20260811120000_tmdb_follows_the_reader`) a két sort törli; ezen a telepítésen a `TMDB_LANGUAGE` `hu-HU` volt és `TMDB_REGION` sor nem is létezett, tehát a dobott érték azt mondta, hogy „mindenkinek mindent magyarul" — most ezt a süti mondja, személyenként. A frissítés-körhöz: mind a hét oldal (`/`, `/movies`, `/series`, `/watchlist`, `/library`, `/search`, `/details/tv/125988`) 200-cal és hibajelző nélkül jön mindkét nyelven, és a szerver-rendereltnek a *tartalma* is vált (`A siló` / `föld alatt` magyarul, `giant silo` angolul, ugyanazon az oldalon). **Amit nem mértem: magát a kattintást böngészőben** — a nyelvváltás utáni újrakérés kódszinten van meg, futó felületen nem láttam.
 
+#### A library idegen release-neveket írt ki (2026-08-12-i bejelentés) ✅ a kódban, az éles sorok kézi javítást kérnek
+
+Bejelentés: „a production oldalon a libraryban teljesen összekeveredtek a dolgok, a release amit ír az adott elemhez az nem is az sokszor ami hozzá tartozik". A **Silo S03E04** sora a `Regular.Show.The.Lost.Tapes.S01E01…`-t írta ki, a **The Devil Wears Prada 2** sora az `Obsession.2025.1080p.BluRay…`-t.
+
+**Nem a megjelenítés, és nem is rossz release jött le.** A Release oszlop a saját sorából olvas (`item.releaseTitle`), a `/api/library` semmit nem párosít indexre — a DB-ben tényleg ez állt. A letöltések viszont **helyesek voltak**: a helyes torrentek megvannak a kliensben, készen, csak nem mutatott rájuk semmi.
+
+| sor | a DB-ben tárolt hash | ami valóban hozzá tartozik |
+|---|---|---|
+| #13 Silo S03E04 | `e4e61336` = Regular Show (a #3-as sor torrentje) | `c1f2fbd4` `Silo.S03E04…NTb`, kész |
+| #12 Devil Wears Prada 2 | `20af0e62` = Obsession (2026-08-08-ról) | `271e6ffb` `The.Devil.Wears.Prada.2…`, kész |
+
+**A diagnózis.** A kliens globális tag-listája elárulja, hogy ezt a qBittorrentet **több aioseerr-élet is használta**: `aioseerr-1 … aioseerr-13` mellett ott van `aioseerr-16`, `aioseerr-999999`, és a teljes régi séma (`aioseerr-movie-12/14/15/37/45/53`, `aioseerr-episode-*`, `aioseerr-season-54-*`). Ez az adatbázis viszont 08-09 19:29-kor született (`LogEntry` id 1) és a legnagyobb `Library.id`-ja 13 — a 16-os és a 999999-es tag tehát nem tőle van. A qBittorrent saját naplója meg is mutatja a két ütközést:
+
+```
+08-09 22:08:27  Added new torrent: Regular.Show…      ← egy másik példány, aioseerr-13 taggel
+08-09 22:14:22  Detected an attempt to add a duplicate torrent … Existing: Regular.Show…
+                infohash: e4e613360842d133e0f4cdf659e03c30d4a755b5   ← a mi #3-as sorunk, név szerint fogadta örökbe
+08-11 07:33:53  Downloading torrent... file=The.Devil.Wears.Prada.2…
+08-11 07:33:54  Added new torrent: The.Devil.Wears.Prada.2…          ← egy MÁSODPERCCEL később
+```
+
+A #12-es sor `startedAt`-je `05:33:53.743`, a `torrent 20af0e62` naplósor `05:33:53.779` — **36 ms**. Vagyis az `addRelease` első tag-lekérdezése akkor futott, amikor a saját torrentje még nem is létezett, és az elavult tagre talált rá.
+
+**A gyökér.** A `libraryTag` `aioseerr-<sor id>` volt: a tag a kliensben **globális és túléli minden adatbázist, ami leírta**, a sor id viszont csak egy adatbázisban egyedi. Egy második telepítés ugyanazon a kliensen (vagy egy újragyártott adatbázis) újra kiadja a 12-est, a `findTorrentByTag` pedig az **első** találatot adja vissza — a Jackett-linkből a `.torrent` beszerzése ~1 másodperc, tehát az öreg névrokon ezt a versenyt mindig megnyeri.
+
+Innen minden magától jött: `setTorrentHash` az idegen hash-t írta be, a `markAvailable` az idegen torrent **nevét, méretét és seed-óráját** írta a sorra (ezért a hibás Release oszlop, és ezért „töltődött le" 14 GB 25 másodperc alatt), az értesítés is arról szólt, a valódi torrentek árván maradtak, a törlés pedig az **idegen fájlokat** vitte volna el.
+
+**Javítás (2026-08-12):**
+
+- [x] **A tag az install-hoz van kötve** — [src/lib/install.ts](src/lib/install.ts) (új): egy `INSTALL_ID` sor a `Setting` táblában, szándékosan **nem** a `SETTINGS` regiszterben (nem döntés, hanem azonosság — így a beállítás-oldalon nincs ott, a `saveSettings`/`deleteSetting` pedig figyelmen kívül hagyja). A `libraryTag` mostantól `aioseerr-<install>-<sor id>`, tehát idegen élet tagje nem tud egyezni.
+- [x] **A tag-lekérdezés csak az újat fogadja el** — [src/lib/torrent.ts](src/lib/torrent.ts): az `addRelease` az add **előtt** kiolvassa a kliens tartalmát, és csak olyan hash-t fogad el, ami akkor még nem volt ott (`findAddedTorrentByTag`). Egy tag azt jelenti, hogy „valaki így akarta megtalálni", nem azt, hogy „ezt most adtuk hozzá".
+- [x] **Egy hash egy sor** — [src/lib/library.ts](src/lib/library.ts) `rowHoldingTorrent` + [src/lib/grab.ts](src/lib/grab.ts) `ownHash`: ha egy élő sor már követi azt a torrentet, a hash nem íródik be, a kérés visszamegy a watchlistre, és egy WARN sor megnevezi a másik sort. Ez egyedül is elkapta volna a #13-at, mert a #3 már rajta volt.
+
+**Mérve** (dobható szkript, futtatva és törölve; a prod DB helyi másolata, a kliens csak olvasva):
+
+```
+install id: faec3069 (stable: true)
+tag for row 12: aioseerr-faec3069-12
+"aioseerr-12"            matches 2: 20af0e62 Obsession… | 271e6ffb The.Devil.Wears.Prada.2…
+"aioseerr-13"            matches 2: c1f2fbd4 Silo.S03E04… | e4e61336 Regular.Show…
+"aioseerr-faec3069-12"   matches 0
+"aioseerr-faec3069-13"   matches 0
+row 13 asking for e4e61336: refused, row #3 holds it
+row 13 asking for its own c1f2fbd4: allowed
+```
+
+A régi tagek élesben is kétértelműek (2-2 találat) — pontosan ez volt a hiba; az install-szintűekre nulla torrent illeszkedik, a hash-őr pedig a valódi éles esetet utasítja vissza.
+
+**Amire figyelni kell.**
+
+1. **A már elrontott éles sorok maguktól nem javulnak meg**, és törlésre vannak jelölve, fájlokkal: a #13 és a #3 `seedUntil`-ja 08-13 07:49, a #12-esé 08-13 11:21. Amikor letelik, a `deleteLibraryItem` a soron lévő hash-t adja a `removeTorrent`-nek — vagyis a **Regular Show** és az **Obsession** fájljai mennek el, a valódi Silo S03E04 és Prada 2 pedig árván marad a kliensben. Előbb vagy le kell venni a jelölést, vagy a `torrentHash`-t (`13 → c1f2fbd4…`, `12 → 271e6ffb…`) és a `releaseTitle`-t kézzel javítani.
+2. **A dev és a prod ugyanazt a qBittorrentet és Jackettet használja.** Az install-szintű tag ezt már elbírja, de a `TORRENT_CATEGORY` közös marad, tehát a takarító körök egymás torrentjeit is látják.
+3. **Két tétel szándékosan kimaradt** ebből a körből: a `markAvailable` továbbra is felülírja a kért release-címet a kliens torrent-nevével (két külön mező kellene: amit kértünk, és aminek a kliens hívja), és a törlés sem ellenőrzi, hogy a torrent neve passzol-e a sorhoz. Amíg ez így van, egy félrecímkézett release csendben átírja a sor történetét.
+
 ---
 
 ## 5. Javasolt sorrend
