@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 import { prisma } from "@/lib/prisma";
 import { loadSettings, settingText } from "@/lib/settings";
 
@@ -24,6 +22,22 @@ const KEY = "INSTALL_ID";
 // on global so hot reload does not ask the database again
 const globalForInstall = global as unknown as { installId: string | null };
 
+/**
+ * Four random bytes as hex, from the Web Crypto global rather than `node:crypto`.
+ *
+ * Not a preference. A middleware exists, so next compiles `instrumentation.ts` for the edge
+ * runtime too, and the imports from there reach this file — where `node:crypto` is a scheme
+ * webpack has nothing to do with and the build stops. `crypto` is a global in node, in bun and
+ * on the edge alike, so there is no module for a bundler to resolve in the first place.
+ */
+const randomId = () => {
+    const bytes = new Uint8Array(4);
+
+    crypto.getRandomValues(bytes);
+
+    return Array.from(bytes).map(byte => byte.toString(16).padStart(2, "0")).join("");
+};
+
 export const installId = async (): Promise<string> => {
     if (globalForInstall.installId) {
         return globalForInstall.installId;
@@ -39,7 +53,7 @@ export const installId = async (): Promise<string> => {
         return stored;
     }
 
-    const created = randomBytes(4).toString("hex");
+    const created = randomId();
 
     try {
         // `create`, not `upsert`: two grabs racing at the birth of an install must end up
