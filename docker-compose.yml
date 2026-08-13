@@ -1,4 +1,4 @@
-# aioseerr — the whole install.
+# Amphi — the whole install.
 #
 # Save this file, run `docker compose up -d`, open http://localhost:3000. The first person
 # to open a fresh install becomes its administrator, and everything else — the TMDB key, the
@@ -6,16 +6,16 @@
 # There is nothing else to edit here, and no configuration file to write.
 
 services:
-    aioseerr:
-        image: ghcr.io/gptrk0/aioseerr:latest
-        container_name: aioseerr
+    amphi:
+        image: ghcr.io/gptrk0/amphi:latest
+        container_name: amphi
         restart: unless-stopped
         ports:
             - "3000:3000"
         environment:
             # the only setting that has to be known before the database can be read, which is
             # why it is the only one that lives out here
-            DATABASE_URL: postgresql://aioseerr:aioseerr@aioseerr-db:5432/aioseerr?schema=public
+            DATABASE_URL: postgresql://amphi:amphi@amphi-db:5432/amphi?schema=public
 
             # timestamps in the log and in the notifications; UTC without it
             TZ: Europe/Budapest
@@ -25,26 +25,26 @@ services:
             # database: a brake must not live somewhere the app can talk itself out of it.
             # SCAN_DISABLED: "1"
         depends_on:
-            aioseerr-db:
+            amphi-db:
                 condition: service_healthy
 
-    aioseerr-db:
+    amphi-db:
         image: postgres:17.7
-        container_name: aioseerr-db
+        container_name: amphi-db
         restart: unless-stopped
         environment:
-            POSTGRES_USER: aioseerr
+            POSTGRES_USER: amphi
             # this database has no published port: it is reachable from the app container and
             # from nowhere else, which is what makes a fixed password here harmless. Publish
             # the port and it stops being harmless.
-            POSTGRES_PASSWORD: aioseerr
-            POSTGRES_DB: aioseerr
+            POSTGRES_PASSWORD: amphi
+            POSTGRES_DB: amphi
         volumes:
-            - aioseerr-db-data:/var/lib/postgresql/data
+            - amphi-db-data:/var/lib/postgresql/data
         healthcheck:
             # the container is up long before postgres is listening, and on a first run it
             # restarts itself once while it creates the cluster
-            test: [ "CMD-SHELL", "pg_isready -U aioseerr -d aioseerr" ]
+            test: [ "CMD-SHELL", "pg_isready -U amphi -d amphi" ]
             interval: 5s
             timeout: 5s
             retries: 12
@@ -53,4 +53,4 @@ volumes:
     # everything the install remembers is in here: the accounts, the watchlists, the library,
     # the settings and the log. Nothing is stored in the container itself, so an upgrade is
     # `docker compose pull && docker compose up -d` and nothing else.
-    aioseerr-db-data:
+    amphi-db-data:

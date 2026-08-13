@@ -1,4 +1,4 @@
-# aioseerr — Fejlesztési terv
+# Amphi — Fejlesztési terv
 
 > Cél: a [seerr.dev](https://seerr.dev/) (Overseerr/Jellyseerr) élményéhez hasonló felület — filmek/sorozatok böngészése, watchlistre tétel, és automatikus letöltés a megadott indexeren (Jackett/Prowlarr torznab) és torrent kliensen (qBittorrent) keresztül, amint elérhetővé válik a tartalom.
 
@@ -224,7 +224,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
   - Kizáró kulcsszavak szóhatárral illesztve (a `ts` nem talál bele random szavakba), a nem kívánt felbontás kiesik, az **ismeretlen** felbontás bent marad utolsó esélyként.
   - `filterEpisodeReleases`: csak a kért epizód marad (PTT `season`+`episode` egyezés) — az évad-packek egyelőre kiesnek, ez a Fázis 6 tétele.
   - Élesben mérve (Dune: Part Two, 147 találat): default profillal 2160p/512 seeder a nyertes, 18 találat kiszórva (`hdts` 12, `ts` 2, `hdcam` 2, 576p 1, kevés seeder 1). `QUALITY_RESOLUTIONS=1080p` + `QUALITY_MAX_SIZE_GB=10` profillal az nCore 1080p/1572 seeder/8.4GB release nyer, 84 kiesik. House of the Dragon S01E01-re 82 jelölt, a nyertes 2160p.
-- [x] **[src/lib/torrent.ts](src/lib/torrent.ts) tisztán qBittorrent**: hozzáadás `aioseerr` kategóriával (létrehozza, ha nincs) + egyedi taggel, és a hash visszaolvasása tag alapján, mert a `torrents/add` csak `"Ok."`-t ad vissza. Emellett `listManagedTorrents`, `getTorrentStatus`, `removeTorrent`, és `isComplete`/`isFailed` állapot-leképzés a syncnek.
+- [x] **[src/lib/torrent.ts](src/lib/torrent.ts) tisztán qBittorrent**: hozzáadás a beállított kategóriával (létrehozza, ha nincs) + egyedi taggel, és a hash visszaolvasása tag alapján, mert a `torrents/add` csak `"Ok."`-t ad vissza. Emellett `listManagedTorrents`, `getTorrentStatus`, `removeTorrent`, és `isComplete`/`isFailed` állapot-leképzés a syncnek.
   - A `@robertklep/qbittorrent` csomag **kikerült**: a te qBittorrentod (v5.2.2, WebAPI 2.15.1) `204`-et ad az `/auth/login`-ra, a lib pedig minden nem-200-at hibának vesz, így a kliens használhatatlan volt. Helyette egy vékony axios-alapú kliens van a fájlban (login 200/204 kezelés, SID cookie, 401/403-ra újralogin).
 - [x] **Évad-pack támogatás** (a „csak az egész évad tölthető" esetre):
   - `findSeasonReleases` ([indexer.ts](src/lib/indexer.ts)): `t=tvsearch&season=N`, `ep` nélkül — így a packek is bejönnek.
@@ -358,11 +358,11 @@ Amit ebből átvettem:
 - [x] **Log a felületen** (2026-08-08) — `/log`: szint/forrás/szöveg szűrő, SSE-s élő követés, megőrzési idő. A fontos műveletek (scanner-döntések, kézi letöltés, beállítás-változás és -törlés, watchlist-műveletek, kifelé menő hibák) mind írnak bele.
 - [x] `discover` route hibakezelése: a catch-ág nem `return`-ölt, csak konstruált egy eldobott `Response`-t — most logol, és a hibás oldal egyszerűen kimarad az eredményből.
 - [x] **`entrypoint.sh` dev módja** (2026-08-07) — korábban csak a Prisma Studio-t indította, a Next dev szervert kézzel kellett elindítani a konténerben. Mivel a `startScheduler()` az `instrumentation.ts`-ből, **a Next szerverrel együtt** indul, ez azt jelentette, hogy alapból semmilyen háttérkör nem futott — a 2026-08-06-i „kész letöltés nem került át" hiba részben ebből jött. Most a Studio a háttérbe kerül, a dev szerver pedig `exec bun run dev`-vel a fő processz.
-  - Következmény: a konténer a dev szerver élettartamáig él. Ha a dev szerver kilép, a konténer is leáll (`docker compose up -d aioseerr_app` hozza vissza) — cserébe egy néma, nem futó szerver nem maradhat észrevétlen.
+  - Következmény: a konténer a dev szerver élettartamáig él. Ha a dev szerver kilép, a konténer is leáll (`docker compose up -d amphi_app` hozza vissza) — cserébe egy néma, nem futó szerver nem maradhat észrevétlen.
   - A `[ $APP_ENV == … ]` idézőjelbe került: beállítatlan `APP_ENV` mellett a script eddig szintaktikai hibára futott volna.
-  - Az `entrypoint.sh` a Dockerfile-ba van másolva, tehát a módosítása **image-újraépítést igényel**: `docker compose up -d --build aioseerr_app`.
+  - Az `entrypoint.sh` a Dockerfile-ba van másolva, tehát a módosítása **image-újraépítést igényel**: `docker compose up -d --build amphi_app`.
 - [x] **Egy friss klón magától felállna** (2026-08-08) — eddig nem: a dev ág nem futtatott `bun install`-t és `prisma generate`-et, **`prisma migrate deploy`-t pedig egyik ág sem**, tehát egy klón üres adatbázissal indult volna. Ez addig maradt észrevétlen, amíg a szerver az első kérésig nem nyúlt a DB-hez; a napló bevezetése óta viszont a boot **első művelete** egy DB-írás, tehát ez minden indulást elvitt volna. Most mindkét ág ugyanazt a `prepare()`-t futtatja: `bun install` → `prisma generate` → `migrate deploy` (soha nem `migrate dev`: az kérdez és resetelhet), és ha a migrációk 30 próbálkozás után sem mennek fel, **a konténer kiáll** — egy 500-akat válaszoló szerver rosszabb, mint egy konténer, ami megmondja, miért állt le.
-  - A DB-re való várakozás nem a scriptben csúszik: a compose-ban a `aioseerr_db` kapott `pg_isready` **healthcheck**et, az app pedig `depends_on: condition: service_healthy`-t. A `prepare()` újrapróbálkozása ezen túl a tartalék.
+  - A DB-re való várakozás nem a scriptben csúszik: a compose-ban a `amphi_db` kapott `pg_isready` **healthcheck**et, az app pedig `depends_on: condition: service_healthy`-t. A `prepare()` újrapróbálkozása ezen túl a tartalék.
   - Mellékhaszon: a `prisma generate` minden indulásnál lefut, tehát egy séma-változás után **elég újraindítani** — nem lehet többé régi Prisma klienssel futó szervert kapni.
   - **Mérve egy valódi friss telepítéssel**: `git clone` egy scratch könyvtárba (112 fájl, se `node_modules`, se `prisma/generated`, se `.env`), külön compose-projekt saját volume-mal és üres adatbázissal. A `fresh_db` egészségesre váltott, az app utána indult, mind a 8 migráció felment, és a dev szerver **~120 másodperc alatt** kiszolgált. A `/`, a `/settings` és a `/log` 200, a `/api/discover/sections` `setup: {"tmdb":false}`-t adott (tehát a főoldal a „add meg a TMDB kulcsot" táblát rajzolja, nem örök skeletont), az 52 beállítás mind a defaultján állt, és a naplóban ott volt a négy `WARN`, ami megmondja, mi hiányzik — plusz **egy** TMDB-figyelmeztetés a hét helyett, ahogy az összecsukás ígérte. A teszt-stack utána `down -v`-vel törölve.
 - [x] **Git repo** — `git init -b main`, első commit 76 fájllal (8094 sor). A `.gitignore` javítva: a generált Prisma kliens `prisma/generated` alatt van, de a `.gitignore` a `/src/generated/prisma` halott útvonalat zárta ki, így 4,9 MB generált kód került volna be. Bekerült még a `/.claude/settings.local.json` és a `/.verify-*.ts` is.
@@ -1201,7 +1201,7 @@ restart           a migráció no-op, a szerver 18s alatt újra healthy
 memória           app 97 MB, postgres 46 MB
 ```
 
-**A végfelhasználói [docker-compose.yml](docker-compose.yml)** a repo gyökerében: `ghcr.io/gptrk0/aioseerr:latest` + `postgres:17.7` + egy volume. A DB-nek nincs publikált portja, ezért a fix jelszó benne ártalmatlan — ez a fájlban is oda van írva, mert a port megnyitásával megszűnik. A `.docker/` compose változatlanul a fejlesztői stack, a `.env`-ben lévő `COMPOSE_FILE` miatt a `docker compose` itt továbbra is azt találja meg.
+**A végfelhasználói [docker-compose.yml](docker-compose.yml)** a repo gyökerében: `ghcr.io/gptrk0/amphi:latest` + `postgres:17.7` + egy volume. A DB-nek nincs publikált portja, ezért a fix jelszó benne ártalmatlan — ez a fájlban is oda van írva, mert a port megnyitásával megszűnik. A `.docker/` compose változatlanul a fejlesztői stack, a `.env`-ben lévő `COMPOSE_FILE` miatt a `docker compose` itt továbbra is azt találja meg.
 
 **A publikálás** [.github/workflows/image.yml](.github/workflows/image.yml): push `master`-re mozdítja a `latest`-et, egy `v1.2.3` tag pedig `1.2.3` és `1.2` tageket is kirak. `linux/amd64` + `linux/arm64` — az arm QEMU-val emulálva készül, ez a job lassú fele, és kivehető, ha nem kell.
 
@@ -1794,6 +1794,45 @@ szekciók sorrendje             Szereplők -> Linkek -> Részletek -> Ajánlott 
 
 **Amire figyelni kell.** (1) A `department` badge és a stáb-jobok (`Acting`, `Director`) **a TMDB angol szavai**, mint eddig a `status` — nincsenek fordítva, mert ez a doksi eddig is így döntött ezekről. (2) Nem létező személynél a törzs a 404-oldal, a **státusz mégis 200** — pontosan úgy, ahogy a meglévő `/details` oldalon: a `loading.tsx` boundary miatt a válasz már streamel, amikor a `notFound()` kiderül. Nem ebben a körben keletkezett. (3) Új route-ot a dev szerver ezen a Windows-os fájlmegosztáson **nem vett észre magától** — újraindítás kellett hozzá.
 
+#### Az app neve Amphi (2026-08-13-i kérés) ✅ a kódban és a fejlesztői stackben
+
+Kérés, két lépésben, ugyanabban a körben: „az aioseerr nevet eldobnám, nevezd át »Lumina«-ra; a kódban is mindenhol írd át (ahol szükséges ott kisbetűvel írd hogy lumina)", majd „Lumina helyett inkább Amphi legyen a neve".
+
+**A Lumina-kör nyomot hagyott egy helyen, és ott is kell hagyni.** A kategóriát védő migráció mappája `20260813180000_renamed_to_lumina`, mert a Lumina-átnevezéssel együtt készült és **le is futott** ezen az adatbázison. A Prisma az alkalmazott migrációkról checksumot tárol: sem a mappa nevét, sem a tartalmát nem lehet utólag átírni anélkül, hogy a következő `migrate deploy` „módosított/hiányzó migráció"-val elszálljon. Tehát a fájl marad, a benne írt régi érték (`aioseerr`) pedig továbbra is helyes — ld. a lenti 1. pontot. Mindenütt máshol a Lumina egy óráig sem élt: nem került ki commitba, nem írt taget a kliensbe, és a `lumina` nevű adatbázis/szerepkör ugyanazzal a két `ALTER`-rel lett `amphi`.
+
+**A név két alakja.** Ami az embernek szól, az **Amphi** (a sidebar szómárka, a login és a setup lap, az értesítés próbaüzenete); ami azonosító, az **amphi** (csomagnév, cookie-k, konténer- és service-nevek, DB-név és -szerepkör, image, qBittorrent-tag és -kategória, hosztnevek a példákban).
+
+**Három olyan hely volt, ahol az átnevezés nem szöveg, hanem adat.**
+
+1. **A qBittorrent-kategória.** A `TORRENT_CATEGORY` defaultja `aioseerr` volt, és a default az, amit egy sor nélküli install használ — vagyis az átnevezés a scannert egy nem létező kategóriára állította volna. Onnantól minden kezelt torrent „eltűnt a kliensből", ami ebben az appban azt jelenti, hogy **visszakerül a watchlistre és újra letöltődik**. Ezért a `20260813180000_renamed_to_lumina` migráció a régi értéket **döntésként írja be** — de csak ott, ahol még nincs sor rá, *és* ahol már van user (egy friss install minden migrációt lefuttat használat előtt, és nem örökölhet nevet a történelemből). A befejezéshez: átnevezni a kategóriát a qBittorrentben, aztán a beállítás melletti reset — az törli a sort, és a registry defaultja (`amphi`) veszi át.
+2. **A library-tag.** `aioseerr-<install>-<sor>` → `amphi-<install>-<sor>`. Kompatibilitási út **nincs**, és nem is kell: a tag csak a torrent hozzáadása és a hash visszaolvasása közti másodpercekben él, és a rename pillanatában **0 élő sor követett torrentet** (lemérve). Ami a kliensben `aioseerr-…` taget hord, az egy olyan install torrentje, ami ez az adatbázis sosem volt (ld. „A library idegen release-neveket írt ki").
+3. **A cookie-k.** `amphi_session`, `amphi_oidc`, `amphi_locale`. Következmény: **mindenki egyszer újra bejelentkezik**, és a nyelvválasztás visszaáll a defaultra. A régi session sorok a DB-ben maradnak a lejáratukig; nem használja őket semmi.
+
+Ezen kívül kikerült a `torrent.ts`-ből négy régi, **használaton kívüli** tag-építő (`aioseerr-manual`, `-movie-`, `-episode-`, `-season-`): ilyen alakú tagek még vannak a kliensben, és pont ezek azok, amikre semmi nem illeszkedhet.
+
+**A fejlesztői stack át van nevezve, adatvesztés nélkül.** A dev DB nem named volume, hanem **bind mount** (`.docker/.db-data`), tehát a projekt- és konténernevek átírása nem mozdítja az adatot. A klaszterben:
+
+```
+ALTER DATABASE aioseerr RENAME TO lumina;   majd  ALTER DATABASE lumina RENAME TO amphi;
+ALTER ROLE     aioseerr RENAME TO lumina;         ALTER ROLE     lumina RENAME TO amphi;
+ALTER ROLE lumina WITH PASSWORD 'lumina';         ALTER ROLE amphi WITH PASSWORD 'amphi';
+```
+
+Az adatbázist a `postgres` adatbázisból kell átnevezni (amihez épp kapcsolódsz, azt nem lehet), a szerepkört pedig **nem tudja átnevezni önmaga**: „session user cannot be renamed" — kellett hozzá egy eldobható superuser, amit utána a már átnevezett szerepkör dobott el.
+
+A jelszó SCRAM-SHA-256, amit az átnevezés **nem** töröl (az md5-öt igen — ezért volt érdemes megnézni). Utána `docker compose down --remove-orphans` (a régi konténerek a compose fájlban átnevezett service-ek miatt orphanná váltak, tehát a sima `down` nem vitte el őket), `.env` átírása (`DATABASE_HOST/USER/PASS/NAME`, `COMPOSE_PROJECT_NAME`), majd `up -d`.
+
+**Mérve az átnevezés után:** `prisma migrate status` → 25 migráció, `Database schema is up to date!` (tehát az alkalmazott `renamed_to_lumina` checksumja is stimmel), a séma az `amphi` adatbázisban; 7 library sor, 3 user, 17 beállítás megvan; a scheduler elindul; `tsc --noEmit` és `next lint` tiszta; a `/`, `/library`, `/settings`, `/details/movie/634649`, `/person/1136406` mind 200, mindegyiken ott az „Amphi", és egyiken sincs „aioseerr". A `TORRENT_CATEGORY` a settingből `aioseerr`-t ad, és a kliensből **továbbra is látszik mind a 2 kezelt torrent** — pontosan ez volt a cél.
+
+**Amire figyelni kell.**
+
+1. **A konténerek neve `amphi_app` és `amphi_db`** — a fejlesztői műveletek (6. pont) parancsai ezzel vannak átírva, de a régi parancsokat tudó szkriptek/jegyzetek nem tudnak róla.
+2. **A GitHub-repó és a remote még `aioseerr`**, a compose viszont már `ghcr.io/gptrk0/amphi`-t húz — ld. „Amit legközelebb kézzel meg kell tenni" 1. pontja.
+3. **Ha van futó éles telepítés**, annak a compose fájlja most `amphi` nevű DB-t, szerepkört és volume-ot ír. Ott a volume **named volume**, tehát a projektnév átírása egy **üres** volume-ot ad és egy friss adatbázist — előbb ugyanazt a két `ALTER`-t kell lefuttatni, a volume tartalmát átmásolni (vagy a volume nevét pinnelni), és csak utána `up -d`. Ez a lépés nincs megtéve; ez a doksi az egyetlen helye.
+4. **Ez a dokumentum szándékosan nem lett teljesen átírva.** Amit rögzít — egy mért kimenet, egy naplósor, egy incidens tagje (`aioseerr-13`, `aioseerr-faec3069-12`), egy akkori hosztnév — az attól nem lett más, hogy az app nevet váltott; azok átírása a rekordot hamisítaná meg. Utasítás, cím és jelenlegi azonosító át van írva, idézet és történet nem.
+5. **A migráció neve nem az app neve.** A `renamed_to_lumina` mappanév egy lefutott migrációt azonosít, nem az appot — átnevezni nem lehet (checksum), és nem is kell: a migráció tartalma attól helyes, hogy a *régi* kategóriát (`aioseerr`) írja be, nem attól, hogy hogy hívják. A benne lévő komment is „lumina"-ra hivatkozik mint új default; ez ugyanezért nem javítható, és ez a bekezdés a helyesbítése. A registry defaultja `amphi`.
+6. **A repó könyvtára maradt `aioseerr`** a lemezen, mert a munkakönyvtár átnevezése minden nyitott shellt, a compose bind mountját és a git remote-ot egyszerre érinti — az külön, kézi lépés, nem kódmódosítás.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -1803,7 +1842,7 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 **Állapot (2026-08-09):** Fázis 1–6 kész, a Fázis 7 üzemeltetési tételei is (lint tiszta, `.gitattributes`, `entrypoint.sh`, letöltési mappák, duplikált `prisma.config.ts`, stall-kezelés, log a felületen). A Fázis 8-ból megvan a **settings UI**, a **Telegram-értesítések** és az **admin log oldal**. Az adatmodellből kikerültek a nem figyelt epizódok sorai (ld. „Csak a figyelt részeknek van sora"), a watchlist és a library pedig két külön táblára és két külön szerepre vált szét, seed-időszakkal (ld. „A watchlist keres, a library birtokol"). Az app **be van zárva**: bejelentkezés, admin/user szerepkör és OpenID Connect (ld. „Bejelentkezés, szerepkörök, Authentik"). Ami maradt: **fájlok rendezése** (a seedelés kérdését a library megválaszolta, az átnevezés/hardlinkelt könyvtár nem), médiaszerver-integráció, és további értesítési csatornák (böngésző push, Discord). Az **éles telepítés** megvan: kiadott image és egy compose fájl (ld. „Éles telepítés: egy image, egy compose").
 
 ### Amit legközelebb kézzel meg kell tenni
-1. **Push** — a remote megvan (`github.com/gptrk0/aioseerr`), a commitok viszont még mindig egyetlen gépen. Push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre. Ez egyben a kiadás feltétele is: a GHCR image az első push után épül meg magától, és amíg nincs image, a végfelhasználói compose fájlnak nincs mit lehúznia.
+1. **A repó átnevezése, aztán push** — a remote még `github.com/gptrk0/aioseerr`, a kód viszont már `ghcr.io/gptrk0/amphi`-t hivatkozik (compose, README). Amíg a GitHub-repó nincs átnevezve `amphi`-ra (és a remote URL-je átállítva), a végfelhasználói compose olyan image-re mutat, ami nem létezik. A commitok is egyetlen gépen vannak még; push előtt érdemes megismételni a titok-ellenőrzést, most a teljes történetre. A GHCR image az első push után épül meg magától.
 2. **Indítás**: `docker compose up -d` — a konténer magától felteszi a függőségeket, generálja a Prisma klienst, felviszi a migrációkat, majd elindítja a dev szervert (és vele a schedulert az `instrumentation.ts`-ből). Ez a sor jelzi, hogy megvan: `[scheduler] started, scanning every 15 minutes, reading the client back every 1` — ugyanez a `/log` oldalon is ott van. `entrypoint.sh` módosítása után `--build` kell.
 3. **A dry run ki van** (Settings / Scanner), tehát a scanner valódi letöltéseket indíthat. A kézi letöltés ettől függetlenül mindig valódi volt — 2026-08-08-án az *Obsession* így jött le. Kézi kör: `POST /api/scan`, teljes kikapcsolás: `SCAN_DISABLED=1`.
 4. **A watchlisten két elem van** (2026-08-08, 21:00): egy `UPCOMING` sorozat és egy `DOWNLOADED` film. Egy scan-kör tehát ma nem keres semmit — az `UPCOMING` epizódjait a megjelenési dátum tartja vissza, és ez így helyes.
@@ -1812,25 +1851,25 @@ A Fázis 1 → 2 → 3 a lényegi új funkció (watchlist → automatikus letöl
 
 ## 6. Fejlesztői műveletek (jegyzet)
 
-Az adatbázis csak a docker hálózaton belülről érhető el (`DATABASE_HOST=aioseerr_db`), ezért minden Prisma művelet a konténerben fut:
+Az adatbázis csak a docker hálózaton belülről érhető el (`DATABASE_HOST=amphi_db`), ezért minden Prisma művelet a konténerben fut:
 
 ```bash
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate status
-docker exec -w /home/bun/app aioseerr_app bunx tsc --noEmit
+docker exec -w /home/bun/app amphi_app bunx prisma migrate status
+docker exec -w /home/bun/app amphi_app bunx tsc --noEmit
 ```
 
 A `prisma migrate dev` **nem használható nem-interaktív shellből** ("Prisma Migrate has detected that the environment is non-interactive") — de a `--create-only` igen, mert az nem kérdez semmit. Ez a rövidebb út, és a `20260808194024_log_entries` így készült:
 
 ```bash
 # 1. a migráció legenerálása (nem alkalmazza, csak megírja)
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate dev --name <nev> --create-only
+docker exec -w /home/bun/app amphi_app bunx prisma migrate dev --name <nev> --create-only
 
 # 2. alkalmazás + kliens újragenerálás
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate deploy
-docker exec -w /home/bun/app aioseerr_app bunx prisma generate
+docker exec -w /home/bun/app amphi_app bunx prisma migrate deploy
+docker exec -w /home/bun/app amphi_app bunx prisma generate
 
 # 3. ha a migráció a meglévő adat JELENTÉSÉT változtatja: azonnali újraindítás
-docker compose restart aioseerr_app
+docker compose restart amphi_app
 ```
 
 A 3. lépés nem formalitás. A schedulert az `instrumentation.ts` indítja a boot-nál, és **az a modulgráf nem esik a hot reload hatálya alá**: a futó szerver a régi függvényeket tartja a memóriájában, amíg a processz él. Egy olyan migráció után, ami átírja, mit jelent a meglévő adat, ez azt jelenti, hogy a **régi szabály fut az új adaton** — 2026-08-09-én pontosan ez indított 65 GB nem kért letöltést (ld. „Csak a figyelt részeknek van sora" / Incidens). Tiszta séma-bővítésnél (új, defaultos oszlop) elég a `generate`.
@@ -1839,13 +1878,13 @@ Ha a `--create-only` mégis elakadna (shadow adatbázis nélküli környezetben)
 
 ```bash
 # SQL legenerálása az élő DB → új schema diffből
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate diff \
+docker exec -w /home/bun/app amphi_app bunx prisma migrate diff \
   --from-config-datasource --to-schema prisma/schema.prisma --script
 
 # a kimenet mentése ide: prisma/migrations/<YYYYMMDDHHMMSS>_<nev>/migration.sql, majd deploy + generate
 ```
 
-**`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még nem is ismeri az új modellt). 2026-08-08 óta viszont **elég a `docker restart aioseerr_app`**: az `entrypoint.sh` minden induláskor generál és migrál, tehát a fenti két lépést nem kell külön kiadni — csak akkor, ha a szervert nem akarod újraindítani.
+**`prisma generate` után a dev szervert újra kell indítani** — a turbopack nem figyeli a `prisma/generated` mappát, így a futó szerver a régi klienst tartja memóriában, és a routeok 500-al elhalnak (a régi kliens még nem is ismeri az új modellt). 2026-08-08 óta viszont **elég a `docker restart amphi_app`**: az `entrypoint.sh` minden induláskor generál és migrál, tehát a fenti két lépést nem kell külön kiadni — csak akkor, ha a szervert nem akarod újraindítani.
 
 **Env-változók (2026-08-08 óta mindössze négy).** A `.env` már csak azt tartalmazza, amit a `Setting` tábla elérése *előtt* tudni kell: `APP_ENV`, `APP_PORT`, a `DATABASE_*` (ebből a `DATABASE_URL` áll össze) és a `SCAN_DISABLED`. Minden más beállítás a táblából jön, a defaultja pedig a [settings.ts](src/lib/settings.ts) registryjében van — ott egy helyen látszik mind, a csoportjával, a típusával és a súgójával együtt. Egy kivétellel: a **nyelvi szabályok nincsenek itt**, azok a felhasználó sorában élnek (ld. „Mindenkinek saját nyelve"). A `.env` átírásának **nincs hatása** egyetlen beállításra sem.
 
@@ -1861,15 +1900,15 @@ A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` **már nincs a kódban** (20
 
 ```bash
 docker compose pull && docker compose up -d                       # frissítés
-docker exec aioseerr node node_modules/prisma/build/index.js migrate status
-docker logs -f aioseerr                                           # ugyanaz, ami a /log oldalon
+docker exec amphi node node_modules/prisma/build/index.js migrate status
+docker logs -f amphi                                           # ugyanaz, ami a /log oldalon
 ```
 
 Az image kipróbálása push nélkül, a fejlesztői stack érintése nélkül (a `-p` és a port-override miatt nem ütközik vele):
 
 ```bash
-docker build -t aioseerr:test .
-docker compose -p aioseerr-prodtest -f docker-compose.yml -f <(echo 'services: {aioseerr: {image: aioseerr:test, ports: !override ["3999:3000"]}}') up -d
+docker build -t amphi:test .
+docker compose -p amphi-prodtest -f docker-compose.yml -f <(echo 'services: {amphi: {image: amphi:test, ports: !override ["3999:3000"]}}') up -d
 ```
 
 **Nyelv:** a kód és a kommentek angolok. A felület **két nyelven** van (2026-08-11 óta), és a TMDB metaadat azt a nyelvet követi, amit az olvasó választott — beállítás nélkül. A napló, az értesítések és a release-nevekhez hasonlított címek maradnak az egy, rögzített nyelven. Ez a terv-dokumentum marad magyar.

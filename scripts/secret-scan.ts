@@ -5,7 +5,7 @@
  * Since the settings moved out of the env, `grep`-ing the diff for `.env` values is not
  * enough any more: the tokens now live in the database.
  *
- *   git diff --cached | docker exec -i aioseerr_app bun scripts/secret-scan.ts
+ *   git diff --cached | docker exec -i amphi_app bun scripts/secret-scan.ts
  */
 
 import { readFileSync } from "node:fs";

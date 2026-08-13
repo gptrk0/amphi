@@ -100,11 +100,16 @@ export const expiresAt = (item: LibraryRow) => {
  * The install's own id is in there because a row id is only unique inside one database,
  * while a tag in qBittorrent outlives every database that ever wrote it. A second install
  * on the same client, or a recreated one, hands out id 12 again — and the lookup then
- * finds the *old* torrent that still carries `aioseerr-12`. On 2026-08-11 that is how the
+ * finds the *old* torrent that still carries the same tag. On 2026-08-11 that is how the
  * Devil Wears Prada 2 row came to follow a stranger's Obsession torrent while the film it
  * actually downloaded sat in the client with nothing pointing at it. See `installId`.
+ *
+ * The prefix was `aioseerr-` until the app was renamed on 2026-08-13. Nothing reads the old
+ * one: a tag is only used in the seconds between adding a torrent and reading its hash back,
+ * and no row was between those two points when the name changed. Whatever still carries an
+ * `aioseerr-…` tag in the client is a torrent from an install this database never was.
  */
-export const libraryTag = async (itemId: number) => `aioseerr-${ await installId() }-${ itemId }`;
+export const libraryTag = async (itemId: number) => `amphi-${ await installId() }-${ itemId }`;
 
 /**
  * The live row that is already following this torrent, if there is one. Two rows on one

@@ -89,7 +89,7 @@ export const SETTINGS: SettingDef[] = [
     { key: "TORRENT_URL", group: "Torrent client", label: "qBittorrent URL", type: "string", placeholder: "http://host:8080" },
     { key: "TORRENT_USER", group: "Torrent client", label: "User", type: "string" },
     { key: "TORRENT_PASS", group: "Torrent client", label: "Password", type: "string", secret: true },
-    { key: "TORRENT_CATEGORY", group: "Torrent client", label: "Category", type: "string", default: "aioseerr", help: "Everything this app manages carries it, and nothing outside it is ever touched." },
+    { key: "TORRENT_CATEGORY", group: "Torrent client", label: "Category", type: "string", default: "amphi", help: "Everything this app manages carries it, and nothing outside it is ever touched." },
     { key: "TORRENT_MOVIE_PATH", group: "Torrent client", label: "Film save path", type: "string", help: "As qBittorrent sees it. Empty leaves the destination to the category." },
     { key: "TORRENT_SERIES_PATH", group: "Torrent client", label: "Series save path", type: "string" },
 
@@ -145,9 +145,9 @@ export const SETTINGS: SettingDef[] = [
     // Access
     { key: "AUTH_SESSION_DAYS", group: "Access", label: "Stay signed in for (days)", type: "number", default: "30", help: "Counted from the last request, not from the login, so somebody who uses the app never gets thrown out. 0 = never expires, until somebody signs out or the account is switched off. Shortening this reaches the sessions that are already open." },
     { key: "AUTH_ALLOW_PASSWORD", group: "Access", label: "Allow the password form", type: "boolean", default: "1", help: "Off leaves single sign-on as the only way in — and is ignored while no provider is configured, so this cannot be the setting that locks you out." },
-    { key: "AUTH_PUBLIC_URL", group: "Access", label: "Public address of this app", type: "string", placeholder: "https://aioseerr.example.com", help: "Only needed for single sign-on behind a proxy that does not send X-Forwarded-Host: it is what the redirect back from the provider is built from. The callback address at the top of this tab follows it." },
+    { key: "AUTH_PUBLIC_URL", group: "Access", label: "Public address of this app", type: "string", placeholder: "https://amphi.example.com", help: "Only needed for single sign-on behind a proxy that does not send X-Forwarded-Host: it is what the redirect back from the provider is built from. The callback address at the top of this tab follows it." },
     { key: "AUTH_OIDC_ENABLED", group: "Access", label: "Single sign-on", type: "boolean", default: "0", help: "OpenID Connect — Authentik, Authelia, Keycloak, Google. The provider is asked what its endpoints are, so the issuer below is all it needs. It always asks for `openid profile email`, and the callback address to register is at the top of this tab." },
-    { key: "AUTH_OIDC_ISSUER", group: "Access", label: "Issuer URL", type: "string", placeholder: "https://auth.example.com/application/o/aioseerr/", help: "Authentik prints it on the provider page. Everything else is read from its .well-known/openid-configuration." },
+    { key: "AUTH_OIDC_ISSUER", group: "Access", label: "Issuer URL", type: "string", placeholder: "https://auth.example.com/application/o/amphi/", help: "Authentik prints it on the provider page. Everything else is read from its .well-known/openid-configuration." },
     { key: "AUTH_OIDC_CLIENT_ID", group: "Access", label: "Client id", type: "string" },
     { key: "AUTH_OIDC_CLIENT_SECRET", group: "Access", label: "Client secret", type: "string", secret: true, help: "Leave empty for a public client — the flow uses PKCE either way." },
     { key: "AUTH_OIDC_AUTO_CREATE", group: "Access", label: "Create an account on first sign-in", type: "boolean", default: "1", help: "On: whoever the provider lets through gets an account here, as a plain user. Off: only somebody already on the users page can sign in." },

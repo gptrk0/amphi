@@ -77,7 +77,7 @@ export default function Page() {
         <div className="flex min-h-screen items-center justify-center p-6">
             <div className="w-full max-w-sm space-y-6">
                 <div className="space-y-2 text-center">
-                    <span className={classNames(teko.className, "text-6xl")}>aioseerr</span>
+                    <span className={classNames(teko.className, "text-6xl")}>Amphi</span>
 
                     <p className="text-sm text-muted-foreground">
                         { t("auth.setupIntro") }

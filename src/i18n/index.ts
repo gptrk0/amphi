@@ -32,7 +32,7 @@ export type Locale = typeof LOCALES[number];
 
 export const DEFAULT_LOCALE: Locale = "en";
 
-export const LOCALE_COOKIE = "aioseerr_locale";
+export const LOCALE_COOKIE = "amphi_locale";
 
 // in its own language, always — somebody looking for Hungarian is looking for "Magyar"
 export const LOCALE_NAMES: Record<Locale, string> = { en: "English", hu: "Magyar" };

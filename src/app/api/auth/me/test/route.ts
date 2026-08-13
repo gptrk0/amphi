@@ -34,7 +34,7 @@ export async function POST(req: Request) {
         return Response.json({ success: false, message: "There is no webhook to test yet." }, { status: 400 });
     }
 
-    const result = await callWebhook(url, webhookFields("ready", "A test from aioseerr", "if you can read this, it works"));
+    const result = await callWebhook(url, webhookFields("ready", "A test from Amphi", "if you can read this, it works"));
 
     await logInfo(
         "notify",

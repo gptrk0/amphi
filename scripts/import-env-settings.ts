@@ -5,7 +5,7 @@
  * Kept in the repo as the record of that move. Running it again is harmless — a key that
  * already has a row is never touched, so it cannot overwrite something edited since.
  *
- *   docker exec aioseerr_app bun scripts/import-env-settings.ts
+ *   docker exec amphi_app bun scripts/import-env-settings.ts
  */
 
 import { SETTINGS } from "../src/lib/settings";

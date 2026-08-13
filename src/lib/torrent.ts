@@ -42,11 +42,11 @@ export type TorrentStatus = {
 
 const category = () => settingText("TORRENT_CATEGORY");
 
-export const MANUAL_TAG = "aioseerr-manual";
-
-export const movieTag = (watchlistId: number) => `aioseerr-movie-${ watchlistId }`;
-export const episodeTag = (unitId: number) => `aioseerr-episode-${ unitId }`;
-export const seasonTag = (watchlistId: number, seasonNumber: number) => `aioseerr-season-${ watchlistId }-${ seasonNumber }`;
+// The four tag builders that used to live here (`aioseerr-manual`, `aioseerr-movie-…`,
+// `-episode-…`, `-season-…`) are gone with the name: nothing had called them since the
+// library became one row per download, and every tag this app writes now comes from
+// `libraryTag`. Tags in that shape still exist in the client from older versions — see the
+// note on `libraryTag` — and they are exactly what nothing here should be matching.
 
 const COMPLETE_STATES = [ "uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP", "forcedUP", "checkingUP" ];
 const FAILED_STATES = [ "error", "missingFiles" ];

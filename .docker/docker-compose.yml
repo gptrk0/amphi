@@ -1,6 +1,6 @@
 services:
-    aioseerr_app:
-        container_name: aioseerr_app
+    amphi_app:
+        container_name: amphi_app
         build:
             context: .
             dockerfile: Dockerfile
@@ -16,11 +16,11 @@ services:
         # only do that once the database answers. It retries either way — this is what
         # keeps the usual start quiet.
         depends_on:
-            aioseerr_db:
+            amphi_db:
                 condition: service_healthy
 
-    aioseerr_db:
-        container_name: aioseerr_db
+    amphi_db:
+        container_name: amphi_db
         image: postgres:17.7
         environment:
             POSTGRES_USER: ${DATABASE_USER}

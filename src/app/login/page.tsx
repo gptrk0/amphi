@@ -148,7 +148,7 @@ export default function Page() {
         <div className="flex min-h-screen items-center justify-center p-6">
             <div className="w-full max-w-sm space-y-6">
                 <div className="text-center">
-                    <span className={classNames(teko.className, "text-6xl")}>aioseerr</span>
+                    <span className={classNames(teko.className, "text-6xl")}>Amphi</span>
                 </div>
 
                 <Suspense fallback={<Skeleton className="h-56 w-full" />}>

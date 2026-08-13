@@ -1,4 +1,4 @@
-# aioseerr
+# Amphi
 
 Browse films and series, put them on a watchlist, and let the box fetch them on its own. It
 searches your indexers through Jackett or Prowlarr, scores what comes back — resolution,
@@ -14,7 +14,7 @@ answer, kept in its own database.
 Two containers, one file, no configuration:
 
 ```bash
-curl -O https://raw.githubusercontent.com/gptrk0/aioseerr/master/docker-compose.yml
+curl -O https://raw.githubusercontent.com/gptrk0/amphi/master/docker-compose.yml
 docker compose up -d
 ```
 
@@ -71,7 +71,7 @@ The dev container also runs Prisma Studio on port 5555. Prisma commands go throu
 the database is only reachable on the docker network:
 
 ```bash
-docker exec -w /home/bun/app aioseerr_app bunx prisma migrate status
+docker exec -w /home/bun/app amphi_app bunx prisma migrate status
 ```
 
 The plan document, the measurements behind every decision and the operational notes are in

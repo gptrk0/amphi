@@ -4,7 +4,7 @@
  * `auth.ts` would drag Prisma and node's crypto into a bundle that cannot have them.
  */
 
-export const SESSION_COOKIE = "aioseerr_session";
+export const SESSION_COOKIE = "amphi_session";
 
 /** Carries the oauth state and the PKCE verifier across the trip to the provider. */
-export const STATE_COOKIE = "aioseerr_oidc";
+export const STATE_COOKIE = "amphi_oidc";

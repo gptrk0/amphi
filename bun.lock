@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "aioseerr",
+      "name": "amphi",
       "dependencies": {
         "@prisma/adapter-pg": "7.1.0",
         "@prisma/client": "^7.1.0",
