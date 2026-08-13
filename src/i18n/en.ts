@@ -556,8 +556,23 @@ export const en = {
         haveAll: "{lines} — already downloaded in {languages}, so there is nothing left to fetch.",
         notFound: "Not on your indexers right now. Add it to your watchlist and it will be downloaded as soon as it shows up?",
         notFoundFiltered: "Not on your indexers right now — {n} results were filtered out by your quality profile. Add it to your watchlist and it will be downloaded as soon as it shows up?",
-        filtered: "{n} more results were filtered out by your quality profile.",
-        filteredOne: "1 more result was filtered out by your quality profile.",
+        showMore: "Show {n} more releases the profile passed over",
+        hideMore: "Hide those releases",
+        filtered: "{n} of these were thrown away by your quality profile — the reason is on the line.",
+        filteredOne: "1 of these was thrown away by your quality profile — the reason is on the line.",
+        // why a release is in the second half of the list. The size, the seeders and the
+        // resolution are on the line above, so these only name the kind of refusal
+        rejection: {
+            noLink: "nothing to download",
+            blocked: "tried once and dropped",
+            seeders: "too few seeders",
+            tooBig: "over your size limit",
+            excluded: "excluded keyword",
+            mismatch: "does not look like this title",
+            language: "not in a language you want",
+            resolution: "resolution you do not want",
+            tooSmall: "too small for its resolution"
+        },
         releases: "{n} releases",
         bestMatch: "best match",
         pack: "pack",

@@ -1721,6 +1721,53 @@ API:  GET /api/library -> keepRange {min:3,max:60}, a soron keepDays/keepDaysDef
 
 **Amire figyelni kell.** A migráció (`20260813120000_library_keep_days`) **a meglévő sorokra is érvényes**, a befejezés dátumától — egy 08-09-én elkészült film 5 napja tehát már le is telt. Ebben az adatbázisban ez semmit nem érintett: a hét `Library` sor **mindegyike `removedAt`-os tombstone**, azokat a takarító nem is nézi (ez a mérés előtt le van ellenőrizve). Egy másik installon viszont, ahol van élő sor, az első kör a régi letöltéseket elviheti — a fájlokkal együtt —, ezért ott a frissítés előtt érdemes a libraryban a hosszabb megőrzést beírni. A `Setting` táblából a `LIBRARY_RETENTION_DAYS` sora törlődik (itt nem is volt ilyen sor, a default 7 volt érvényben).
 
+#### A kiadásválasztó vízszintesen görgethető lett (2026-08-13-i bejelentés) ✅ a kódban, böngészőben nem próbáltam
+
+Bejelentés (képernyőképpel, Spider-Man: No Way Home): „a modal vízszintesen görgethető, mert kilóg a torrent neve".
+
+**Nem a `truncate` hiányzott — az ott volt, csak nem volt mihez vágnia.** A `DialogContent` `grid`, oszlop-definíció nélkül: az implicit track **soha nem szűkebb a benne lévő legszélesebb dolognál**. Egy 79 karakteres, szóköz nélküli release-név (`Spider-Man.No.Way.Home.2021.2160p.CEE.UHD.Blu-ray.HEVC.DoVi.TrueHD.Atmos.7.1-4k`) így a dialógus `max-w-2xl`-jén (672 px) túlra nyitotta a tracket, a sorok ehhez méreteződtek — ezért lógott ki a kijelölt sor háttere is a dialógus széle mögé —, a `truncate` pedig egy nála szélesebb szülőben nem vág semmit. A `max-h-[85vh] overflow-y-auto` miatt az `overflow-x` `auto`-ra számolódik, tehát a kilógásból **vízszintes scrollbar** lett a modal alján.
+
+- **A javítás egy utility a `DialogContent`-en: `grid-cols-1`**, ami a Tailwindben `repeat(1, minmax(0, 1fr))` — vagyis a track *lehet* szűkebb a tartalmánál. Ez az egész appra megy, tehát nem csak a kiadásválasztó, hanem minden dialógus immunis rá.
+- A kiadásválasztóban a szülő-lánc megkapta a `min-w-0`-t, a részletsor is `truncate`-et, a release-nevek pedig **`title`-t**: a levágott név így hoverre elolvasható.
+- `overflow-x-hidden` a dialóguson: nem ez tartja a layoutot, hanem garancia — ha egyszer mégis kilóg valami, az levágódik, és nem lesz belőle oldalra tolható ablak.
+- Menet közben két saját méréstévedés: a `max-w-[calc(100%-2rem)]` **le van generálva** (a Tailwind normalizálja a `calc`-ot, csak az escape-elt alakra kell keresni), és a `grid-cols-[minmax(0,1fr)]` viszont **nem** — ezért lett a kész `grid-cols-1`.
+
+**Amit ebből nem mértem:** böngésző nincs ebben a környezetben (se puppeteer, se chromium), tehát a dialógust magát nem nyitottam meg. Ami mérve van: a `grid-cols-1` szabály tényleg `minmax(0, 1fr)`-t ad a lefordított CSS-ben, `tsc --noEmit` és `next lint` tiszta, a `/`, `/library`, `/series` és a bejelentésben szereplő `/details/movie/634649` 200-nal renderel. A vizuális ellenőrzés (nyisd meg a Download ablakot ezen a filmen) még hátravan.
+
+#### A kiszűrt találatok is választhatók (2026-08-13-i kérés) ✅
+
+Kérés: „a »14 more results were filtered out by your quality profile« szövegre kattintva nyíljon le és mutassa meg a többi találatot is; és jó lenne egy elválasztó az első `DOWNLOAD_OPTION_COUNT` és a maradék között".
+
+**Kiderült, hogy a maradék eddig nem is létezett a kliensben — és a fele a szerveren sem.** A `toOptions` az elfogadott jelöltekből az első `DOWNLOAD_OPTION_COUNT`-ot tartotta meg, a többit **eldobta**, az elutasítottakból pedig csak egy darabszám maradt. Vagyis a lenyíló nem megjelenítés kérdése volt: a plan-be be kell kerülnie annak, amit eddig kidobott.
+
+- A `ReleaseOptions` új mezője az **`extras`**: előbb az elfogadott, de a listába már be nem férő release-ek (a profil saját sorrendjében — ezeket vinné a következőnek), utána az elutasítottak seeder szerint, mindegyik az okával. A `filtered` marad, amit eddig jelentett (mennyit dobott el a profil), mert az a „semmi nem jött be" üzenetnek kell.
+- **Az ok kódot kapott.** A `RejectedRelease` mostantól `{ code, reason }`: a `reason` az angol mondat a naplónak, a `code` a kulcs a felületnek — mert azt olyan olvassa, akinek a felülete magyar, a mondatban lévő számok (méret, seeder, felbontás) pedig ott vannak a sor mellett. Kilenc kód, mind a két nyelven fordítva.
+- **Választani is lehet belőlük**, nem csak látni: az `applyPicks` a `candidates` és az `extras` egyesített halmazából keresi a guid-ot. Ez szándékosan így van, és a `grabContext` doc-comment már eddig is ezt mondta: „a letöltés dialógus nyitottan építi a profilt, mert aki a listát nézi, tudatosan választhat mást". A sor kiírja, mit nem szeretett benne a profil (borostyán színnel), és a becsukott sor is kiírja, ha a kiválasztott release ilyen — különben egy összecsukott ablak elhallgatná, hogy mi fog letöltődni.
+- **Az elválasztó maga a kapcsoló**: az elfogadott lista alatt egy `border-t`-s sor („További {n} találat, amit a profil kihagyott — megjelenítés"), alatta nyílik a második csoport.
+- **Két fajta nem jelenik meg, akármeddig nyitod** (a második a 2026-08-13-i pontosításból: „a kevés seederrel lévőket a lenyitott menüben se kell mutatni"): aminek **nincs letöltési linkje**, és ami a **seeder-minimum alatt** van. Egyiket sincs miből letölteni — választásnak látszó zsákutcák. A `filtered` összesítésben (a „semmi nem jött be, N-et kiszűrt a profilod" mondatban) viszont továbbra is benne vannak, mert a profil tényleg eldobta őket.
+- Emiatt a soronkénti „ebből N-et a profilod dobott el" szám **a látható listából számol** a kliensen, nem a szerver darabszámából — így nem tud többet állítani, mint ami a képernyőn van. A `GrabChoice.filtered` ezzel feleslegessé vált, és ki is került.
+
+**Mérve** (dobható szkript, `buildPreview` a valódi indexereken — az csak keres, nem ad hozzá torrentet; a Spider-Man: No Way Home-mal, ami a kérésben szerepelt):
+
+```
+DOWNLOAD_OPTION_COUNT = 5
+elsőre (a seeder-szűrés előtt):
+  Movie: 5 kiajánlva, 39 extra, ebből 14 amit a profil eldobott
+  extra kódok: mismatch (a magyar címűek), seeders (0 seeder)   → a többi elfogadott, csak nem fért be
+  pick az extrákból: Pokember.Nincs.hazaut… (mismatch)  -> a plan ezt tartja: igen
+  ismeretlen guid:   a plan változatlan
+a seeder-minimum alattiak kizárása után, ugyanaz a film:
+  Movie: 5 kiajánlva, 29 extra (4 ebből elutasított)
+  extra bontás: { accepted: 25, mismatch: 4 }
+  minimum alatti sor a listában: 0     a legkevesebb seeder, ami látszik: 1
+  a kérés szintű filtered: 14          (változatlan jelentés)
+TV: S03E01 és egy évadcsomag sor is megkapta az új mezőt (ezekben épp 0 extra volt)
+```
+
+Eddig tehát 44 találatból 19 volt látható, most 34 — a kimaradó 10 az, amit nincs kitől letölteni.
+
+**Amire figyelni kell.** (1) A magyar szinkronos kiadások (`Pokember.Nincs.hazaut…`, `Pókember - Nincs hazaút BD50`) **`mismatch` okkal esnek ki** — a hamis-release védelem nem ismeri fel bennük a címet. Most legalább látszik, és kézzel választható; hogy a `mediaTitles` miért nem hozza a magyar címet, az külön kérdés. (2) Ha egy sornak a kiajánlott listájában nincs a te nyelveden semmi, a nyelvi figyelmeztetés (és a pipa) akkor is előjön, ha az extrákból épp magyart választasz — a figyelmeztetés a keresés eredményéből számol, nem a választásból. Többet figyelmeztet, nem kevesebbet. (3) Ahol **egyetlen** elfogadott találat sincs, ott továbbra sincs sor, tehát nincs mit lenyitni: az az ablak a „nincs meg, felvegyük watchlistre?" válasza. Ezt szándékosan nem alakítottam át, mert a `missing`/watchlist út erre a feltevésre épül.
+
 ---
 
 ## 5. Javasolt sorrend

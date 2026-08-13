@@ -9,12 +9,13 @@ import {
     planMovieGrab,
     planSeasonGrab,
     planSeasonGrabs,
+    ReleaseOptions,
     SeasonPlan,
     StartedDownload
 } from "@/lib/grab";
 import { effectiveLanguages, parseResolution, QualityProfile } from "@/lib/release";
 import { settingNumber } from "@/lib/settings";
-import { DownloadPreview, GrabChoice, GrabOption, MissingSeason } from "@/types/download";
+import { DownloadPreview, GrabChoice, GrabOption, MissingSeason, RejectionCode } from "@/types/download";
 
 export type SeasonRequest = {
     seasonNumber: number;
@@ -98,7 +99,7 @@ export const getStoredPlan = (id: string) => {
     return plan.createdAt + ttlMs() < Date.now() ? null : plan;
 };
 
-const toOption = (release: IndexerResult, profile: QualityProfile): GrabOption => {
+const toOption = (release: IndexerResult, profile: QualityProfile, rejection: RejectionCode | null = null): GrabOption => {
     return {
         guid: release.guid || release.link,
         title: release.title,
@@ -108,8 +109,14 @@ const toOption = (release: IndexerResult, profile: QualityProfile): GrabOption =
         // the release name is the only place this exists, and it is the difference
         // between the film somebody wanted and the same film they cannot watch
         languages: effectiveLanguages(release.title, profile),
-        indexer: release.indexerId
+        indexer: release.indexerId,
+        rejection
     };
+};
+
+/** The hidden half of a line: the runners up and the refused, ready to be offered. */
+const toExtras = (options: ReleaseOptions, profile: QualityProfile): GrabOption[] => {
+    return options.extras.map(extra => toOption(extra.release, profile, extra.code));
 };
 
 const episodeLabel = (seasonNumber: number, episodeNumber: number) => {
@@ -132,7 +139,7 @@ const seasonChoices = (season: StoredSeason, profile: QualityProfile): GrabChoic
             episodeNumbers: [],
             isPack: true,
             options: plan.packOptions.candidates.map(release => toOption(release, profile)),
-            filtered: plan.packOptions.filtered
+            extras: toExtras(plan.packOptions, profile)
         } ];
     }
 
@@ -148,7 +155,7 @@ const seasonChoices = (season: StoredSeason, profile: QualityProfile): GrabChoic
             episodeNumbers: [ episode.episodeNumber ],
             isPack: false,
             options: episode.candidates.map(release => toOption(release, profile)),
-            filtered: episode.filtered
+            extras: toExtras(episode, profile)
         }));
 };
 
@@ -220,7 +227,7 @@ export const buildPreview = async (
             episodeNumbers: [],
             isPack: false,
             options: stored.movie.candidates.map(release => toOption(release, context.profile)),
-            filtered: stored.movie.filtered
+            extras: toExtras(stored.movie, context.profile)
         } ] : [])
         : stored.seasons.flatMap(season => seasonChoices(season, context.profile));
 
@@ -287,8 +294,19 @@ export const buildPreview = async (
     };
 };
 
-const findByGuid = (candidates: IndexerResult[], guid: string) => {
-    return candidates.find(release => (release.guid || release.link) === guid) || null;
+/**
+ * The release the dialog answered with, out of everything that line offered — the short
+ * list **and** the extras. A pick from the hidden half is a deliberate one: the reason the
+ * profile refused it was written on the line the person clicked.
+ */
+const findPick = (options: ReleaseOptions, guid: string | undefined): IndexerResult | null => {
+    if (! guid) {
+        return null;
+    }
+
+    const all = [ ...options.candidates, ...options.extras.map(extra => extra.release) ];
+
+    return all.find(release => (release.guid || release.link) === guid) || null;
 };
 
 /**
@@ -298,7 +316,7 @@ const findByGuid = (candidates: IndexerResult[], guid: string) => {
  */
 export const applyPicks = (plan: StoredPlan, picks: Record<string, string>) => {
     if (plan.movie) {
-        const chosen = picks.movie ? findByGuid(plan.movie.candidates, picks.movie) : null;
+        const chosen = findPick(plan.movie, picks.movie);
 
         if (chosen) {
             plan.movie.release = chosen;
@@ -308,16 +326,14 @@ export const applyPicks = (plan: StoredPlan, picks: Record<string, string>) => {
     }
 
     for (const season of plan.seasons) {
-        const packPick = picks[`s${ season.plan.seasonNumber }`];
-        const chosenPack = packPick ? findByGuid(season.plan.packOptions.candidates, packPick) : null;
+        const chosenPack = findPick(season.plan.packOptions, picks[`s${ season.plan.seasonNumber }`]);
 
         if (chosenPack) {
             season.plan.pack = chosenPack;
         }
 
         for (const episode of season.plan.episodes) {
-            const pick = picks[`s${ season.plan.seasonNumber }e${ episode.episodeNumber }`];
-            const chosen = pick ? findByGuid(episode.candidates, pick) : null;
+            const chosen = findPick(episode, picks[`s${ season.plan.seasonNumber }e${ episode.episodeNumber }`]);
 
             if (chosen) {
                 episode.release = chosen;

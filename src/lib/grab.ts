@@ -17,6 +17,7 @@ import { settingNumber, settingText } from "@/lib/settings";
 import { addRelease } from "@/lib/torrent";
 import { LibraryAudience } from "@/lib/audience";
 import { logWarn } from "@/lib/log";
+import { RejectionCode } from "@/types/download";
 import {
     GrabbedEpisode,
     heldEpisodes,
@@ -30,14 +31,28 @@ import {
 } from "@/lib/library";
 
 /**
- * The runners up are kept next to the winner so a download can be offered as a
- * choice. `release` stays the one the profile picked, which is what the scanner
- * takes without asking, and `filtered` is how many releases the profile threw
- * away — a count worth showing when nothing is left.
+ * Everything one search found, sorted into what the dialog does with it. `release` stays
+ * the one the profile picked, which is what the scanner takes without asking.
+ *
+ * `candidates` is the short list the dialog offers up front, `extras` is the rest — the
+ * accepted runners up that did not fit plus the refused ones, each with why. They are kept
+ * because a person looking at the list may knowingly take one, and asking the indexers
+ * again to find out costs tens of seconds.
+ *
+ * `filtered` is how many the profile threw away, which is a different number from
+ * `extras.length` and the one worth saying when nothing is left at all.
  */
 export type ReleaseOptions = {
     candidates: IndexerResult[];
+    extras: ReleaseExtra[];
     filtered: number;
+};
+
+export type ReleaseExtra = {
+    release: IndexerResult;
+    // null when the profile accepted it and the list was simply full
+    code: RejectionCode | null;
+    reason: string | null;
 };
 
 export type EpisodePlan = ReleaseOptions & {
@@ -124,8 +139,26 @@ const moviePath = () => settingText("TORRENT_MOVIE_PATH");
 const tvPath = () => settingText("TORRENT_SERIES_PATH");
 
 const toOptions = (selection: ReleaseSelection): ReleaseOptions => {
+    const count = optionCount();
+
     return {
-        candidates: selection.candidates.slice(0, optionCount()).map(scored => scored.release),
+        candidates: selection.candidates.slice(0, count).map(scored => scored.release),
+        extras: [
+            // the accepted ones first, still in the profile's own order: they are the ones
+            // it would have taken next, so they are the ones worth looking at first
+            ...selection.candidates.slice(count).map(scored => ({ release: scored.release, code: null, reason: null })),
+            // and then what it refused, most seeded first — the reason is on each line, so
+            // the order can be about what is actually worth downloading
+            ...selection.rejected
+                // Two kinds are not offered at all, however far the list is opened. A
+                // release with no link has nothing to download, and one under the seeder
+                // minimum has nobody to download it from — neither is a choice somebody
+                // could make, they are dead ends dressed as options. They still count in
+                // `filtered`, because the profile did throw them away.
+                .filter(rejected => rejected.code !== "no-link" && rejected.code !== "seeders")
+                .sort((a, b) => b.release.seeders - a.release.seeders)
+                .map(rejected => ({ release: rejected.release, code: rejected.code, reason: rejected.reason }))
+        ],
         filtered: selection.rejected.length
     };
 };
@@ -272,7 +305,7 @@ export const planSeasonGrab = async (
         // is the one check a faked release name cannot get past, and skipping it is
         // how a 1.2 GB `.scr` got in as Silo S03E07 on 2026-08-08.
         if (! aired) {
-            return { episodeNumber, aired, release: null, candidates: [], filtered: 0 };
+            return { episodeNumber, aired, release: null, candidates: [], extras: [], filtered: 0 };
         }
 
         const own = options.episodeNumbers && ! options.episodeNumbers.includes(episodeNumber)

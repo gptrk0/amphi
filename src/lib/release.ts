@@ -4,6 +4,7 @@ import { getIndexerIds, IndexerResult } from "@/lib/indexer";
 import { isReleaseBlocked } from "@/lib/blocklist";
 import { LanguageProfile } from "@/lib/language";
 import { settingList, settingNumber, settingText } from "@/lib/settings";
+import { RejectionCode } from "@/types/download";
 import { LANGUAGES } from "@/types/language";
 
 export type QualityProfile = {
@@ -60,8 +61,14 @@ export type ScoredRelease = {
     resolution: string | null;
 };
 
+/**
+ * `reason` is the sentence, for the log and for a person reading it there; `code` is the
+ * same thing as a key, for the dialog — that one is read by somebody whose interface may
+ * not be in English, and the numbers in the sentence are already on the line next to it.
+ */
 export type RejectedRelease = {
     release: IndexerResult;
+    code: RejectionCode;
     reason: string;
 };
 
@@ -442,41 +449,41 @@ const score = (release: IndexerResult, resolution: string | null, profile: Quali
 
 export const rateRelease = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ScoredRelease | RejectedRelease => {
     if (! release.link) {
-        return { release, reason: "no download link" };
+        return { release, code: "no-link", reason: "no download link" };
     }
 
     // it was grabbed once already and had to be thrown away: it either stood still
     // until it was given up on, or what came down was not the release at all
     if (isReleaseBlocked(normalizeTitle(release.title))) {
-        return { release, reason: "already tried and dropped" };
+        return { release, code: "blocked", reason: "already tried and dropped" };
     }
 
     if (release.seeders < profile.minSeeders) {
-        return { release, reason: `${ release.seeders } seeders` };
+        return { release, code: "seeders", reason: `${ release.seeders } seeders` };
     }
 
     if (profile.maxSizeGb > 0 && release.size > profile.maxSizeGb * GB) {
-        return { release, reason: `${ (release.size / GB).toFixed(1) }GB is over the limit` };
+        return { release, code: "too-big", reason: `${ (release.size / GB).toFixed(1) }GB is over the limit` };
     }
 
     const excluded = profile.excludeKeywords.find(keyword => hasKeyword(release.title, keyword));
 
     if (excluded) {
-        return { release, reason: `excluded keyword: ${ excluded }` };
+        return { release, code: "excluded", reason: `excluded keyword: ${ excluded }` };
     }
 
     if (target) {
         const mismatch = matchesTarget(release.title, target);
 
         if (mismatch) {
-            return { release, reason: mismatch };
+            return { release, code: "mismatch", reason: mismatch };
         }
     }
 
     const language = rateLanguage(release.title, profile, target);
 
     if (language.excluded) {
-        return { release, reason: `language ${ language.excluded } not wanted` };
+        return { release, code: "language", reason: `language ${ language.excluded } not wanted` };
     }
 
     // the unattended path: the wrong language is not a worse release here, it is a
@@ -486,7 +493,7 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
         const languages = effectiveLanguages(release.title, profile);
 
         if (! languages.some(language => profile.requireLanguages.includes(language))) {
-            return { release, reason: `not in ${ profile.requireLanguages.join(" or ") }` };
+            return { release, code: "language", reason: `not in ${ profile.requireLanguages.join(" or ") }` };
         }
     }
 
@@ -494,7 +501,7 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
 
     // an unwanted resolution is dropped, an unknown one stays as a last resort
     if (resolution && ! profile.resolutions.includes(resolution)) {
-        return { release, reason: `resolution ${ resolution } not wanted` };
+        return { release, code: "resolution", reason: `resolution ${ resolution } not wanted` };
     }
 
     const floor = minSizeGb(resolution, profile, target);
@@ -502,6 +509,7 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
     if (floor > 0 && release.size < floor * GB) {
         return {
             release,
+            code: "too-small",
             reason: `${ (release.size / GB).toFixed(2) }GB is too small for ${ resolution || "unknown resolution" } (min ${ floor }GB)`
         };
     }

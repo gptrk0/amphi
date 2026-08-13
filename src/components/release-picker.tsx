@@ -17,8 +17,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/context/locale";
-import { Translate } from "@/i18n";
-import { DownloadPreview, GrabChoice, GrabOption } from "@/types/download";
+import { MessageKey, Translate } from "@/i18n";
+import { DownloadPreview, GrabChoice, GrabOption, RejectionCode } from "@/types/download";
 
 type Props = {
     open: boolean;
@@ -51,6 +51,68 @@ const details = (option: GrabOption) => {
 
 // what counts as this person's language here — one, or every one their account accepts
 const wantedText = (preview: DownloadPreview) => preview.language.wanted.join("/").toUpperCase();
+
+/**
+ * Why the profile refused a release, in the reader's language. The numbers behind the
+ * decision — the size, the seeders, the resolution — are on the same line already, so
+ * these only have to name the kind of refusal.
+ *
+ * Two of them never reach the screen: the server does not offer a release with no link or
+ * one under the seeder minimum, because neither can be downloaded. They stay in the map so
+ * it covers every code — a filter that changes should not leave a blank line behind.
+ */
+const REJECTION: Record<RejectionCode, MessageKey> = {
+    "no-link": "download.rejection.noLink",
+    blocked: "download.rejection.blocked",
+    seeders: "download.rejection.seeders",
+    "too-big": "download.rejection.tooBig",
+    excluded: "download.rejection.excluded",
+    mismatch: "download.rejection.mismatch",
+    language: "download.rejection.language",
+    resolution: "download.rejection.resolution",
+    "too-small": "download.rejection.tooSmall"
+};
+
+/**
+ * One release to pick from. The same row in both halves of the list: what differs is that
+ * an extra says why the profile passed it over — the refused ones name the reason, the
+ * runners up simply did not fit.
+ */
+function OptionRow({ option, picked, best, onPick }: {
+    option: GrabOption;
+    picked: boolean;
+    best: boolean;
+    onPick: () => void;
+}) {
+    const { t } = useLocale();
+
+    return (
+        <button
+            type="button"
+            className={classNames(
+                "flex w-full min-w-0 cursor-pointer items-start gap-2 rounded-sm p-2 text-left hover:bg-muted",
+                { "bg-muted": picked }
+            )}
+            onClick={onPick}
+        >
+            <Check className={classNames("mt-0.5 size-4 shrink-0", { "invisible": ! picked })} />
+
+            <div className="min-w-0 flex-1">
+                <div className="truncate text-sm" title={option.title}>{ option.title }</div>
+
+                <div className="truncate text-xs text-muted-foreground">
+                    { details(option) }{ best ? ` · ${ t("download.bestMatch") }` : "" }
+                </div>
+
+                {/* amber rather than muted: this one is here to be readable, because taking
+                    it is going against what the profile decided */}
+                {option.rejection && (
+                    <div className="truncate text-xs text-amber-500">{ t(REJECTION[option.rejection]) }</div>
+                )}
+            </div>
+        </button>
+    );
+}
 
 /**
  * A line's own name. The api builds it from season and episode numbers, which need no
@@ -86,13 +148,22 @@ function ChoiceRow({ choice, picked, onPick, single }: {
     // a single line has nothing to compare itself to, so it opens straight away
     const [ isOpen, setOpen ] = useState(single);
 
-    const selected = choice.options.find(option => option.guid === picked) || choice.options[0];
+    // the rest of what the indexers had. Closed by default: the profile's own list is the
+    // answer, and this is for the times it is not
+    const [ showExtras, setShowExtras ] = useState(false);
+
+    // the pick can be one of the extras, so the summary line has to look in both halves —
+    // otherwise choosing a refused release would go on showing the profile's favourite
+    const selected = [ ...choice.options, ...choice.extras ].find(option => option.guid === picked) || choice.options[0];
+
+    // how much of the hidden half is a refusal rather than a runner up
+    const refused = choice.extras.filter(option => option.rejection).length;
 
     return (
-        <div className="rounded-md border">
+        <div className="min-w-0 rounded-md border">
             <button
                 type="button"
-                className="flex w-full cursor-pointer items-start gap-2 p-3 text-left"
+                className="flex w-full min-w-0 cursor-pointer items-start gap-2 p-3 text-left"
                 onClick={() => setOpen(! isOpen)}
             >
                 {isOpen ? <ChevronDown className="mt-0.5 size-4 shrink-0" /> : <ChevronRight className="mt-0.5 size-4 shrink-0" />}
@@ -103,36 +174,67 @@ function ChoiceRow({ choice, picked, onPick, single }: {
                         <span className="text-xs text-muted-foreground">{ t("download.releases", { n: choice.options.length }) }</span>
                     </div>
 
-                    <div className="truncate text-sm text-muted-foreground">{ selected?.title }</div>
-                    <div className="text-xs text-muted-foreground">{ selected ? details(selected) : "" }</div>
+                    {/* the name is longer than any dialog, so the full one lives in the
+                        tooltip — the line itself only has to say which release this is */}
+                    <div className="truncate text-sm text-muted-foreground" title={selected?.title}>{ selected?.title }</div>
+                    <div className="truncate text-xs text-muted-foreground">{ selected ? details(selected) : "" }</div>
+
+                    {/* the line is collapsed most of the time, so if what is going to be
+                        downloaded is something the profile refused, it has to say so here */}
+                    {selected?.rejection && (
+                        <div className="truncate text-xs text-amber-500">{ t(REJECTION[selected.rejection]) }</div>
+                    )}
                 </div>
             </button>
 
-            {isOpen && <div className="border-t p-1">
+            {isOpen && <div className="min-w-0 border-t p-1">
                 {choice.options.map((option, index) => (
-                    <button
+                    <OptionRow
                         key={option.guid}
-                        type="button"
-                        className={classNames(
-                            "flex w-full cursor-pointer items-start gap-2 rounded-sm p-2 text-left hover:bg-muted",
-                            { "bg-muted": option.guid === selected?.guid }
-                        )}
-                        onClick={() => onPick(option.guid)}
-                    >
-                        <Check className={classNames("mt-0.5 size-4 shrink-0", { "invisible": option.guid !== selected?.guid })} />
-
-                        <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm">{ option.title }</div>
-                            <div className="text-xs text-muted-foreground">
-                                { details(option) }{ index === 0 ? ` · ${ t("download.bestMatch") }` : "" }
-                            </div>
-                        </div>
-                    </button>
+                        option={option}
+                        picked={option.guid === selected?.guid}
+                        best={index === 0}
+                        onPick={() => onPick(option.guid)}
+                    />
                 ))}
 
-                {choice.filtered > 0 && <div className="p-2 text-xs text-muted-foreground">
-                    { t(choice.filtered === 1 ? "download.filteredOne" : "download.filtered", { n: choice.filtered }) }
-                </div>}
+                {choice.extras.length > 0 && <>
+                    {/* the separator is the point: above it is what the quality profile
+                        would take on its own, below it is everything it passed over */}
+                    <button
+                        type="button"
+                        className="mt-1 flex w-full min-w-0 cursor-pointer items-center gap-2 border-t p-2 text-left text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowExtras(! showExtras)}
+                    >
+                        {showExtras ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+
+                        <span className="truncate">
+                            { showExtras
+                                ? t("download.hideMore")
+                                : t("download.showMore", { n: choice.extras.length }) }
+                        </span>
+                    </button>
+
+                    {showExtras && choice.extras.map(option => (
+                        <OptionRow
+                            key={option.guid}
+                            option={option}
+                            picked={option.guid === selected?.guid}
+                            best={false}
+                            onPick={() => onPick(option.guid)}
+                        />
+                    ))}
+
+                    {/* said once, under the list rather than in place of it: how many of the
+                        lines above the profile actually refused, as opposed to had no room
+                        for. Counted from the list itself, so it can never claim more than is
+                        on screen — what cannot be downloaded at all never gets here */}
+                    {showExtras && refused > 0 && (
+                        <div className="p-2 text-xs text-muted-foreground">
+                            { t(refused === 1 ? "download.filteredOne" : "download.filtered", { n: refused }) }
+                        </div>
+                    )}
+                </>}
             </div>}
         </div>
     );
@@ -185,7 +287,11 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
 
     return (
         <Dialog open={open} onOpenChange={(next) => { if (! next) { close(); } }}>
-            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+            {/* `overflow-x-hidden` is the guarantee, not the layout: the names are truncated
+                and the grid track cannot blow out any more, so nothing should reach past the
+                edge — and if one day something does, it is clipped rather than turning the
+                whole dialog into something you have to scroll sideways */}
+            <DialogContent className="max-h-[85vh] overflow-y-auto overflow-x-hidden sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>
                         { t(haveItAll ? "download.titleHave" : nothingFound ? "download.titleNothing" : "download.titleDownload", { name }) }
@@ -211,7 +317,7 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                     {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
                 </div>}
 
-                {! isLoading && choices.length > 0 && <div className="space-y-2">
+                {! isLoading && choices.length > 0 && <div className="min-w-0 space-y-2">
                     {choices.map(choice => (
                         <ChoiceRow
                             key={choice.key}

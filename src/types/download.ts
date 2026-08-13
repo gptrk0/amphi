@@ -4,6 +4,26 @@ export type MissingSeason = {
 };
 
 /**
+ * Why the quality profile refused a release, as a key rather than a sentence: the
+ * numbers behind it (the size, the seeder count, the resolution) are already on the
+ * line, so the reader only needs the *kind* of refusal — and that way it can be said
+ * in their own language. The server keeps its own English sentence for the log.
+ *
+ * `no-link` never reaches the dialog: a release with nothing to download is not a
+ * choice, it is a dead end.
+ */
+export type RejectionCode =
+    | "no-link"
+    | "blocked"
+    | "seeders"
+    | "too-big"
+    | "excluded"
+    | "mismatch"
+    | "language"
+    | "resolution"
+    | "too-small";
+
+/**
  * One release the user can pick. The guid identifies it inside the stored plan, so
  * the download link itself never travels to the browser and back.
  */
@@ -17,6 +37,9 @@ export type GrabOption = {
     // account says untagged means, because that is how it will be treated
     languages: string[];
     indexer: string;
+    // why the profile threw this one away. Null on everything it accepted — including
+    // the runners up that simply did not fit in the list
+    rejection: RejectionCode | null;
 };
 
 /**
@@ -31,8 +54,18 @@ export type GrabChoice = {
     episodeNumbers: number[];
     isPack: boolean;
     options: GrabOption[];
-    // how many releases the quality profile threw away for this line
-    filtered: number;
+    /**
+     * Everything else the search turned up for this line, hidden until asked for: first
+     * the releases the profile accepted but had no room for, then the ones it refused,
+     * each with its reason. Pickable, all of them — the dialog is the one place where a
+     * person may knowingly take something the unattended scanner never would.
+     *
+     * Not everything, though: what has no download link and what is under the seeder
+     * minimum stays out, because neither can actually be downloaded. So this list is
+     * exactly what is on screen when the line is opened all the way, and a count of the
+     * refusals in it can be taken from the list itself.
+     */
+    extras: GrabOption[];
 };
 
 export type DownloadPreview = {
