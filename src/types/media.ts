@@ -94,6 +94,42 @@ export type MediaDetails = {
     next_episode: MediaEpisodeStub | null;
 };
 
+/**
+ * One line of a filmography. `media` is the ordinary `Media` shape on purpose: the title
+ * links to the same detail page as everywhere else, and the poster rows on this page are
+ * the same rows the discover pages draw — one shape to keep in step instead of two.
+ */
+export type PersonCredit = {
+    media: Media;
+    // the character on the cast side, the job on the crew side. Joined when a person did
+    // several things on the same title
+    role: string;
+    // sortable, and empty when TMDB has no date — those go last rather than in 1970
+    year: string;
+};
+
+/**
+ * A person's own page. Everything on it comes from TMDB, cached like the rest: this app
+ * stores ids, not people.
+ */
+export type PersonDetails = {
+    id: number;
+    name: string;
+    // TMDB's own word for what they are known for: "Acting", "Directing", …
+    department: string;
+    biography: string;
+    birthday: string | null;
+    deathday: string | null;
+    place_of_birth: string;
+    profile_img: string;
+    imdb_id: string | null;
+    homepage: string;
+    // the poster row at the top: their best known work, whatever they did on it
+    known_for: Media[];
+    cast: PersonCredit[];
+    crew: PersonCredit[];
+};
+
 export type MediaEpisode = {
     episode_number: number;
     name: string;

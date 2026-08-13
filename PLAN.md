@@ -1768,6 +1768,32 @@ Eddig tehát 44 találatból 19 volt látható, most 34 — a kimaradó 10 az, a
 
 **Amire figyelni kell.** (1) A magyar szinkronos kiadások (`Pokember.Nincs.hazaut…`, `Pókember - Nincs hazaút BD50`) **`mismatch` okkal esnek ki** — a hamis-release védelem nem ismeri fel bennük a címet. Most legalább látszik, és kézzel választható; hogy a `mediaTitles` miért nem hozza a magyar címet, az külön kérdés. (2) Ha egy sornak a kiajánlott listájában nincs a te nyelveden semmi, a nyelvi figyelmeztetés (és a pipa) akkor is előjön, ha az extrákból épp magyart választasz — a figyelmeztetés a keresés eredményéből számol, nem a választásból. Többet figyelmeztet, nem kevesebbet. (3) Ahol **egyetlen** elfogadott találat sincs, ott továbbra sincs sor, tehát nincs mit lenyitni: az az ablak a „nincs meg, felvegyük watchlistre?" válasza. Ezt szándékosan nem alakítottam át, mert a `missing`/watchlist út erre a feltevésre épül.
 
+#### A szereplő is kap adatlapot (2026-08-13-i kérés) ✅
+
+Kérés: „az adatlap oldalon a szereplőre kattintva vigyen egy külön oldalra, ami kb olyan mint imdb-n a színész adatlapja oldal". Plusz ugyanabban a körben: „a »LINKS« ne a details-en belül legyen, hanem kapjon nagyobb szerepet, kerüljön a details fölé".
+
+**A linkek.** Eddig a `FactGrid` **utolsó sora** volt, a legkisebb betűmérettel az oldalon. Most saját szekció a Szereplők és a Részletek között, `variant="outline"` gombokkal (TMDB, IMDb, Weboldal) — „hol olvashatok még erről" olyan kérdés, amivel az ember ide jön. Menet közben kiderült, hogy a `FactGrid` **fejléce bedrótozott angol „Details"** volt egy kétnyelvű felületen: most propként jön (`details.factsTitle`).
+
+**A szereplő-oldal.** `/person/[id]`, szerver-rendereltként, mint az adatlap — egy cache-elt TMDB olvasás az egész.
+
+- [src/lib/media.ts](src/lib/media.ts): `getPersonDetails` (`/person/{id}` + `combined_credits` + `external_ids`, nyelv a cache-kulcsban). A `known_for` **nem** jön a TMDB-től erre a végpontra, ezért itt áll össze: a legnépszerűbb, poszterrel bíró címek, a kamera bármelyik oldaláról.
+- **A filmográfia címenként egy sor.** A TMDB rolenként listázza ugyanazt a címet (két karakter, vagy írta *és* rendezte), és egy filmográfia, ami háromszor felsorolja ugyanazt a filmet, hibának látszik — a rolek össze vannak fűzve. Rendezés: legújabb elöl, dátum nélküli a végére. Címenként max 100 sor, mert egy termékeny pálya több száz kredit, és amit senki nem görget végig, azért is fizet valaki.
+  - **A sor kis kártya, poszterrel** (2026-08-13-i kérés: „az acting/other work táblázatoknál legyen a filmről egy kép kis kártya formájában"). Egy pálya így felismerhető, nem csak olvasható: 52 px széles poszter, mellette a cím (max két sor), az `év · film/sorozat` és a szerep, a kártya egésze link. Ahol a TMDB-nek nincs poszterje, ott ugyanakkora helyőrző áll — különben a mellette lévő kártya elcsúszna. A rács 1 oszlop mobilon, `sm`-től 2, `xl`-től 3; a 12 tételes vágás és a „még {n}" gomb változatlan.
+- **A biográfia nyelve.** A TMDB-nek kevés fordított biográfiája van, és az üres szövegdoboz úgy néz ki, mintha az oldal hibázott volna — ezért ha a magyar üres, a szerver **még egy** (cache-elt) kérésben lekéri az angolt. Hosszú szövegnél 700 karakter után „Tovább olvasom".
+- **Ahonnan odajut az ember:** a `CastRow` kártyája egészében link (a képre céloz az ember, nem a név alá), és az adatlap stáb-sorai (`Rendező: …`) is linkek — a person oldalt nem érdekli, ki melyik oldalán állt a kamerának.
+
+**Mérve** (session-nel, mert a middleware minden oldalt zár — a korábbi „200"-as ellenőrzéseim ezért nem sokat bizonyítottak, azok a login oldalt is jelenthették):
+
+```
+/person/1136406 (Tom Holland)  hu: 200  Legismertebb munkái / Színészként / Egyéb munkák / Született / Születési hely / Munkái
+                               en: 200  Known for / Acting / Other work / Born / Place of birth / Credits
+  imdb link: igen | 31 cím-link a filmográfiában | lib: 59 cast + 7 crew credit, 12 known-for
+/details/movie/634649          24 person-link a lapon (cast + stáb)
+szekciók sorrendje             Szereplők -> Linkek -> Részletek -> Ajánlott -> Ehhez hasonló
+```
+
+**Amire figyelni kell.** (1) A `department` badge és a stáb-jobok (`Acting`, `Director`) **a TMDB angol szavai**, mint eddig a `status` — nincsenek fordítva, mert ez a doksi eddig is így döntött ezekről. (2) Nem létező személynél a törzs a 404-oldal, a **státusz mégis 200** — pontosan úgy, ahogy a meglévő `/details` oldalon: a `loading.tsx` boundary miatt a válasz már streamel, amikor a `notFound()` kiderül. Nem ebben a körben keletkezett. (3) Új route-ot a dev szerver ezen a Windows-os fájlmegosztáson **nem vett észre magától** — újraindítás kellett hozzá.
+
 ---
 
 ## 5. Javasolt sorrend

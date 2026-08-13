@@ -209,6 +209,11 @@ export const hu: Messages = {
         trailer: "Előzetes",
         stopWatching: "Levétel a listáról",
         cast: "Szereplők",
+        links: {
+            title: "Linkek",
+            website: "Weboldal"
+        },
+        factsTitle: "Részletek",
         recommendations: "Ajánlott",
         similar: "Ehhez hasonló",
         updateFailed: "Nem sikerült frissíteni a figyelőlistát.",
@@ -232,8 +237,6 @@ export const hu: Messages = {
             country: "Ország",
             budget: "Költségvetés",
             revenue: "Bevétel",
-            links: "Linkek",
-            website: "Weboldal",
             dateUnknown: "ismeretlen dátum",
             seasonCount: "{seasons} évad, {episodes} epizód",
             oneSeason: "1 évad, {episodes} epizód",
@@ -244,6 +247,24 @@ export const hu: Messages = {
             millions: "{n} M $",
             dollars: "{n} $"
         }
+    },
+
+    person: {
+        born: "Született",
+        died: "Elhunyt",
+        birthplace: "Születési hely",
+        credits: "Munkái",
+        creditCount: "{n} cím",
+        yearsOld: "{n} éves",
+        agedYears: "{n} évesen",
+        website: "Weboldal",
+        knownFor: "Legismertebb munkái",
+        acting: "Színészként",
+        otherWork: "Egyéb munkák",
+        showAll: "További {n} megjelenítése",
+        showLess: "Kevesebb",
+        showMoreBio: "Tovább olvasom",
+        showLessBio: "Kevesebbet"
     },
 
     seasonPicker: {

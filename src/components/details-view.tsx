@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import NextLink from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
 import { BookmarkX, Download, ExternalLink, Play, Star } from "lucide-react";
@@ -75,28 +76,47 @@ const dateText = (value: string | null | undefined, locale: Locale) => {
 /**
  * "Director: David Fincher" rather than a list of names with jobs repeated: one
  * line per job, however many people share it.
+ *
+ * The names are links, like the faces in the cast row are — the person page does not care
+ * which side of the camera somebody was on, and a director is exactly who you want to look
+ * up from here.
  */
 const crewFacts = (crew: MediaPerson[]): Fact[] => {
-    const byJob = new Map<string, string[]>();
+    const byJob = new Map<string, MediaPerson[]>();
 
     for (const person of crew) {
         for (const job of person.role.split(", ")) {
-            byJob.set(job, [ ...(byJob.get(job) || []), person.name ]);
+            byJob.set(job, [ ...(byJob.get(job) || []), person ]);
         }
     }
 
-    return [ ...byJob.entries() ].map(([ job, names ]) => ({ label: job, value: names.join(", ") }));
+    return [ ...byJob.entries() ].map(([ job, people ]) => ({
+        label: job,
+        value: <span>
+            {people.map((person, index) => (
+                <span key={person.id}>
+                    {index > 0 && ", "}
+
+                    <NextLink href={`/person/${ person.id }`} className="hover:underline">
+                        { person.name }
+                    </NextLink>
+                </span>
+            ))}
+        </span>
+    }));
 };
 
-const Link = ({ href, children }: { href: string, children: React.ReactNode }) => (
-    <a
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex items-center gap-1 hover:underline"
-    >
-        { children } <ExternalLink className="size-3" />
-    </a>
+/**
+ * A way off this page, and one of the things people actually came for — so it looks like
+ * something to press rather than the last line of a table of facts. Every one of them
+ * leaves the app, hence the icon on all of them and `noreferrer`.
+ */
+const LinkButton = ({ href, children }: { href: string, children: React.ReactNode }) => (
+    <Button variant="outline" className="cursor-pointer" asChild>
+        <a href={href} target="_blank" rel="noreferrer">
+            { children } <ExternalLink className="size-3.5 text-muted-foreground" />
+        </a>
+    </Button>
 );
 
 type Props = {
@@ -256,15 +276,7 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
         { label: t("details.facts.studio"), value: details.companies.slice(0, 3).map(company => company.name).join(", ") },
         { label: t("details.facts.country"), value: details.countries.join(", ") },
         { label: t("details.facts.budget"), value: money(details.budget, locale, t) },
-        { label: t("details.facts.revenue"), value: money(details.revenue, locale, t) },
-        {
-            label: t("details.facts.links"),
-            value: <span className="flex flex-wrap gap-3">
-                <Link href={`https://www.themoviedb.org/${ media.type }/${ media.id }`}>TMDB</Link>
-                {details.imdb_id && <Link href={`https://www.imdb.com/title/${ details.imdb_id }`}>IMDb</Link>}
-                {details.homepage && <Link href={details.homepage}>{ t("details.facts.website") }</Link>}
-            </span>
-        }
+        { label: t("details.facts.revenue"), value: money(details.revenue, locale, t) }
     ];
 
     return <>
@@ -375,7 +387,20 @@ export function DetailsView({ type, tmdbId, details, seasons }: Props) {
 
                 <CastRow title={t("details.cast")} people={details.cast} />
 
-                <FactGrid facts={facts} />
+                {/* a section of its own, above the facts rather than the last row inside
+                    them: "where else can I read about this" is a question people come here
+                    with, and it was answered in the smallest text on the page */}
+                <div className="space-y-3">
+                    <h3 className="text-lg font-semibold tracking-tight">{ t("details.links.title") }</h3>
+
+                    <div className="flex flex-wrap gap-3">
+                        <LinkButton href={`https://www.themoviedb.org/${ media.type }/${ media.id }`}>TMDB</LinkButton>
+                        {details.imdb_id && <LinkButton href={`https://www.imdb.com/title/${ details.imdb_id }`}>IMDb</LinkButton>}
+                        {details.homepage && <LinkButton href={details.homepage}>{ t("details.links.website") }</LinkButton>}
+                    </div>
+                </div>
+
+                <FactGrid title={t("details.factsTitle")} facts={facts} />
 
                 <MediaRow title={t("details.recommendations")} items={details.recommendations} />
 

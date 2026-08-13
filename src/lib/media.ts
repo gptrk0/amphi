@@ -6,7 +6,9 @@ import {
     MediaMetadata,
     MediaPage,
     MediaPerson,
-    MediaSeason
+    MediaSeason,
+    PersonCredit,
+    PersonDetails
 } from "@/types/media";
 import axios from "axios";
 
@@ -618,4 +620,159 @@ export async function getTvSeasons(id: number, language?: string): Promise<Media
         () => fetchTvSeasons(id, wanted),
         (value) => value.length === 0
     );
+}
+
+// a prolific career is hundreds of credits, and a page nobody scrolls to the end of is
+// still a payload somebody pays for. Enough to be a filmography, bounded on purpose
+const CREDIT_LIMIT = 100;
+const KNOWN_FOR_LIMIT = 12;
+
+/**
+ * One person's credits, deduplicated by title.
+ *
+ * TMDB lists the same title once per role — a show a person appeared in as two characters,
+ * or wrote and directed — and a filmography that repeats the same film three times reads
+ * like a bug. So the roles are joined and the title is one line.
+ */
+const toCredits = (entries: any[], roleOf: (entry: any) => string): PersonCredit[] => {
+    const byTitle = new Map<string, PersonCredit>();
+
+    for (const entry of entries) {
+        const type = isMediaType(entry.media_type) ? entry.media_type : null;
+
+        // a credit with no type is a TMDB row this app has no page for
+        if (! type || ! entry.id) {
+            continue;
+        }
+
+        const media = toMedia(entry, type);
+
+        if (! media.name) {
+            continue;
+        }
+
+        const role = roleOf(entry);
+        const key = `${ type }:${ entry.id }`;
+        const known = byTitle.get(key);
+
+        if (known) {
+            if (role && ! known.role.split(", ").includes(role)) {
+                byTitle.set(key, { ...known, role: known.role ? `${ known.role }, ${ role }` : role });
+            }
+
+            continue;
+        }
+
+        byTitle.set(key, { media, role, year: media.date ? media.date.split("-")[0] : "" });
+    }
+
+    // newest first, and whatever has no date at all goes last: an unreleased or undated
+    // credit is not the thing to open a filmography with
+    return [ ...byTitle.values() ]
+        .sort((a, b) => {
+            if (! a.year || ! b.year) {
+                return a.year ? -1 : b.year ? 1 : 0;
+            }
+
+            return b.media.date.localeCompare(a.media.date);
+        })
+        .slice(0, CREDIT_LIMIT);
+};
+
+/**
+ * What this person is known for. TMDB only answers that on search results, so it is
+ * derived here the same way: the most popular titles they were in, whichever side of the
+ * camera they were on. Posters only — it is a row of posters.
+ */
+const toKnownFor = (credits: any): Media[] => {
+    const entries = [ ...(credits?.cast || []), ...(credits?.crew || []) ]
+        .filter((entry: any) => entry.poster_path && isMediaType(entry.media_type));
+
+    const seen = new Set<string>();
+    const media: Media[] = [];
+
+    for (const entry of entries.sort((a: any, b: any) => Number(b.popularity || 0) - Number(a.popularity || 0))) {
+        const key = `${ entry.media_type }:${ entry.id }`;
+
+        if (seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        media.push(toMedia(entry, entry.media_type));
+
+        if (media.length >= KNOWN_FOR_LIMIT) {
+            break;
+        }
+    }
+
+    return media;
+};
+
+export async function fetchPersonDetails(id: number, language: string): Promise<PersonDetails | null> {
+    try {
+        const res = await axios.get(`${ TMDB_BASE_URL }/person/${ id }`, {
+            params: {
+                api_key: apiKey(),
+                language,
+                append_to_response: "combined_credits,external_ids"
+            }
+        });
+
+        const data = res.data;
+        const credits = data.combined_credits;
+
+        return {
+            id: data.id,
+            name: data.name || "",
+            department: data.known_for_department || "",
+            // TMDB leaves the biography empty rather than falling back, so a Hungarian
+            // page would simply have none. The English one is better than a blank page
+            biography: data.biography || "",
+            birthday: data.birthday || null,
+            deathday: data.deathday || null,
+            place_of_birth: data.place_of_birth || "",
+            profile_img: image(data.profile_path, "h632"),
+            imdb_id: data.external_ids?.imdb_id || null,
+            homepage: data.homepage || "",
+            known_for: toKnownFor(credits),
+            cast: toCredits(credits?.cast || [], (entry) => entry.character || ""),
+            crew: toCredits(credits?.crew || [], (entry) => entry.job || "")
+        };
+
+    } catch(err) {
+        await logTmdbFailure(err);
+    }
+
+    return null;
+}
+
+/**
+ * Language in the key, like every other read here: the biography and the localised titles
+ * are different answers per reader.
+ */
+export async function getPersonDetails(id: number, language?: string): Promise<PersonDetails | null> {
+    const wanted = language || await readerLanguage();
+
+    return await cached(
+        `person:${ wanted }:${ id }`,
+        () => fetchPersonDetails(id, wanted),
+        (value) => value === null
+    );
+}
+
+/**
+ * The biography in the reader's language, or the English one when TMDB has none. Asked as
+ * a second, cached request rather than always fetching both: for an English reader the
+ * first answer is already the fallback, and for a Hungarian one an empty biography is the
+ * common case — TMDB has few of them translated.
+ */
+export async function getPersonBiography(person: PersonDetails): Promise<string> {
+    if (person.biography || await readerLanguage() === RECORD_LANGUAGE) {
+        return person.biography;
+    }
+
+    const fallback = await getPersonDetails(person.id, RECORD_LANGUAGE);
+
+    return fallback?.biography || "";
 }

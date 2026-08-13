@@ -214,6 +214,12 @@ export const en = {
         trailer: "Trailer",
         stopWatching: "Stop watching",
         cast: "Cast",
+        // its own section above the facts, not a line inside them
+        links: {
+            title: "Links",
+            website: "Website"
+        },
+        factsTitle: "Details",
         recommendations: "Recommendations",
         similar: "More like this",
         updateFailed: "Could not update the watchlist.",
@@ -237,8 +243,6 @@ export const en = {
             country: "Country",
             budget: "Budget",
             revenue: "Revenue",
-            links: "Links",
-            website: "Website",
             dateUnknown: "date unknown",
             seasonCount: "{seasons} seasons, {episodes} episodes",
             oneSeason: "1 season, {episodes} episodes",
@@ -249,6 +253,25 @@ export const en = {
             millions: "${n}M",
             dollars: "${n}"
         }
+    },
+
+    // the cast page, reached from a face on a title page
+    person: {
+        born: "Born",
+        died: "Died",
+        birthplace: "Place of birth",
+        credits: "Credits",
+        creditCount: "{n} titles",
+        yearsOld: "{n} years old",
+        agedYears: "aged {n}",
+        website: "Website",
+        knownFor: "Known for",
+        acting: "Acting",
+        otherWork: "Other work",
+        showAll: "Show {n} more",
+        showLess: "Show fewer",
+        showMoreBio: "Read the rest",
+        showLessBio: "Show less"
     },
 
     seasonPicker: {
