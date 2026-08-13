@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { refuseUnlessSignedIn } from "@/lib/auth";
-import { getLibrary } from "@/lib/library";
+import { getLibrary, keepRange } from "@/lib/library";
 import { syncDownloadsOnce } from "@/lib/scheduler";
 import { listManagedTorrents } from "@/lib/torrent";
 
@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
             await syncDownloadsOnce(torrents);
         }
 
-        return Response.json({ success: true, result: await getLibrary(torrents) });
+        // the range comes with the list: the floor of a retention is the seed time, and
+        // that is a setting the page has no other way of knowing
+        return Response.json({ success: true, result: await getLibrary(torrents), keepRange: keepRange() });
 
     } catch(err) {
         console.error(err);

@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, ChevronsUpDown, Clock, Trash2, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronsUpDown, Clock, Pencil, Trash2, Undo2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import {
     DialogHeader,
     DialogTitle
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -25,7 +26,7 @@ import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
 import { MessageKey, Translate } from "@/i18n";
-import { LibraryItem } from "@/types/library";
+import { KeepRange, LibraryItem } from "@/types/library";
 
 type Column = {
     key: string;
@@ -133,6 +134,11 @@ export function LibraryTable() {
     const [ filter, setFilter ] = useState<"ALL" | "DOWNLOADING" | "AVAILABLE">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "startedAt", direction: "desc" });
     const [ deleting, setDeleting ] = useState<LibraryItem | null>(null);
+    const [ keeping, setKeeping ] = useState<LibraryItem | null>(null);
+    const [ keepInput, setKeepInput ] = useState("");
+    // the floor is the seed time, which is a setting — until the first answer arrives the
+    // input is guarded by the api rather than by these
+    const [ range, setRange ] = useState<KeepRange>({ min: 1, max: 60 });
     const request = useRef(0);
 
     const load = () => {
@@ -142,6 +148,10 @@ export function LibraryTable() {
             .then(res => {
                 if (ticket === request.current) {
                     setItems(res.data.result || []);
+
+                    if (res.data.keepRange) {
+                        setRange(res.data.keepRange);
+                    }
                 }
             })
             .catch(err => console.error(err));
@@ -164,11 +174,11 @@ export function LibraryTable() {
 
     const name = (item: LibraryItem) => item.media?.name || `TMDB #${ item.tmdbId }`;
 
-    const mark = async (item: LibraryItem, deleteRequested: boolean, deleteFiles = true) => {
+    const mark = async (item: LibraryItem, deleteRequested: boolean) => {
         setDeleting(null);
 
         try {
-            await axios.patch(`/api/library/${ item.id }`, { deleteRequested, deleteFiles });
+            await axios.patch(`/api/library/${ item.id }`, { deleteRequested });
 
             toast(deleteRequested
                 ? t("libraryPage.markedToast", { name: name(item) })
@@ -183,15 +193,13 @@ export function LibraryTable() {
         }
     };
 
-    const destroy = async (item: LibraryItem, deleteFiles: boolean) => {
+    const destroy = async (item: LibraryItem) => {
         setDeleting(null);
 
         try {
-            await axios.delete(`/api/library/${ item.id }`, { params: { files: deleteFiles ? 1 : 0 } });
+            await axios.delete(`/api/library/${ item.id }`);
 
-            toast(deleteFiles
-                ? t("libraryPage.deletedToast", { name: name(item) })
-                : t("libraryPage.removedKeptToast", { name: name(item) }));
+            toast(t("libraryPage.deletedToast", { name: name(item) }));
 
         } catch(err) {
             console.error(err);
@@ -202,6 +210,34 @@ export function LibraryTable() {
             await refresh();
         }
     };
+
+    /** How long this one stays. `null` hands it back to the default for its shape. */
+    const keep = async (item: LibraryItem, days: number | null) => {
+        setKeeping(null);
+
+        try {
+            await axios.patch(`/api/library/${ item.id }`, { keepDays: days });
+
+            toast(days === null
+                ? t("libraryPage.keepDefaultToast", { name: name(item), n: item.keepDaysDefault })
+                : t("libraryPage.keepToast", { name: name(item), n: days }));
+
+        } catch(err) {
+            console.error(err);
+            toast(t("libraryPage.updateFailed", { name: name(item) }));
+
+        } finally {
+            await load();
+        }
+    };
+
+    const askKeep = (item: LibraryItem) => {
+        setKeepInput(String(item.keepDays));
+        setKeeping(item);
+    };
+
+    const wantedDays = Number(keepInput);
+    const keepValid = Number.isInteger(wantedDays) && wantedDays >= range.min && wantedDays <= range.max;
 
     const poster = (item: LibraryItem) => {
         if (! item.media?.poster_img) {
@@ -344,12 +380,43 @@ export function LibraryTable() {
                         {! item.deleteRequested && item.expiresAt && (
                             <div
                                 className="text-xs text-muted-foreground"
-                                title={t("libraryPage.retentionTooltip")}
+                                title={t("libraryPage.retentionTooltip", { n: item.keepDays })}
                             >
                                 { untilText(item.expiresAt, t) ? t("libraryPage.deletedIn", { time: untilText(item.expiresAt, t) }) : t("libraryPage.deletedNow") }
                             </div>
                         )}
                     </div>
+                );
+            }
+        },
+        {
+            key: "keep",
+            label: t("libraryPage.columns.keep"),
+            value: item => item.keepDays,
+            // the number the deletion above is counted from. Editable, because how long a
+            // film is worth keeping is not something an install-wide setting knows: a
+            // series gets its time per episode, and after that it is the household's call
+            render: item => {
+                const text = t("libraryPage.keepDaysValue", { n: item.keepDays });
+
+                if (! isAdmin) {
+                    return (
+                        <span className={classNames("text-xs whitespace-nowrap", item.keepDaysCustom ? "" : "text-muted-foreground")}>
+                            { text }
+                        </span>
+                    );
+                }
+
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className={classNames("h-7 cursor-pointer px-2 text-xs font-normal", { "text-muted-foreground": ! item.keepDaysCustom })}
+                        title={t("libraryPage.keepTooltip", { n: item.keepDaysDefault })}
+                        onClick={() => askKeep(item)}
+                    >
+                        <Pencil className="size-3" /> { text }
+                    </Button>
                 );
             }
         },
@@ -496,20 +563,63 @@ export function LibraryTable() {
                             { t("common.cancel") }
                         </Button>
 
-                        <Button
-                            variant="outline"
-                            className="cursor-pointer"
-                            onClick={() => deleting?.seeding ? mark(deleting, true, false) : destroy(deleting!, false)}
-                        >
-                            { t("libraryPage.keepFiles") }
-                        </Button>
-
+                        {/* one answer only: a deletion always takes the files with it */}
                         <Button
                             variant="destructive"
                             className="cursor-pointer"
-                            onClick={() => deleting?.seeding ? mark(deleting, true, true) : destroy(deleting!, true)}
+                            onClick={() => deleting?.seeding ? mark(deleting, true) : destroy(deleting!)}
                         >
-                            <Trash2 /> { t("libraryPage.deleteFiles") }
+                            <Trash2 /> { t(deleting?.seeding ? "libraryPage.markConfirm" : "libraryPage.deleteConfirm") }
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={keeping !== null} onOpenChange={(open) => { if (! open) { setKeeping(null); } }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>
+                            { t("libraryPage.keepQuestion", { name: keeping ? name(keeping) : t("libraryPage.thisOne") }) }
+                        </DialogTitle>
+
+                        <DialogDescription>
+                            { t("libraryPage.keepNote", { min: range.min, max: range.max }) }
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="flex items-center gap-2">
+                        <Input
+                            type="number"
+                            min={range.min}
+                            max={range.max}
+                            value={keepInput}
+                            className="w-24"
+                            autoFocus
+                            onChange={event => setKeepInput(event.target.value)}
+                            onKeyDown={event => { if (event.key === "Enter" && keepValid) { keep(keeping!, wantedDays); } }}
+                        />
+
+                        <span className="text-sm text-muted-foreground">{ t("libraryPage.dayUnit") }</span>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="cursor-pointer" onClick={() => setKeeping(null)}>
+                            { t("common.cancel") }
+                        </Button>
+
+                        {/* only worth offering when there is a decision to take back */}
+                        {keeping?.keepDaysCustom && (
+                            <Button variant="outline" className="cursor-pointer" onClick={() => keep(keeping, null)}>
+                                { t("libraryPage.keepDefaultButton", { n: keeping.keepDaysDefault }) }
+                            </Button>
+                        )}
+
+                        <Button
+                            className="cursor-pointer"
+                            disabled={! keepValid}
+                            onClick={() => keep(keeping!, wantedDays)}
+                        >
+                            { t("common.save") }
                         </Button>
                     </DialogFooter>
                 </DialogContent>

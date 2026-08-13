@@ -27,13 +27,25 @@ export type LibraryEntry = {
     seedUntil: string | null;
     // still inside the seed window: it can be marked for deletion, not deleted
     seeding: boolean;
-    // when the retention will delete it on its own, null while that is switched off
+    // when the retention will delete it — with its files — on its own. Null while it is
+    // still downloading, because there is nothing to count from yet
     expiresAt: string | null;
+    // how long it is kept after it finished, in days
+    keepDays: number;
+    // what that would be if nobody had chosen: 5 for a film, 3 per episode for a series
+    keepDaysDefault: number;
+    // somebody chose the number above, rather than it being the default
+    keepDaysCustom: boolean;
     deleteRequested: boolean;
-    deleteFiles: boolean;
     // who was waiting for this, by name. The library is shared; the wanting was not
     watchers: string[];
 };
+
+/**
+ * What a retention may be set to. The floor is the seed time, which is a setting, so the
+ * page is told rather than guessing.
+ */
+export type KeepRange = { min: number, max: number };
 
 export type LibraryItem = LibraryEntry & {
     media: Media | null;

@@ -976,7 +976,7 @@ A `LibraryItem` sor **a torrent hozzáadása előtt** jön létre, mert az id-ja
 - **A `/api/watchlist` cím szerint is kérdezhető.** Egy sorozat, aminek minden epizódja letöltött, **nem szerepel a watchlist táblában** — az adatlapnak mégis ki kell pipálnia a részeit. A `getTitleState()` ezért mindkét táblából épít, és `id: null`-lal tér vissza, ha nincs watchlist sor.
 - **Egy badge, két tábla.** A poszterek `getWatchlistSlim()`-et kérdezik, ami mostantól **összefésült** listát ad: ami épp töltődik, az `Downloading`, ami csak a libraryban van, az `Available`, a többi a watchlist saját állapota.
 
-**A seed időszak.** `LIBRARY_SEED_DAYS` (Settings / Library, default 3). A `seedUntil` a letöltés befejezésekor áll be, és **kizárólag a törlés gombot zárolja** — a torrent utána is seedel, amíg te nem törlöd. Zárolás alatt a törlés dialógusa „törlésre jelölés"-re vált (fájllal vagy anélkül), a `runLibraryCleanup()` pedig a percenkénti kliens-visszaolvasással együtt fut, tehát a késés legrosszabb esetben egy perc. Az API a biztosíték: `DELETE` seedelés közben **409**, nem csak a gomb tűnik el.
+**A seed időszak.** `LIBRARY_SEED_DAYS` (Settings / Library, default 3). A `seedUntil` a letöltés befejezésekor áll be, és **kizárólag a törlés gombot zárolja** — a torrent utána is seedel, amíg te nem törlöd. Zárolás alatt a törlés dialógusa „törlésre jelölés"-re vált (2026-08-13 óta fájl-kérdés nélkül: a törlés mindig viszi a fájlokat), a `runLibraryCleanup()` pedig a percenkénti kliens-visszaolvasással együtt fut, tehát a késés legrosszabb esetben egy perc. Az API a biztosíték: `DELETE` seedelés közben **409**, nem csak a gomb tűnik el.
 
 **Mérve** (a futó szerveren, eldobható Ted Lasso sorral, ami utána törlődött):
 
@@ -1261,7 +1261,7 @@ Két dolog ehhez járulékosan változott. A `MediaGrid` / discover / keresés a
 
 **6. A libraryban látszik, ki kérte.** A `watchers` mező már ott volt az API-ban (nevekre feloldva, egy lekérdezéssel az egész lapra, a törölt fiók pedig kiesik a felsorolásból) — csak oszlop nem volt neki. Most van, „Requested by", és ha többen kérték, mindenki neve ott van. Ez az egyetlen hely, ami egy elindult letöltésnél még megmondja, kié volt: a watchlist sorait a letöltés elvitte.
 
-**7. Megőrzés: 7 nap, fájlokkal.** Új beállítás, `LIBRARY_RETENTION_DAYS`, default `7`, a Library csoportban. A **befejezés** pillanatától számol, és lejárva a torrentet **és a fájlokat** törli, kérdés nélkül. Ez az egyetlen időzítő az appban, ami fájlt semmisít meg, ezért szűk:
+**7. Megőrzés: 7 nap, fájlokkal.** ⚠️ *2026-08-13 óta nem így működik: a megőrzés soronként áll, a beállítás megszűnt — ld. „A megőrzés a letöltés tulajdonsága lett". Az alábbi a döntés eredeti alakja.* Új beállítás, `LIBRARY_RETENTION_DAYS`, default `7`, a Library csoportban. A **befejezés** pillanatától számol, és lejárva a torrentet **és a fájlokat** törli, kérdés nélkül. Ez az egyetlen időzítő az appban, ami fájlt semmisít meg, ezért szűk:
 
 - csak `AVAILABLE` sor (ami sosem fejeződött be, annak nem megőrzés kell, hanem újabb keresés — arról a `syncDownloads` dönt),
 - **a seed-ablak elé sosem megy**: a kettő közül a későbbi dönt (ezt az `expiresAt` is így számolja),
@@ -1408,7 +1408,7 @@ row 13  seedUntil  2026-08-12T20:09 -> 2026-08-13T07:50   (61.9h van meg)
 
 Vagyis a kliens szerint ezek a torrentek a 21 órából 6–10 órát seedeltek — a régi dátum harmadannyi teljesített idő után ígérte a törölhetőséget. **Ez tehát kitolja a törlés feloldását**, ami a kérés lényege; ha mégis a faliórás számolás kell, a `seeding_time` kiolvasása az egyetlen dolog, amit vissza kell venni.
 
-**Amire figyelni kell:** a megőrzés (`LIBRARY_RETENTION_DAYS`) szándékosan **sosem** előzi meg a seed-ablakot — így egy örökre szüneteltetett torrentet a megőrzés sem fog letörölni. Ez a biztonságos irány (a seedelés ígéretét nem szegi meg egy lemez-takarító), de azt jelenti, hogy egy leállított kliens mellett a library nem tisztul magától. Aki ezt nem akarja, a `LIBRARY_SEED_DAYS`-t állítsa `0`-ra.
+**Amire figyelni kell:** a megőrzés (2026-08-13 óta a soron álló `keepDays`) szándékosan **sosem** előzi meg a seed-ablakot — így egy örökre szüneteltetett torrentet a megőrzés sem fog letörölni. Ez a biztonságos irány (a seedelés ígéretét nem szegi meg egy lemez-takarító), de azt jelenti, hogy egy leállított kliens mellett a library nem tisztul magától. Aki ezt nem akarja, a `LIBRARY_SEED_DAYS`-t állítsa `0`-ra.
 
 #### Watchlisten van, de egy rész sincs bepipálva (2026-08-10-i bejelentés) ✅
 
@@ -1686,6 +1686,40 @@ A régi tagek élesben is kétértelműek (2-2 találat) — pontosan ez volt a 
 1. **A már elrontott éles sorok maguktól nem javulnak meg**, és törlésre vannak jelölve, fájlokkal: a #13 és a #3 `seedUntil`-ja 08-13 07:49, a #12-esé 08-13 11:21. Amikor letelik, a `deleteLibraryItem` a soron lévő hash-t adja a `removeTorrent`-nek — vagyis a **Regular Show** és az **Obsession** fájljai mennek el, a valódi Silo S03E04 és Prada 2 pedig árván marad a kliensben. Előbb vagy le kell venni a jelölést, vagy a `torrentHash`-t (`13 → c1f2fbd4…`, `12 → 271e6ffb…`) és a `releaseTitle`-t kézzel javítani.
 2. **A dev és a prod ugyanazt a qBittorrentet és Jackettet használja.** Az install-szintű tag ezt már elbírja, de a `TORRENT_CATEGORY` közös marad, tehát a takarító körök egymás torrentjeit is látják.
 3. **Két tétel szándékosan kimaradt** ebből a körből: a `markAvailable` továbbra is felülírja a kért release-címet a kliens torrent-nevével (két külön mező kellene: amit kértünk, és aminek a kliens hívja), és a törlés sem ellenőrzi, hogy a torrent neve passzol-e a sorhoz. Amíg ez így van, egy félrecímkézett release csendben átírja a sor történetét.
+
+#### A megőrzés a letöltés tulajdonsága lett (2026-08-13-i kérés) ✅
+
+Kérés: „bármi ha letöltünk, akkor az nem törölhető minimum `LIBRARY_SEED_DAYS` napig; a `LIBRARY_RETENTION_DAYS` beállításra viszont nincs szükség — ha bekerül a libraryba, akkor egy film default 5 nap múlva törlődik, sorozat esetén ahány részt letöltöttünk, annyiszor 3 nap; a libraryban a felhasználó átírhatja tetszőleges napra (minimum `LIBRARY_SEED_DAYS`, maximum 60). A törlésnél pedig már nem kell megkérdezni, hogy a fájlokat is akarja-e törölni — minden esetben törölje a fájlokat is."
+
+**Amit ez megváltoztat, az nem a szám, hanem hogy hol lakik.** Eddig egy install-szintű beállítás (`LIBRARY_RETENTION_DAYS = 7`) mondta meg minden letöltésre ugyanazt. Egy film egy este, egy tízrészes évadcsomag viszont hetek programja — egy szám a kettőre vagy félig megnézve dobja el a csomagot, vagy egy hónapig őrzi a filmet. Ezért a megőrzés a **sor tulajdonsága** lett: `Library.keepDays`, nullázható.
+
+- **A `null` a szabály, nem a hiány.** Aki nem döntött róla, az a sor alakját követi: film 5 nap, sorozat **letöltött részenként** 3 nap (`defaultKeepDays`). Beíródó default helyett azért számolt érték, mert a beírt szám egy szabály pillanatképe lenne, a szabály alsó határa (a seed-idő) viszont változhat alatta.
+- **Alsó és felső határ.** A padló a `LIBRARY_SEED_DAYS` (legalább 1 nap): a takarító a seed-ablakon belül amúgy sem töröl, tehát egy rövidebb szám olyan ígéret, amit senki nem tud betartani — csak látszik. A plafon **60 nap**, és a *default* is ehhez van vágva: egy 30 részes csomag 90 napja már nem megőrzés, hanem archiválás. A `setKeepDays` és az API is vág, nem csak a beviteli mező.
+- **A libraryban egy oszlop lett belőle** („Megőrzés"), és ez az egy szám az, amiből a mellette lévő cella `deleted in …` sora számol. Kattintásra átírható, `{min}`–`{max}` között, plusz egy „Alapérték (N nap)" gomb, ami visszaadja a sort a szabálynak. **Adminé**, mint a törlés gomb: a fájlok a háztartásé, és a szám rövidítése ugyanazt jelenti, mint a törlés — csak később.
+- **A törlés nem kérdez a fájlokról.** Eddig három gomb volt (mégse / fájlok megtartása / fájlokat is), most kettő. A `Library.deleteFiles` oszlop kikerült, a `DELETE /api/library/:id` `files` paramétere is: a sort a fájlok nélkül eltávolítani a két kimenet közül a rosszabb volt — az appban semmi nem tud róluk többé, a lemez viszont ugyanannyira tele van.
+
+**Mérve** (dobható szkriptekkel, egy olyan tmdb id alatt, ami nincs az installban, torrent-hash nélkül — a qBittorrentet tehát nem érintette; a végén minden sor törölve):
+
+```
+seed = 3 nap  ->  padló 3, plafon 60
+  film                       default  5   lejár 5 nap múlva
+  1 rész                     default  3
+  10 részes csomag           default 30   kézzel 3-ra írva: lejár
+  30 részes csomag           default 60   (a 90-ből vágva)
+  film, de még seedel        lejárat = a seedUntil, nem a megőrzés
+  még töltődik               nincs lejárata (null)
+  0 -> 3, 500 -> 60          a vágás a DB-írásnál is megvan
+cleanup: a három lejárt sor elment, a friss / a seedelő / a töltődő maradt
+
+API:  GET /api/library -> keepRange {min:3,max:60}, a soron keepDays/keepDaysDefault/keepDaysCustom
+      PATCH 14 -> 200 | 1 -> 400 | 61 -> 400 | "soon" -> 400 | null -> 200 (vissza a defaultra)
+      DELETE files paraméter nélkül -> 200, a sor tombstone lett
+      a sor JSON-jában nincs többé deleteFiles
+```
+
+`tsc --noEmit` és `next lint` tiszta, a `/`, `/library`, `/settings`, `/account` 200.
+
+**Amire figyelni kell.** A migráció (`20260813120000_library_keep_days`) **a meglévő sorokra is érvényes**, a befejezés dátumától — egy 08-09-én elkészült film 5 napja tehát már le is telt. Ebben az adatbázisban ez semmit nem érintett: a hét `Library` sor **mindegyike `removedAt`-os tombstone**, azokat a takarító nem is nézi (ez a mérés előtt le van ellenőrizve). Egy másik installon viszont, ahol van élő sor, az első kör a régi letöltéseket elviheti — a fájlokkal együtt —, ezért ott a frissítés előtt érdemes a libraryban a hosszabb megőrzést beírni. A `Setting` táblából a `LIBRARY_RETENTION_DAYS` sora törlődik (itt nem is volt ilyen sor, a default 7 volt érvényben).
 
 ---
 

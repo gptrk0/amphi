@@ -13,11 +13,16 @@ import {
 import { languageProfileOf, searchLanguages } from "@/lib/language";
 import {
     claimHeldUnits,
+    EPISODE_KEEP_DAYS,
     forgetLibraryItem,
     hasLibraryItem,
     isSeeding,
+    keepDays,
     libraryLabel,
     markAvailable,
+    MAX_KEEP_DAYS,
+    minKeepDays,
+    MOVIE_KEEP_DAYS,
     restoreToWatchlist,
     runLibraryCleanup,
     setSize,
@@ -349,15 +354,14 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
     // just now, so it is a WARN and it says who to blame — the setting, not a person
     for (const { item, why } of await runLibraryCleanup()) {
         const label = await libraryLabel(item);
-        const withFiles = why === "expired" || item.deleteFiles;
         const marked = item.deleteRequestedBy ? await nameList([ item.deleteRequestedBy ]) : "";
 
         const who = why === "expired"
-            ? `nobody — it was kept for ${ settingNumber("LIBRARY_RETENTION_DAYS") } days and the time ran out`
+            ? `nobody — it was kept for ${ keepDays(item) } days and the time ran out`
             : marked ? `marked for deletion by ${ marked }` : "marked for deletion earlier";
 
         await syncLog(
-            `${ label }: ${ why === "expired" ? "the retention time ran out" : "the seed time is up and it was marked for deletion" }, ${ withFiles ? "removed with its files" : "removed, the files were kept" }`,
+            `${ label }: ${ why === "expired" ? "the retention time ran out" : "the seed time is up and it was marked for deletion" }, removed with its files`,
             why === "expired" ? LogLevel.WARN : LogLevel.INFO
         );
 
@@ -741,12 +745,12 @@ export const startScheduler = async () => {
     await log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
 
     // the one timer in the app that destroys files, so it says so on every boot rather
-    // than only in the settings page nobody opens twice
-    const retentionDays = settingNumber("LIBRARY_RETENTION_DAYS");
-
-    await log(retentionDays > 0
-        ? `a finished download is deleted with its files ${ retentionDays } days after it lands (Settings / Library)`
-        : "nothing in the library is deleted on its own: it stays until somebody deletes it (Settings / Library)");
+    // than only on a page nobody opens twice
+    await log(
+        `a finished download is deleted with its files ${ MOVIE_KEEP_DAYS } days after it lands, `
+        + `a series ${ EPISODE_KEEP_DAYS } days per episode downloaded — never sooner than the seed time `
+        + `(${ minKeepDays() } days) and never later than ${ MAX_KEEP_DAYS }; any row can be given its own number in the library`
+    );
 
     // a list can be empty, and a check that cannot reject anything must not look like
     // it is guarding something

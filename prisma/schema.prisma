@@ -204,10 +204,19 @@ model Library {
   /// to serve its window twice. See `syncSeedWindow`.
   seedUntil DateTime?
 
+  /// How long this download is kept after it finished, in days. Null is the default for
+  /// the shape of the row — five days for a film, three per episode for a series — and a
+  /// number is somebody's decision in the library, between the seed time and 60 days.
+  ///
+  /// Nullable rather than filled in at creation on purpose: a stored default would be a
+  /// copy of a rule, and the rule (the seed time is its floor) can change under it. See
+  /// `defaultKeepDays` in src/lib/library.ts.
+  keepDays Int?
+
   /// Asked for while it was still seeding. The cleanup carries it out the moment
-  /// `seedUntil` passes.
+  /// `seedUntil` passes. A deletion always takes the files with it, so there is nothing
+  /// else recorded here.
   deleteRequested Boolean @default(false)
-  deleteFiles     Boolean @default(true)
 
   /// Who asked for it. The deletion itself happens later, in a background round with
   /// nobody signed in, and the notification about it still has to be able to say

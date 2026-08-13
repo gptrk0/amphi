@@ -1,5 +1,3 @@
-import { NextRequest } from "next/server";
-
 import { currentUser, refuseUnlessAdmin, withActor } from "@/lib/auth";
 import { logInfo, logWarn } from "@/lib/log";
 import {
@@ -7,17 +5,21 @@ import {
     deleteLibraryItem,
     getLibraryItem,
     isSeeding,
+    keepDays,
     libraryLabel,
-    requestDelete
+    MAX_KEEP_DAYS,
+    minKeepDays,
+    requestDelete,
+    setKeepDays
 } from "@/lib/library";
 import { notify, notifyUsers } from "@/lib/notify";
 
 type Params = { params: Promise<{ id: string }> };
 
 /**
- * Marking for deletion and taking the mark back. This is what the delete button
- * becomes while the seed time is still running — the row goes by itself the moment
- * it is up.
+ * Two decisions about one download: how long it is kept, and whether it is to be deleted
+ * when the seed time is up. The second one is what the delete button becomes while the
+ * seed time is still running — the row goes by itself the moment it is up.
  */
 export async function PATCH(req: Request, { params }: Params) {
     const refusal = await refuseUnlessAdmin();
@@ -41,20 +43,42 @@ export async function PATCH(req: Request, { params }: Params) {
         }
 
         const body = await req.json();
-        const wanted = body?.deleteRequested === true;
-        const withFiles = body?.deleteFiles !== false;
         const who = await currentUser();
-
-        const result = wanted ? await requestDelete(itemId, withFiles, who?.id ?? null) : await cancelDelete(itemId);
         const label = await libraryLabel(item);
+
+        // how long it stays. `null` hands it back to the default for its shape; anything
+        // else has to be inside the range the library offers — the api is the guard, not
+        // the number input
+        if (body?.keepDays !== undefined) {
+            const wanted = body.keepDays === null ? null : Number(body.keepDays);
+            const min = minKeepDays();
+
+            if (wanted !== null && (! Number.isFinite(wanted) || wanted < min || wanted > MAX_KEEP_DAYS)) {
+                return Response.json({
+                    success: false,
+                    message: `Keep it for between ${ min } and ${ MAX_KEEP_DAYS } days!`
+                }, { status: 400 });
+            }
+
+            const result = await setKeepDays(itemId, wanted);
+
+            await logInfo(
+                "library",
+                `kept for ${ keepDays(result) } days: ${ label }`,
+                withActor(wanted === null ? "back to the default for its size" : undefined, who)
+            );
+
+            return Response.json({ success: true, result });
+        }
+
+        const wanted = body?.deleteRequested === true;
+
+        const result = wanted ? await requestDelete(itemId, who?.id ?? null) : await cancelDelete(itemId);
 
         await logInfo(
             "library",
             wanted ? `marked for deletion: ${ label }` : `deletion cancelled: ${ label }`,
-            withActor(
-                wanted ? `it goes ${ withFiles ? "with its files " : "" }when the seed time is up` : undefined,
-                who
-            )
+            withActor(wanted ? "it goes with its files when the seed time is up" : undefined, who)
         );
 
         return Response.json({ success: true, result });
@@ -67,10 +91,10 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 /**
- * Delete now. Refused while the item is still seeding — that is what the mark is
- * for. `files=1` takes the files as well, and nothing about that can be undone.
+ * Delete now — the torrent and its files, always. Refused while the item is still seeding:
+ * that is what the mark is for. Nothing about this can be undone.
  */
-export async function DELETE(req: NextRequest, { params }: Params) {
+export async function DELETE(_req: Request, { params }: Params) {
     const refusal = await refuseUnlessAdmin();
 
     if (refusal) {
@@ -83,8 +107,6 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (! itemId) {
         return Response.json({ success: false, message: 'Invalid id!' }, { status: 400 });
     }
-
-    const withFiles = req.nextUrl.searchParams.get('files') === "1";
 
     try {
         const item = await getLibraryItem(itemId);
@@ -104,21 +126,18 @@ export async function DELETE(req: NextRequest, { params }: Params) {
         const label = await libraryLabel(item);
         const who = await currentUser();
 
-        await deleteLibraryItem(item, withFiles);
+        await deleteLibraryItem(item);
 
         await logWarn(
             "library",
             `deleted: ${ label }`,
-            withActor(
-                withFiles ? "the torrent and its files were removed from the client" : "the torrent was removed, the files were kept",
-                who
-            )
+            withActor("the torrent and its files were removed from the client", who)
         );
 
         // the files are gone and everybody sharing this install is affected, so the
         // install chat hears it with a name on it. The people who were waiting for this
         // one hear it too — for them it is the download itself that disappeared
-        const detail = `${ withFiles ? "the torrent and its files were deleted" : "the torrent was removed, the files were kept" }${ item.releaseTitle ? ` — ${ item.releaseTitle }` : "" }`;
+        const detail = `the torrent and its files were deleted${ item.releaseTitle ? ` — ${ item.releaseTitle }` : "" }`;
 
         await notify("deleted", label, detail, who ? `deleted by ${ who.name }` : "deleted by nobody signed in");
         await notifyUsers(item.watchedBy, "deleted", label, detail);

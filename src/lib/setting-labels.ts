@@ -52,11 +52,7 @@ const HU: Record<string, Text> = {
     TORRENT_SERIES_PATH: { label: "Sorozatok mentési útvonala" },
     LIBRARY_SEED_DAYS: {
         label: "Seedelés (nap)",
-        help: "A qBittorrent saját seed-ideje alapján, nem attól, hogy mikor érkezett meg a letöltés: egy szüneteltetett torrent nem tölti az idejét, és amelyik már ez előtt is seedelt, annak nem kell kétszer letöltenie. Amíg le nem telik, a letöltés csak megjelölhető törlésre, és magától elmegy, amikor eljön az idő. A torrent utána is seedel, amíg nem törlöd. A 0 azt jelenti, hogy minden azonnal törölhető."
-    },
-    LIBRARY_RETENTION_DAYS: {
-        label: "Letöltés megőrzése (nap)",
-        help: "Attól számolva, hogy elkészült. Amikor letelik, a torrent és a fájljai törlődnek, kérdezés nélkül — ez az egyetlen beállítás az appban, ami időzítőre fájlokat semmisít meg, tehát érdemes biztosra menni vele. Soha nem lép be a fenti seed-idő letelte előtt. 0 = minden megmarad, amíg valaki kézzel nem törli."
+        help: "A qBittorrent saját seed-ideje alapján, nem attól, hogy mikor érkezett meg a letöltés: egy szüneteltetett torrent nem tölti az idejét, és amelyik már ez előtt is seedelt, annak nem kell kétszer letöltenie. Amíg le nem telik, semmi nem törlődik — sem kézzel, sem a megőrzési idő lejártával: a letöltés csak megjelölhető, és magától elmegy, amikor eljön az idő. Ez egyben a legrövidebb megőrzési idő is, amit a gyűjtemény elfogad. A torrent utána is seedel, amíg nem törlöd. A 0 azt jelenti, hogy minden azonnal törölhető."
     },
     QUALITY_RESOLUTIONS: {
         label: "Felbontások, a legjobb elöl",

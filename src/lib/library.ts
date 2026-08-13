@@ -32,11 +32,66 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const seedRequiredMs = () => Math.max(settingNumber("LIBRARY_SEED_DAYS"), 0) * DAY_MS;
 
 /**
- * How long a finished download is kept. 0 is off, and off is the safe direction: the
- * whole library staying is a disk filling up, a retention that fires by accident is
- * files that are not coming back.
+ * Where a download's retention starts, before anybody touches it. A film is one evening,
+ * so it is one number; a season is watched over weeks, so it gets its time **per episode**
+ * — a ten episode pack is not the same request as a single episode, and one number for
+ * both would either throw the pack away half-watched or keep the single one for a month.
+ *
+ * Deliberately not settings. The number that decides anything is the one on the row, and
+ * that one is editable in the library; these two only say where a new row starts.
  */
-const retentionMs = () => Math.max(settingNumber("LIBRARY_RETENTION_DAYS"), 0) * DAY_MS;
+export const MOVIE_KEEP_DAYS = 5;
+export const EPISODE_KEEP_DAYS = 3;
+
+/** Nothing is kept longer than this, chosen or computed. */
+export const MAX_KEEP_DAYS = 60;
+
+/**
+ * The floor under every retention: what is downloaded seeds first, and the cleanup never
+ * deletes inside the seed window anyway — so a shorter number would be a promise that
+ * cannot be kept, shown to somebody who would believe it. At least a day, because 0 would
+ * mean "delete it as it lands".
+ */
+export const minKeepDays = () => Math.max(Math.round(settingNumber("LIBRARY_SEED_DAYS")), 1);
+
+/** What a row is kept for when nobody has said otherwise. */
+export const defaultKeepDays = (item: { type: ContentType, episodes: string[] }) => {
+    const days = item.type === ContentType.MOVIE
+        ? MOVIE_KEEP_DAYS
+        : EPISODE_KEEP_DAYS * Math.max(item.episodes.length, 1);
+
+    return clampKeepDays(days);
+};
+
+export const clampKeepDays = (days: number) => Math.min(Math.max(Math.round(days), minKeepDays()), MAX_KEEP_DAYS);
+
+/**
+ * How long this download is kept. Somebody's number if there is one, otherwise the default
+ * for its shape — read rather than stored, so a row that was never decided about follows
+ * the rule instead of a copy of it.
+ */
+export const keepDays = (item: LibraryRow) => item.keepDays ?? defaultKeepDays(item);
+
+/** What the library page may offer, which only the server knows the floor of. */
+export const keepRange = () => ({ min: minKeepDays(), max: MAX_KEEP_DAYS });
+
+/**
+ * When the cleanup will take it, files and all. Computed rather than stored: the seed
+ * window moves with the client, and a date frozen into a column would go on promising the
+ * one it was written with.
+ *
+ * Null only while the download has not finished — there is nothing to count from yet.
+ */
+export const expiresAt = (item: LibraryRow) => {
+    if (! item.completedAt) {
+        return null;
+    }
+
+    const due = new Date(item.completedAt.getTime() + keepDays(item) * DAY_MS);
+
+    // the seed window holds it back, so the later of the two is when it really goes
+    return item.seedUntil && item.seedUntil > due ? item.seedUntil : due;
+};
 
 /**
  * One tag scheme for everything, because a download is one row now: the torrent is
@@ -433,12 +488,28 @@ export const getLibraryItem = async (id: number) => {
     return await prisma.library.findUnique({ where: { id } });
 };
 
-export const requestDelete = async (id: number, deleteFiles: boolean, requestedBy: number | null = null) => {
+export const requestDelete = async (id: number, requestedBy: number | null = null) => {
     return await prisma.library.update({
         where: { id },
         // the mark and the deletion can be days apart, so whose decision it was has to
         // be written down now — by then there is nobody signed in to ask
-        data: { deleteRequested: true, deleteFiles, deleteRequestedBy: requestedBy }
+        data: { deleteRequested: true, deleteRequestedBy: requestedBy }
+    });
+};
+
+/**
+ * Somebody chose how long this one stays. `null` hands it back to the default, which then
+ * goes on following the shape of the row rather than the number that was current when the
+ * button was pressed.
+ *
+ * The value is clamped here as well as in the api: this is the only place that writes the
+ * column, and a retention shorter than the seed time or longer than two months is not a
+ * decision the app offers.
+ */
+export const setKeepDays = async (id: number, days: number | null) => {
+    return await prisma.library.update({
+        where: { id },
+        data: { keepDays: days === null ? null : clampKeepDays(days) }
     });
 };
 
@@ -447,12 +518,14 @@ export const cancelDelete = async (id: number) => {
 };
 
 /**
- * Carries the deletion out. The torrent goes from the client either way, the files
- * only if asked — the one action in the app that cannot be undone.
+ * Carries the deletion out — the one action in the app that cannot be undone. The torrent
+ * goes from the client and **its files go with it**, every time: a row removed from the
+ * library without its files was the worst of the two outcomes, because nothing in the app
+ * knows about them afterwards and the disk is exactly as full as it was.
  */
-export const deleteLibraryItem = async (item: LibraryRow, deleteFiles: boolean) => {
+export const deleteLibraryItem = async (item: LibraryRow) => {
     if (item.torrentHash) {
-        await removeTorrent(item.torrentHash, deleteFiles);
+        await removeTorrent(item.torrentHash, true);
     }
 
     return await forgetLibraryItem(item);
@@ -469,8 +542,8 @@ export type CleanedUp = { item: LibraryRow, why: "marked" | "expired" };
  * seeding, and it goes the moment the window closes — their decision, carried out late.
  * **Expired**: the retention time ran out, and nobody decided anything; this is the one
  * thing in the app that destroys files without being asked, so it is deliberately narrow.
- * Only a finished download, only past its seed window, only counted from the moment it
- * became watchable, and only while the setting is not 0.
+ * Only a finished download, only past its seed window, and only counted from the moment it
+ * became watchable.
  */
 export const runLibraryCleanup = async (): Promise<CleanedUp[]> => {
     const now = new Date();
@@ -481,32 +554,34 @@ export const runLibraryCleanup = async (): Promise<CleanedUp[]> => {
         where: { deleteRequested: true, removedAt: null, ...seedIsUp }
     });
 
-    const keepMs = retentionMs();
+    // the retention is per row now — five days for a film, three per episode for a pack,
+    // or whatever somebody typed in the library — so the due date cannot be a `where`.
+    // The candidates are narrow enough to date here: finished, unmarked, out of seed. A row
+    // that never finished has no retention clock at all; what it needs is another search,
+    // and syncDownloads is what decides that.
+    const finished = await prisma.library.findMany({
+        where: {
+            deleteRequested: false,
+            removedAt: null,
+            status: LibraryStatus.AVAILABLE,
+            completedAt: { not: null },
+            ...seedIsUp
+        }
+    });
 
-    // a row that never finished has no retention clock: what it needs is another search,
-    // and syncDownloads is what decides that
-    const expired = keepMs > 0
-        ? await prisma.library.findMany({
-            where: {
-                deleteRequested: false,
-                removedAt: null,
-                status: LibraryStatus.AVAILABLE,
-                completedAt: { not: null, lte: new Date(now.getTime() - keepMs) },
-                ...seedIsUp
-            }
-        })
-        : [];
+    const expired = finished.filter(item => {
+        const due = expiresAt(item);
+
+        return !! due && due.getTime() <= now.getTime();
+    });
 
     const done: CleanedUp[] = [
         ...marked.map((item): CleanedUp => ({ item, why: "marked" })),
-        // the retention takes the files with it. Leaving them would be the worst of both:
-        // the row is gone, so nothing in the app knows about them any more, and the disk
-        // is exactly as full as it was
         ...expired.map((item): CleanedUp => ({ item, why: "expired" }))
     ];
 
-    for (const { item, why } of done) {
-        await deleteLibraryItem(item, why === "expired" ? true : item.deleteFiles);
+    for (const { item } of done) {
+        await deleteLibraryItem(item);
     }
 
     // tombstones that remember nothing, left by an earlier rule that kept every
@@ -565,23 +640,6 @@ const toDownload = (torrent: TorrentStatus): WatchlistDownload => ({
     size: torrent.size
 });
 
-/**
- * When the retention will take it, if it is on. Computed rather than stored: the setting
- * can be changed, and a date frozen into a column would go on promising the old one.
- */
-const expiresAt = (item: LibraryRow) => {
-    const keepMs = retentionMs();
-
-    if (keepMs === 0 || ! item.completedAt) {
-        return null;
-    }
-
-    // the seed window holds it back, so the later of the two is when it really goes
-    const due = new Date(item.completedAt.getTime() + keepMs);
-
-    return item.seedUntil && item.seedUntil > due ? item.seedUntil : due;
-};
-
 export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = new Map()): LibraryEntry => ({
     watchers: item.watchedBy.map(id => names.get(id)).filter((name): name is string => !! name),
     id: item.id,
@@ -598,8 +656,12 @@ export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = ne
     seedUntil: item.seedUntil ? item.seedUntil.toISOString() : null,
     seeding: isSeeding(item),
     expiresAt: expiresAt(item)?.toISOString() || null,
-    deleteRequested: item.deleteRequested,
-    deleteFiles: item.deleteFiles
+    keepDays: keepDays(item),
+    keepDaysDefault: defaultKeepDays(item),
+    // whether that number is somebody's decision or the rule. The two can be equal, so it
+    // cannot be read off the numbers
+    keepDaysCustom: item.keepDays !== null,
+    deleteRequested: item.deleteRequested
 });
 
 /**

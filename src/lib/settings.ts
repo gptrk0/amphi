@@ -94,8 +94,10 @@ export const SETTINGS: SettingDef[] = [
     { key: "TORRENT_SERIES_PATH", group: "Torrent client", label: "Series save path", type: "string" },
 
     // Library
-    { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "Counted from qBittorrent's own seeding time, not from when the download landed: a torrent that is paused is not serving its time, and one that was already seeding before this app saw it is not asked to serve it twice. Until it is up the download can only be marked for deletion, and it goes by itself when the time comes. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
-    { key: "LIBRARY_RETENTION_DAYS", group: "Library", label: "Keep a download for (days)", type: "number", default: "7", help: "Counted from the moment it finished. When it is up the torrent and its files are deleted, without asking anybody — this is the only setting in the app that destroys files on a timer, so it is worth being sure about. It never fires before the seed time above is over. 0 = keep everything until somebody deletes it by hand." },
+    // How long a download is kept is not here: it belongs to the download, not to the
+    // install — five days for a film, three per episode for a series, and editable per row
+    // in the library. See `defaultKeepDays` in src/lib/library.ts.
+    { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "Counted from qBittorrent's own seeding time, not from when the download landed: a torrent that is paused is not serving its time, and one that was already seeding before this app saw it is not asked to serve it twice. Nothing is deleted before this is up — not by hand and not by the retention: until then a download can only be marked, and it goes by itself when the time comes. This is also the shortest retention the library will accept. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
 
     // Quality
     { key: "QUALITY_RESOLUTIONS", group: "Quality", label: "Resolutions, best first", type: "list", ordered: true, default: "1080p,720p,2160p", help: "Anything not listed is rejected. An unrecognised resolution is kept as a last resort." },
