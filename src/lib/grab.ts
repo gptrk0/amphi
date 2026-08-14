@@ -14,7 +14,7 @@ import {
     selectSeasonRelease
 } from "@/lib/release";
 import { settingNumber, settingText } from "@/lib/settings";
-import { addRelease } from "@/lib/torrent";
+import { AddedRelease, addRelease } from "@/lib/torrent";
 import { LibraryAudience } from "@/lib/audience";
 import { logWarn } from "@/lib/log";
 import { RejectionCode } from "@/types/download";
@@ -182,21 +182,25 @@ export type StartedDownload = {
  * grab is treated as not started — which puts the request back on the watchlist, where a
  * later round can pick a release of its own.
  */
-const ownHash = async (item: LibraryRow, hash: string | null, releaseTitle: string) => {
-    if (! hash) {
+const ownHash = async (item: LibraryRow, added: AddedRelease, releaseTitle: string) => {
+    // the client's own account of why there is nothing to follow. It is the only place
+    // this is known, and it used to stop here
+    if (! added.hash) {
+        await logWarn("download", `${ releaseTitle }: the torrent client did not take it`, added.reason || undefined);
+
         return null;
     }
 
-    const owner = await rowHoldingTorrent(hash, item.id);
+    const owner = await rowHoldingTorrent(added.hash, item.id);
 
     if (! owner) {
-        return hash;
+        return added.hash;
     }
 
     await logWarn(
         "download",
         `${ releaseTitle }: the client answered with a torrent that library row #${ owner.id } already follows`,
-        `torrent ${ hash.slice(0, 8) } — left alone, and this request goes back on the watchlist`
+        `torrent ${ added.hash.slice(0, 8) } — left alone, and this request goes back on the watchlist`
     );
 
     return null;

@@ -267,6 +267,31 @@ const findTorrentByName = async (title: string): Promise<TorrentStatus | null> =
     return torrents.find(torrent => sameName(torrent.name) === wanted) || null;
 };
 
+/**
+ * The same lookup across every category, and only ever to explain a failure.
+ *
+ * A torrent the client already holds under somebody else's category is invisible to
+ * `listManagedTorrents`, so an add for it answers "Ok.", adds nothing, and leaves the app
+ * with no idea why. It is not adopted — it is not this app's torrent and its files may be
+ * anywhere — but it is by far the most common answer to "why did nothing happen", and a log
+ * line that names it is the difference between a mystery and a two second explanation.
+ */
+const findAnywhereByName = async (title: string): Promise<{ torrent: TorrentStatus, category: string } | null> => {
+    try {
+        const list = await request("/api/v2/torrents/info");
+        const wanted = sameName(title);
+
+        const found = (Array.isArray(list) ? list : [])
+            .find((torrent: any) => sameName(String(torrent.name || "")) === wanted);
+
+        return found ? { torrent: toStatus(found), category: String(found.category || "") } : null;
+
+    } catch {
+        // this call only exists to write a better sentence, so it never becomes the failure
+        return null;
+    }
+};
+
 export const addTag = async (hash: string, tag: string) => {
     try {
         return await request("/api/v2/torrents/addTags", form({ hashes: hash, tags: tag }));
@@ -274,6 +299,53 @@ export const addTag = async (hash: string, tag: string) => {
     } catch(err) {
         await logFailure("tagging a torrent", err);
     }
+};
+
+/**
+ * What an add came to. `hash` is the torrent to follow; `reason` is why there is none, in
+ * words meant for the log — the caller has nothing else to go on, since the client answers
+ * a refusal and a success with almost the same thing.
+ */
+export type AddedRelease = { hash: string | null, reason: string | null };
+
+const ADD_ATTEMPTS = 10;
+const ADD_INTERVAL_MS = 500;
+
+/**
+ * What the add answered, from either shape the client speaks.
+ *
+ * qBittorrent 5.2 replies with a JSON summary — `{"added_torrent_ids":[],"failure_count":0,
+ * "pending_count":1,"success_count":0}` — which is the difference between "refused" and
+ * "still fetching your link", and the app had no way to tell those apart before. Older
+ * versions answer `Ok.` or `Fails.` as plain text.
+ *
+ * The hashes in `added_torrent_ids` are deliberately not used to skip the tag lookup: they
+ * are torrent *ids*, which are the infohash for an ordinary torrent and need not be for a
+ * hybrid one, and every other hash in this app comes from `/torrents/info`. One shape of
+ * hash, from one place.
+ */
+type AddAnswer = { failed: number, pending: number, refused: string | null };
+
+const readAddAnswer = (data: unknown): AddAnswer => {
+    if (data && typeof data === "object") {
+        const summary = data as Record<string, unknown>;
+
+        return {
+            failed: Number(summary.failure_count || 0),
+            pending: Number(summary.pending_count || 0),
+            refused: null
+        };
+    }
+
+    const text = String(data ?? "").trim();
+
+    // "Ok." is the success and an empty body is one on some versions; anything else —
+    // "Fails." above all — is the client saying no while still answering 200
+    return {
+        failed: 0,
+        pending: 0,
+        refused: text && text.toLowerCase() !== "ok." ? text : null
+    };
 };
 
 /**
@@ -290,38 +362,92 @@ export const addTag = async (hash: string, tag: string) => {
  * `.torrent` from the indexer takes about a second, so an older namesake would win that
  * race every single time — which is how a Silo episode ended up following a Regular Show
  * torrent on 2026-08-11. Only a hash that was not there a moment ago is this add's.
+ *
+ * **Every way this can fail comes back as a sentence.** There are three, and until now all
+ * three came out of here as a bare `null` that the log could only report as "the client did
+ * not take it": the call itself failing, which also used to throw and take the rest of the
+ * scan round with it; the client answering `Fails.`, which was read as a success and then
+ * timed out on the tag lookup; and the add being accepted while nothing appears, which is
+ * almost always a link the client could not fetch or a torrent it already holds elsewhere.
+ * The last one is worth a lookup of its own — see `findAnywhereByName`.
  */
-export const addRelease = async (release: IndexerResult, tag: string, savePath = ""): Promise<string | null> => {
+export const addRelease = async (release: IndexerResult, tag: string, savePath = ""): Promise<AddedRelease> => {
     await ensureCategory();
 
-    const before = new Set((await listManagedTorrents()).map(torrent => torrent.hash.toLowerCase()));
+    try {
+        const before = new Set((await listManagedTorrents()).map(torrent => torrent.hash.toLowerCase()));
 
-    await request("/api/v2/torrents/add", form({
-        urls: release.link,
-        category: category(),
-        tags: tag,
-        ...(savePath ? { savepath: savePath } : {})
-    }));
+        const answer = readAddAnswer(await request("/api/v2/torrents/add", form({
+            urls: release.link,
+            category: category(),
+            tags: tag,
+            ...(savePath ? { savepath: savePath } : {})
+        })));
 
-    for (let attempt = 0; attempt < 10; attempt++) {
-        const torrent = await findAddedTorrentByTag(tag, before);
-
-        if (torrent) {
-            return torrent.hash;
+        if (answer.refused) {
+            return { hash: null, reason: `the client refused the link and answered "${ answer.refused }"` };
         }
 
-        await sleep(500);
+        // it read the link and would have nothing to show for it, so there is no point
+        // waiting five seconds to find that out
+        if (answer.failed > 0 && answer.pending === 0) {
+            return { hash: null, reason: `the client refused the link outright and added nothing (${ answer.failed } failed)` };
+        }
+
+        for (let attempt = 0; attempt < ADD_ATTEMPTS; attempt++) {
+            const torrent = await findAddedTorrentByTag(tag, before);
+
+            if (torrent) {
+                return { hash: torrent.hash, reason: null };
+            }
+
+            await sleep(ADD_INTERVAL_MS);
+        }
+
+        const existing = await findTorrentByName(release.title);
+
+        if (existing) {
+            await addTag(existing.hash, tag);
+
+            return { hash: existing.hash, reason: null };
+        }
+
+        const seconds = Math.round(ADD_ATTEMPTS * ADD_INTERVAL_MS / 1000);
+        const elsewhere = await findAnywhereByName(release.title);
+
+        if (elsewhere) {
+            const where = elsewhere.category ? `under the "${ elsewhere.category }" category` : "with no category set";
+
+            return {
+                hash: null,
+                reason: `the client already holds this torrent ${ where } (${ elsewhere.torrent.state }), so the add was`
+                    + ` ignored — this app only follows "${ category() }", so it never saw it appear`
+            };
+        }
+
+        return {
+            hash: null,
+            reason: `the client took the add and showed no torrent for ${ seconds }s;`
+                + ` it fetches the link itself, so the usual cause is that ${ release.link.slice(0, 120) } did not answer with a torrent file`
+        };
+
+    } catch(err) {
+        // Not rethrown: one release the client will not take must not end the round. It
+        // used to, and the only trace was "the scan round failed" with everything after it
+        // silently skipped.
+        const text = errorText(err);
+
+        // qBittorrent answers `409 Conflict` to anything it cannot make sense of and `415`
+        // to a link that did not turn out to be a torrent file. Neither word says that by
+        // itself, and "Conflict" in a log is a question rather than an answer.
+        const status = text.match(/failed: (\d{3})/)?.[1];
+
+        const hint = status === "409" ? " — the client could not make sense of the link"
+            : status === "415" ? " — the link did not answer with a torrent file"
+                : "";
+
+        return { hash: null, reason: `${ text }${ hint }` };
     }
-
-    const existing = await findTorrentByName(release.title);
-
-    if (existing) {
-        await addTag(existing.hash, tag);
-
-        return existing.hash;
-    }
-
-    return null;
 };
 
 export const removeTorrent = async (hash: string, deleteFiles = false) => {
