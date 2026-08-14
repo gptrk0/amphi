@@ -1,1 +1,7 @@
-watchlisteléskor kérdezze meg milyen nyelven akarod watchlistre rakni a filmet... alapértelmezetten a beállításokban megadottat használja de tudjam felüldefiniálni egy bizonyos nyelv megadásával
+- Untagged release counts as profil beállításokból kiszedni, mert nem kell, elég a szerver globális
+- az account oldal legyen "Account settings"
+- a user oldalról az admin bárki account beállítások oldalát tudja megnyitni és szerkeszteni nekik
+- az INDEXER_IDS beállításánál legyen egy gomb amit megnyomva synceli az összes elérhető indexer azonosítót (ehhez persze meg kell legyen adva elsőnek az INDEXER_URL és INDEXER_API_KEY)
+- ha elkezdenék letölteni egy torrentet ami már qbittorrentben szerepel, akkor nem sikerül neki felvennie és watchlistre kerül a film... az lenne az elvárt hogy észreveszi hogy ugyanaz már szerepel qbittorrentben és ugyanúgy bekerül libraryba a megfelelő státusszal
+- ezt nem tudja hozzáadni https://ncore.pro/torrents.php?action=details&id=3460455
+- ha egy film régebbi mint X év és még mindig nincs indexereken találat rá, akkor írjuk ki a usernek, hogy valószínűleg nem is fog felkerülni
