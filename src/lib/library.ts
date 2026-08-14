@@ -536,6 +536,123 @@ export const deleteLibraryItem = async (item: LibraryRow) => {
     return await forgetLibraryItem(item);
 };
 
+/**
+ * Removed rows nothing can read any more.
+ *
+ * A tombstone is kept for one reader: `syncTvSeasons`, which asks it two things, both
+ * about a season rather than an episode. *How far this season has been offered*, so a
+ * deleted episode is not handed back on the next round — that is the season's top episode
+ * number, and only whichever row holds it answers it. And *who watched this season*, so
+ * the next episode of one that was downloaded to the end still lands on their list — that
+ * one is per person, and only the last row that remembers it answers it.
+ *
+ * Everything else in a title's tombstones is a second copy of an answer another row is
+ * already giving, so it is dropped. What survives is at most one row per season, and often
+ * none: a title on nobody's watchlist is never handed to `syncTvSeasons` at all, and then
+ * not one of its tombstones is ever read again. That is the case that empties the table —
+ * a library page with nothing on it should not be a library table with rows in it.
+ *
+ * A row still on the shelf is never touched here, and neither is a film: that one has no
+ * episodes, remembers nothing, and is deleted outright when it goes.
+ */
+const sweepTombstones = async () => {
+    const tombstones = await prisma.library.findMany({ where: { removedAt: { not: null } } });
+
+    if (tombstones.length === 0) {
+        return 0;
+    }
+
+    const titles = new Map<string, LibraryRow[]>();
+
+    for (const item of tombstones) {
+        const key = `${ item.type }:${ item.tmdbId }`;
+
+        titles.set(key, [ ...(titles.get(key) || []), item ]);
+    }
+
+    const spent = new Set<number>();
+
+    for (const own of titles.values()) {
+        const { tmdbId, type } = own[0];
+        const rows = await prisma.watchlist.findMany({ where: { tmdbId, type } });
+
+        // `syncTvSeasons` only ever runs for a watchlist row, so with none there is
+        // nothing left in the app that could read any of these
+        if (rows.length === 0) {
+            own.forEach(item => spent.add(item.id));
+
+            continue;
+        }
+
+        const all = await prisma.library.findMany({ where: { tmdbId, type } });
+        const units = await prisma.watchlistUnit.findMany({ where: { watchlistId: { in: rows.map(row => row.id) } } });
+
+        // how far each season has been offered, as everything together knows it: the
+        // units still on the lists and every download ever made, this row included
+        const top = new Map<number, number>();
+
+        const note = (seasonNumber: number, episodeNumber: number) => {
+            top.set(seasonNumber, Math.max(top.get(seasonNumber) ?? episodeNumber, episodeNumber));
+        };
+
+        for (const unit of units) {
+            if (unit.seasonNumber !== null && unit.episodeNumber !== null) {
+                note(unit.seasonNumber, unit.episodeNumber);
+            }
+        }
+
+        for (const item of all) {
+            item.episodes.map(toEpisode).forEach(episode => note(episode.seasonNumber, episode.episodeNumber));
+        }
+
+        const covers = (item: LibraryRow, seasonNumber: number) => {
+            return item.episodes.map(toEpisode).some(episode => episode.seasonNumber === seasonNumber);
+        };
+
+        for (const item of own) {
+            const episodes = item.episodes.map(toEpisode);
+            const seasons = [ ...new Set(episodes.map(episode => episode.seasonNumber)) ];
+
+            // it is the line itself: dropping it would move the season's watermark down
+            // and offer the episode all over again
+            const holdsLine = episodes.some(episode => top.get(episode.seasonNumber) === episode.episodeNumber);
+
+            // or it is the last thing that remembers somebody watched one of its seasons.
+            // Rows already condemned in this round do not count as somewhere else for it
+            // to be remembered — two tombstones each pointing at the other is how both
+            // would go and the memory with them
+            const remembers = item.watchedBy.some(userId => {
+                const row = rows.find(row => row.userId === userId);
+
+                return !! row && seasons.some(seasonNumber => {
+                    const ticked = units.some(unit => unit.watchlistId === row.id
+                        && unit.seasonNumber === seasonNumber
+                        && unit.monitored);
+
+                    const elsewhere = all.some(other => other.id !== item.id
+                        && ! spent.has(other.id)
+                        && other.watchedBy.includes(userId)
+                        && covers(other, seasonNumber));
+
+                    return ! ticked && ! elsewhere;
+                });
+            });
+
+            if (! holdsLine && ! remembers) {
+                spent.add(item.id);
+            }
+        }
+    }
+
+    if (spent.size === 0) {
+        return 0;
+    }
+
+    await prisma.library.deleteMany({ where: { id: { in: [ ...spent ] } } });
+
+    return spent.size;
+};
+
 /** Why a row went in a cleanup round, which is also what the notification says. */
 export type CleanedUp = { item: LibraryRow, why: "marked" | "expired" };
 
@@ -589,9 +706,9 @@ export const runLibraryCleanup = async (): Promise<CleanedUp[]> => {
         await deleteLibraryItem(item);
     }
 
-    // tombstones that remember nothing, left by an earlier rule that kept every
-    // removed row. nothing reads them and nothing shows them
-    await prisma.library.deleteMany({ where: { removedAt: { not: null }, episodes: { isEmpty: true } } });
+    // and the removed rows nothing can read any more — last, so the ones this round just
+    // made are weighed with the rest rather than waiting for the next one
+    await sweepTombstones();
 
     return done;
 };
