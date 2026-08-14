@@ -23,9 +23,20 @@ jobs:
             - uses: actions/checkout@v4
 
             # arm64 is emulated on a x86 runner. It is the slow half of this job by a wide
-            # margin; drop it from `platforms` below if a build every push matters more than
-            # the Raspberry Pi and the arm Macs.
-            - uses: docker/setup-qemu-action@v3
+            # margin — measured at 781s against 61s for the same builder stage — so drop it
+            # from `platforms` below if a build every push matters more than the Raspberry Pi
+            # and the arm Macs.
+            #
+            # Not `docker/setup-qemu-action`. That action does two things: it registers the
+            # emulators, which is this line, and it then runs the same image a second time to
+            # read back the list of platforms and parse it as JSON. The second half is
+            # informational and it is the half that breaks on a self-hosted runner: the query
+            # needs to read `/proc/sys/fs/binfmt_misc`, which a runner that is itself inside a
+            # container usually cannot, and the empty answer surfaces as `Unexpected end of
+            # JSON input` with nothing said about emulators at all. The install is what
+            # matters, and it prints what it did.
+            - name: Register the arm64 emulator
+              run: docker run --rm --privileged tonistiigi/binfmt:latest --install arm64
 
             - uses: docker/setup-buildx-action@v3
 
