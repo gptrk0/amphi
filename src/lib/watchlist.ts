@@ -238,6 +238,13 @@ const libraryEpisodes = async (tmdbId: number, audience: LibraryAudience | null)
     return map;
 };
 
+/** An episode key as the library writes it, read back as numbers. */
+const toEpisodeRef = (key: string) => {
+    const [ seasonNumber, episodeNumber ] = key.split(":").map(Number);
+
+    return { seasonNumber, episodeNumber };
+};
+
 /**
  * Seasons are not stored, they are read back from the numbers on the units — and
  * now also from the library, because an episode that has been obtained no longer
@@ -262,7 +269,7 @@ const toSeasons = (units: UnitRow[], held: Map<string, PrismaWatchStatus>, withE
     }
 
     for (const [ id, status ] of held) {
-        const [ seasonNumber, episodeNumber ] = id.split(":").map(Number);
+        const { seasonNumber, episodeNumber } = toEpisodeRef(id);
         const unit = seasons.get(seasonNumber)?.get(episodeNumber);
 
         // Being had is the stronger fact about the *status* — but it must not silently
@@ -495,6 +502,119 @@ export const ensureSeasonUnits = async (
 };
 
 /**
+ * Every episode of a title this install has ever downloaded, deleted copies included —
+ * "already offered", as `syncTvSeasons` means it. With a `userId`, which of them that
+ * person actually watched, which is what keeps a season followed after its last unit
+ * has been carried off.
+ */
+const obtainedEpisodes = async (tmdbId: number, userId?: number) => {
+    const downloads = await prisma.library.findMany({
+        where: { tmdbId },
+        select: { watchedBy: true, episodes: true }
+    });
+
+    return downloads.flatMap(download => download.episodes.map(key => ({
+        ...toEpisodeRef(key),
+        watched: userId !== undefined && download.watchedBy.includes(userId)
+    })));
+};
+
+/**
+ * The highest episode of a season anything already knows about: a unit of this row,
+ * ticked or not, or a download that carried one off.
+ *
+ * This is the line the whole idea of a stored "no" hangs on. Nothing below it can ever
+ * be taken up again, so nothing below it is worth writing down.
+ */
+const seasonWatermark = async (watchlistId: number, tmdbId: number, seasonNumber: number) => {
+    const units = await prisma.watchlistUnit.findMany({ where: { watchlistId, seasonNumber } });
+    const obtained = await obtainedEpisodes(tmdbId);
+
+    const numbers = [
+        ...units.map(unit => unit.episodeNumber).filter((v): v is number => v !== null),
+        ...obtained.filter(episode => episode.seasonNumber === seasonNumber).map(episode => episode.episodeNumber)
+    ];
+
+    return numbers.length > 0 ? Math.max(...numbers) : null;
+};
+
+/**
+ * Throws away the unticked units nothing can ever read again — and after this, unticking
+ * a season really does empty it out of the database rather than turning it grey.
+ *
+ * An unticked unit is a remembered "no", and exactly one thing ever reads one:
+ * `syncTvSeasons`, which uses it to tell "declined" apart from "announced while nobody
+ * was looking". So a decline is only worth its row while that question can still be
+ * asked about it, and there are two ways it stops being askable.
+ *
+ * **The season is not followed at all.** Nothing in it is ticked, no download of it was
+ * watched, and new seasons are not being picked up — then `syncTvSeasons` will not take
+ * up anything of it whatever it finds stored, and every "no" in it is answering nobody.
+ * Unticking a whole season used to leave one row per episode behind for good.
+ *
+ * **It is below the season's watermark.** A followed season is only ever extended
+ * *above* the highest episode it already knows about, so a "no" under that line is
+ * unreachable too. The top one is always kept: when it is the watermark itself, dropping
+ * it would move the line down and offer the episode all over again — which is the one
+ * thing declines exist to prevent (Regular Show, 2026-08-10).
+ *
+ * A season the newest of which is unticked while `monitorNewSeasons` is on keeps its top
+ * row for the same reason: that row is the line, and without it the season reads as one
+ * that has just been announced.
+ */
+const pruneDeclinedUnits = async (watchlistId: number) => {
+    const item = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
+
+    if (! item) {
+        return 0;
+    }
+
+    const units = await prisma.watchlistUnit.findMany({ where: { watchlistId, seasonNumber: { not: null } } });
+    const obtained = await obtainedEpisodes(item.tmdbId, item.userId);
+
+    const watchedSeasons = new Set(obtained.filter(episode => episode.watched).map(episode => episode.seasonNumber));
+
+    const known = [ ...units.map(unit => unit.seasonNumber as number), ...obtained.map(episode => episode.seasonNumber) ];
+    const latest = known.length > 0 ? Math.max(...known) : null;
+
+    const spent: number[] = [];
+
+    for (const seasonNumber of new Set(units.map(unit => unit.seasonNumber as number))) {
+        const own = units.filter(unit => unit.seasonNumber === seasonNumber);
+        const declined = own.filter(unit => ! unit.monitored && unit.episodeNumber !== null);
+
+        const followed = own.some(unit => unit.monitored)
+            || watchedSeasons.has(seasonNumber)
+            // `>=` rather than `>`: this season *is* the line while its rows are here, and
+            // taking the last of them away is what would drop it below itself
+            || (item.monitorNewSeasons && latest !== null && seasonNumber >= latest);
+
+        if (! followed) {
+            spent.push(...declined.map(unit => unit.id));
+
+            continue;
+        }
+
+        const numbers = [
+            ...own.map(unit => unit.episodeNumber).filter((v): v is number => v !== null),
+            ...obtained.filter(episode => episode.seasonNumber === seasonNumber).map(episode => episode.episodeNumber)
+        ];
+
+        const watermark = Math.max(...numbers);
+
+        spent.push(...declined.filter(unit => (unit.episodeNumber as number) < watermark).map(unit => unit.id));
+    }
+
+    if (spent.length === 0) {
+        return 0;
+    }
+
+    await prisma.watchlistUnit.deleteMany({ where: { id: { in: spent } } });
+
+    return spent.length;
+};
+
+/**
  * Follows TMDB for what is stored: the air dates of the rows that exist, and the
  * new episodes of a season that is watched. A season nobody watches gets no rows at
  * all, so this is cheap to run periodically — the whole point of it is the air
@@ -520,16 +640,7 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
     //
     // That half is deliberately everybody's: the file is on the disk whoever fetched
     // it, so nobody has to be offered it again.
-    const downloads = await prisma.library.findMany({
-        where: { tmdbId },
-        select: { watchedBy: true, episodes: true }
-    });
-
-    const obtained = downloads.flatMap(download => download.episodes.map(key => {
-        const [ seasonNumber, episodeNumber ] = key.split(":").map(Number);
-
-        return { seasonNumber, episodeNumber, watched: download.watchedBy.includes(item.userId) };
-    }));
+    const obtained = await obtainedEpisodes(tmdbId, item.userId);
 
     // The other half is not. Once a season's last unit is carried off by a download,
     // the library is the only thing that still knows the season was being watched —
@@ -585,6 +696,10 @@ export const syncTvSeasons = async (watchlistId: number, tmdbId: number) => {
             }
         }
     }
+
+    // after the creations, not before: a season this round just took up is followed from
+    // now on, and its stored "no"s are read against a watermark that has moved
+    await pruneDeclinedUnits(watchlistId);
 
     return seasons.length;
 };
@@ -685,8 +800,16 @@ export const stopWatching = async (id: number) => {
  *
  * They cost nothing while the row lives and they go with it when it dies: the row is
  * deleted the moment nothing on it is monitored, and the units cascade.
+ *
+ * **Only the ones still worth keeping**, though, and that is decided here rather than
+ * fifteen minutes later by a metadata round — see `pruneDeclinedUnits`. Unticking is
+ * something a person does and then looks at, so it has to leave the table the way they
+ * would describe it: a season nobody is watching any more is gone from the database, not
+ * greyed out in it.
  */
 export const pruneWatchlistItem = async (id: number): Promise<WatchlistRowItem | null> => {
+    await pruneDeclinedUnits(id);
+
     const watched = await prisma.watchlistUnit.count({ where: { watchlistId: id, monitored: true } });
 
     if (watched > 0) {
@@ -754,12 +877,21 @@ export const setMonitored = async (
             // everything above the highest picked episode as newly announced and turns it
             // on — ticking E11 of a finished season quietly became watching E11 to E22.
             // Monitoring is never turned *off* here, so this cannot undo an existing tick.
+            //
+            // Only above the watermark, because that is the only half of the season that
+            // could be read as newly announced. The half below it would be a "no" nothing
+            // ever asks about again — ticking the last four of ten used to leave five such
+            // rows behind, and they were what made a watchlist of four episodes look like
+            // a table of nine.
             const announced = (await getTvSeasons(tmdbId))
                 .find(season => season.season_number === target.seasonNumber)?.episodes || [];
 
+            const watermark = await seasonWatermark(row.id, tmdbId, target.seasonNumber);
+
             const rest = announced
                 .map(episode => episode.episode_number)
-                .filter(number => ! target.episodeNumbers!.includes(number));
+                .filter(number => ! target.episodeNumbers!.includes(number))
+                .filter(number => watermark === null || number > watermark);
 
             await ensureEpisodeUnits(row.id, tmdbId, target.seasonNumber, rest, false, held);
 
