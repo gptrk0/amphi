@@ -723,6 +723,10 @@ export const addToWatchlist = async (userId: number, tmdbId: number, type: Conte
     // picking seasons by hand does not, and an existing row keeps what it had
     const monitorNewSeasons = type === ContentType.TV && ! monitorSeasons ? { monitorNewSeasons: true } : {};
 
+    // whether this row was already here, which decides whether there is any history to
+    // carry forward at all — see the season branch below
+    const existing = await prisma.watchlist.findUnique({ where: { userId_tmdbId_type: { userId, tmdbId, type } } });
+
     const item = await prisma.watchlist.upsert({
         where: { userId_tmdbId_type: { userId, tmdbId, type } },
         update: monitorNewSeasons,
@@ -736,9 +740,19 @@ export const addToWatchlist = async (userId: number, tmdbId: number, type: Conte
         await ensureSeasonUnits(item.id, tmdbId, undefined, true);
 
     } else {
-        // whatever is already there keeps following TMDB, and the picked seasons
-        // are created on top of it
-        await syncTvSeasons(item.id, tmdbId);
+        // Whatever is already there keeps following TMDB, and the picked seasons are
+        // created on top of it.
+        //
+        // A row that did not exist a moment ago has nothing to carry forward, and letting
+        // it follow TMDB anyway is how a show somebody had cleared off their list came
+        // back on it. `syncTvSeasons` reads the library for who watched which season, and
+        // that memory outlives the row: taking every episode of Silo off the list and then
+        // ticking one episode of season 2 recreated season 3 from the last downloaded
+        // episode up, monitored, ready to grab. Picking seasons by hand means those
+        // seasons and no others.
+        if (existing) {
+            await syncTvSeasons(item.id, tmdbId);
+        }
 
         if (monitorSeasons.length > 0) {
             await ensureSeasonUnits(item.id, tmdbId, monitorSeasons, true);
