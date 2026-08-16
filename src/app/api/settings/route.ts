@@ -142,6 +142,16 @@ export async function PUT(req: Request) {
                 }, { status: 400 });
             }
 
+            // the page picks from the list, so this is for anything else that reaches the
+            // api — and a value outside the set is not a stricter version of the setting,
+            // it is one nothing will ever match
+            if (def.type === "option" && text !== "" && ! (def.options ?? []).some(option => option.value === text)) {
+                return Response.json({
+                    success: false,
+                    message: `"${ text }" is not one of the values ${ def.label } can take.`
+                }, { status: 400 });
+            }
+
             wanted[key] = text;
         }
 

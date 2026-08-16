@@ -31,7 +31,7 @@ const HU: Record<string, Text> = {
     INDEXER_IDS: {
         label: "Indexerek",
         placeholder: "indexer id",
-        help: "Egyenként kerülnek megkérdezésre, képesség szerint, és a sorrend egyben a prioritás is. Az `all` a Jackett összesített végpontját használja, ami csendben kihagy minden indexert, ami nem tud imdb id szerint keresni — jobb megnevezni őket."
+        help: "Üresen hagyva minden indexert használ, ami a kezelőnél be van állítva. Ha megnevezed őket, azzal két dolgot döntesz el: melyiket kérdezzük, és milyen sorrendben — a sorrend egyben a prioritás. Mindkét esetben külön-külön kerülnek megkérdezésre, tehát a saját képességeik alakítják a lekérdezést. A melletti gomb kitölti, ami a kezelőnél van; ami már bent van, az a helyén marad."
     },
     INDEXER_PRIORITY: {
         label: "Prioritási sorrend",
@@ -81,13 +81,17 @@ const HU: Record<string, Text> = {
         help: "Egy fájl, ami ennyivel kisebb, mint a bemondott felbontása, nem az a videó. GB-ban, bejegyzésenként."
     },
     QUALITY_MIN_SIZE_EPISODE: { label: "Minimális epizód-méret felbontásonként" },
+    QUALITY_UNTAGGED_LANGUAGE: {
+        label: "A jelöletlen release nyelve",
+        help: "A legtöbb release-en egyáltalán nincs nyelvi tag. Ezt tekintjük a nyelvének. Akinek nem ez az első nyelve, annak magától nem tölt le jelöletlen release-t — neki az egy másik nyelvű fájl."
+    },
     WATCHLIST_SCAN_INTERVAL_MINUTES: { label: "Keresés ennyi percenként" },
     DOWNLOAD_SYNC_INTERVAL_MINUTES: { label: "A kliens visszaolvasása ennyi percenként" },
-    SEARCH_BACKOFF_MINUTES: {
-        label: "Első várakozás üres keresés után (perc)",
-        help: "Minden eredménytelen kereséssel duplázódik. Semmiről nem mondunk le végleg."
+    SEARCH_BACKOFF_LADDER: {
+        label: "Keresési létra (nap:perc)",
+        placeholder: "nap:perc",
+        help: "Milyen sűrűn keresünk valamit, aszerint, hogy mióta keressük — az első üres kereséstől számítva, nem a felvételtől. Az alapérték azt mondja: az első napon 30 percenként, a másodikon 2 óránként, azután 12 óránként. Az utolsó fok örökre szól: semmiről nem mondunk le végleg."
     },
-    SEARCH_MAX_BACKOFF_HOURS: { label: "Leghosszabb várakozás (óra)" },
     EPISODE_SEARCH_CONCURRENCY: { label: "Párhuzamos epizód-keresések" },
     SCAN_DRY_RUN: {
         label: "Próbafutás",

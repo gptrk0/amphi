@@ -69,10 +69,12 @@ model User {
   /// one the scanner will ever grab on its own. The rest is what may be offered when a
   /// download is started by hand, and taking one of those is a question the person has
   /// to answer, not something that happens quietly.
+  /// What an untagged release counts as is deliberately **not** here: it is
+  /// `QUALITY_UNTAGGED_LANGUAGE`, one answer for the install. Wanting Hungarian is a
+  /// preference; believing an untagged file is Hungarian is a claim about the file, and
+  /// two accounts cannot each be right about it.
   preferredLanguages String  @default("hun,eng")
   excludeLanguages   String  @default("")
-  /// what a release with no language tag at all is taken to be
-  defaultLanguage    String  @default("eng")
   /// On by default: a 720p release in the right language beats a 1080p one in the wrong
   /// one. There is no weight beside it — the language either wins or it does not, and a
   /// number in between could only be set too low to matter.
@@ -205,8 +207,9 @@ model Library {
   seedUntil DateTime?
 
   /// How long this download is kept after it finished, in days. Null is the default for
-  /// the shape of the row — five days for a film, three per episode for a series — and a
-  /// number is somebody's decision in the library, between the seed time and 60 days.
+  /// the shape of the row — a week for a film or a single episode, three days per episode
+  /// of a season pack — and a number is somebody's decision in the library, between the
+  /// seed time and 60 days.
   ///
   /// Nullable rather than filled in at creation on purpose: a stored default would be a
   /// copy of a rule, and the rule (the seed time is its floor) can change under it. See
@@ -328,6 +331,21 @@ model WatchlistUnit {
   torrentHash    String?
   searchAttempts Int         @default(0)
   lastCheckedAt  DateTime?
+
+  /// Since when this has been looked for, which is what decides how often it is looked
+  /// for next — see `SEARCH_BACKOFF_LADDER`. Written at the **first** fruitless search
+  /// and not moved afterwards.
+  ///
+  /// Not derived from `searchAttempts`, and not the same thing: attempts count rounds,
+  /// and a container that was off for a week or a scan interval somebody doubled would
+  /// make the same number of them mean a different age. Not `addedAt` either — a film
+  /// put on the list six months after it came out has not been searched for six months,
+  /// it has been searched since today.
+  ///
+  /// Null means it has never come up empty: either it was never due, or it was found.
+  /// Nulled again whenever the search starts over — a language change, a download that
+  /// fell through — because from there on the answer is to a question never asked before.
+  searchingSince DateTime?
 
   @@unique([watchlistId, seasonNumber, episodeNumber])
   @@index([status])

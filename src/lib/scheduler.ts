@@ -22,10 +22,10 @@ import {
     markAvailable,
     MAX_KEEP_DAYS,
     minKeepDays,
-    MOVIE_KEEP_DAYS,
     restoreToWatchlist,
     runLibraryCleanup,
     setSize,
+    SINGLE_KEEP_DAYS,
     syncSeedWindow
 } from "@/lib/library";
 import { getMediaMetadata, getTvSeasons, isTmdbConfigured, RECORD_LANGUAGE } from "@/lib/media";
@@ -34,7 +34,7 @@ import { normalizeTitle } from "@/lib/release";
 import { BlockReason, blockRelease } from "@/lib/blocklist";
 import { forgetStall, stallDeleteFiles, stallMinutes, trackStall } from "@/lib/stall";
 import { inspectPayload, isPayloadCheckConfigured, payloadDeleteFiles } from "@/lib/payload";
-import { loadSettings, settingFlag, settingNumber } from "@/lib/settings";
+import { loadSettings, settingFlag, settingNumber, settingText } from "@/lib/settings";
 import { getTorrentFiles, getTorrentStatus, isClientConfigured, listManagedTorrents, removeTorrent, TorrentStatus } from "@/lib/torrent";
 import { forWhom, isNotifyConfigured, nameList, notify, notifyUsers } from "@/lib/notify";
 import { ensureMovieUnit, syncTvSeasons, toAirDate, toMediaType } from "@/lib/watchlist";
@@ -45,9 +45,8 @@ const scanIntervalMs = () => settingNumber("WATCHLIST_SCAN_INTERVAL_MINUTES") * 
 // dozens of indexer calls — so noticing that something finished does not have to
 // wait for the next round.
 const syncIntervalMs = () => settingNumber("DOWNLOAD_SYNC_INTERVAL_MINUTES") * 60 * 1000;
-const backoffBaseMs = () => settingNumber("SEARCH_BACKOFF_MINUTES") * 60 * 1000;
-const maxBackoffMs = () => settingNumber("SEARCH_MAX_BACKOFF_HOURS") * 60 * 60 * 1000;
 const START_DELAY_MS = 15 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // with SCAN_DRY_RUN=1 no torrent is added and no search state is written. syncDownloads
 // is not affected: it only mirrors back what the client already reports.
@@ -108,14 +107,70 @@ export const nextScanAt = () => globalForScheduler.nextScanAt || null;
 
 export const isScanRunning = () => !! globalForScheduler.schedulerRunning;
 
-/**
- * The wait doubles with every fruitless search up to a cap, and nothing is ever
- * given up on: a release that is not out yet may show up in a month, so a hard
- * attempt limit would quietly stop watching exactly the titles that need watching.
- */
-const backoffMs = (attempts: number) => Math.min(backoffBaseMs() * 2 ** attempts, maxBackoffMs());
-
 const waitText = (ms: number) => ms < 60 * 60 * 1000 ? `${ Math.round(ms / 60000) }m` : `${ Math.round(ms / 3600000) }h`;
+
+type Rung = { fromMs: number, everyMs: number };
+
+const FALLBACK_RUNG: Rung = { fromMs: 0, everyMs: 30 * 60 * 1000 };
+
+/**
+ * How often something is searched for, by how long it has already been searched for:
+ * `day:minutes` entries, read off `searchingSince` and sorted by the day they start on.
+ * The default is 30 minutes on the first day, two hours on the second, twelve hours
+ * from then on, and the last rung holds forever — nothing is ever given up on, because
+ * a release that is not up yet may appear in a month and a hard limit would quietly
+ * stop watching exactly the titles that need watching.
+ *
+ * This replaced a wait that doubled with every fruitless search. Doubling is a curve
+ * fitted to nothing: it counts rounds rather than time, so a container that spent a
+ * weekend off, or a scan interval somebody doubled, moved the whole schedule under it.
+ * The shape of the actual problem is time — an episode usually turns up within hours of
+ * airing, and one still missing after two days is waiting on a group, not on the next
+ * quarter of an hour.
+ *
+ * Read on every call rather than captured once, like every other setting here: a ladder
+ * edited on the admin page has to hold from the next round, not from the next restart.
+ */
+const ladder = (): Rung[] => {
+    const rungs = settingText("SEARCH_BACKOFF_LADDER")
+        .split(",")
+        .map(entry => entry.split(":"))
+        .map(([ day, minutes ]) => ({ fromMs: Number(day) * DAY_MS, everyMs: Number(minutes) * 60 * 1000 }))
+        // a half typed entry drops out instead of turning into a NaN wait, and a zero
+        // must not become a scan that searches everything in every round forever
+        .filter(rung => Number.isFinite(rung.fromMs) && rung.fromMs >= 0 && Number.isFinite(rung.everyMs) && rung.everyMs > 0)
+        .sort((a, b) => a.fromMs - b.fromMs);
+
+    // an emptied table is not a decision anybody can mean here — "search nothing, ever"
+    // is what turning the scanner off is for
+    return rungs.length > 0 ? rungs : [ FALLBACK_RUNG ];
+};
+
+/**
+ * The rung a unit stands on: the last one whose day has come. A unit that has never
+ * come up empty has no age yet and starts on the first rung — as does one whose ladder
+ * begins at a later day than zero, because a rung nobody has reached cannot be the one
+ * being waited out.
+ */
+const searchIntervalMs = (unit: { searchingSince: Date | null }) => {
+    const rungs = ladder();
+    const age = unit.searchingSince ? Date.now() - unit.searchingSince.getTime() : 0;
+
+    return (rungs.filter(rung => rung.fromMs <= age).pop() || rungs[0]).everyMs;
+};
+
+/**
+ * When the group as a whole comes up again: its units can stand on different rungs —
+ * one episode has been missing for a week, the one after it aired this morning — and
+ * the group is searched again as soon as the first of them is due.
+ */
+const nextWaitMs = (units: { searchingSince: Date | null }[]) => Math.min(...units.map(searchIntervalMs));
+
+const ladderText = () => ladder()
+    .map((rung, i) => i === 0
+        ? `every ${ waitText(rung.everyMs) } to begin with`
+        : `every ${ waitText(rung.everyMs) } from day ${ Math.round(rung.fromMs / DAY_MS) }`)
+    .join(", ");
 
 // what this search would accept. Almost always one language, so the common line reads
 // exactly as it did before — and when it is more, the log is where you find out why a
@@ -145,27 +200,61 @@ const seedUntilText = (item: { seedUntil: Date | null }, seedingTimeSeconds: num
 };
 
 /**
- * Coarse pre-filter for the query — the shortest wait any row can have. `isDue`
- * then applies the row's own backoff, so changing the env takes effect at once
- * instead of being frozen into a stored column.
+ * Coarse pre-filter for the query — the shortest wait any row can have, whichever rung
+ * that is on. `isDue` then applies the row's own, so an edited ladder takes effect at
+ * once instead of being frozen into a stored `nextCheckAt` column.
  */
 const dueFilter = () => {
+    const shortest = Math.min(...ladder().map(rung => rung.everyMs));
+
     return {
         OR: [
             { lastCheckedAt: null },
-            { lastCheckedAt: { lt: new Date(Date.now() - backoffBaseMs()) } }
+            { lastCheckedAt: { lt: new Date(Date.now() - shortest) } }
         ]
     };
 };
 
-const isDue = (unit: { searchAttempts: number, lastCheckedAt: Date | null }) => {
-    return ! unit.lastCheckedAt || unit.lastCheckedAt.getTime() + backoffMs(unit.searchAttempts) <= Date.now();
+const isDue = (unit: { searchingSince: Date | null, lastCheckedAt: Date | null }) => {
+    return ! unit.lastCheckedAt || unit.lastCheckedAt.getTime() + searchIntervalMs(unit) <= Date.now();
+};
+
+/**
+ * A round's worth of empty searching, written down. `searchingSince` is set on the rows
+ * that have none — the first empty search is what the ladder is counted from — and left
+ * alone on the rest, so a title does not keep restarting its own clock and stay on the
+ * shortest rung forever.
+ *
+ * `searchAttempts` no longer decides anything; it is kept because "looked for 340 times"
+ * is what the watchlist row shows, and the log line says which attempt this was.
+ */
+const markSearched = async (ids: number[], attempts: number) => {
+    const now = new Date();
+
+    await prisma.watchlistUnit.updateMany({
+        where: { id: { in: ids }, searchingSince: null },
+        data: { searchingSince: now }
+    });
+
+    await prisma.watchlistUnit.updateMany({
+        where: { id: { in: ids } },
+        data: {
+            status: WatchStatus.SEARCHING,
+            searchAttempts: attempts,
+            lastCheckedAt: now
+        }
+    });
 };
 
 /**
  * A torrent that lost the managed category is missing from the filtered list while
  * it is still there, so a miss is confirmed by a hash lookup — resetting the row on
  * a category change alone would start a duplicate download.
+ *
+ * Also the normal state of an adopted row: a torrent the client already had is followed
+ * where it sits rather than moved (see `adopt` in src/lib/torrent.ts), so this is not a
+ * discovery worth a line a minute for the rest of its life — hence DEBUG. The one line
+ * that says a torrent was taken over is written once, when it happens.
  */
 const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) => {
     const known = byHash.get(hash);
@@ -177,7 +266,7 @@ const resolveTorrent = async (byHash: Map<string, TorrentStatus>, hash: string) 
     const torrent = await getTorrentStatus(hash);
 
     if (torrent) {
-        await syncLog(`torrent ${ hash.slice(0, 8) } is outside the managed category`);
+        await syncLog(`torrent ${ hash.slice(0, 8) } is outside the managed category`, LogLevel.DEBUG);
     }
 
     return torrent;
@@ -463,21 +552,14 @@ export const scanMovies = async (options: ScanOptions = {}) => {
             continue;
         }
 
-        // the backoff is the film's, not one person's: whoever asked last does not get
-        // to reset the clock for everybody else who wants it in the same language
+        // the wait is the film's, not one person's: whoever asked last does not get to
+        // reset the clock for everybody else who wants it in the same language
         const attempts = Math.max(...wanted.map(unit => unit.searchAttempts)) + 1;
 
-        await log(`movie ${ tmdbId }: nothing suitable found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+        await log(`movie ${ tmdbId }: nothing suitable found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(nextWaitMs(wanted)) })`);
 
         if (! isDryRun()) {
-            await prisma.watchlistUnit.updateMany({
-                where: { id: { in: wanted.map(unit => unit.id) } },
-                data: {
-                    status: WatchStatus.SEARCHING,
-                    searchAttempts: attempts,
-                    lastCheckedAt: new Date()
-                }
-            });
+            await markSearched(wanted.map(unit => unit.id), attempts);
         }
     }
 
@@ -590,17 +672,10 @@ export const scanEpisodes = async (options: ScanOptions = {}) => {
         for (const [ episodeNumber, waiting ] of missed) {
             const attempts = Math.max(...waiting.map(unit => unit.searchAttempts)) + 1;
 
-            await log(`show ${ tmdbId } S${ seasonNumber }E${ episodeNumber }: nothing found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(backoffMs(attempts)) })`);
+            await log(`show ${ tmdbId } S${ seasonNumber }E${ episodeNumber }: nothing found in ${ languageText(context) } (attempt ${ attempts }, next in ${ waitText(nextWaitMs(waiting)) })`);
 
             if (! isDryRun()) {
-                await prisma.watchlistUnit.updateMany({
-                    where: { id: { in: waiting.map(unit => unit.id) } },
-                    data: {
-                        status: WatchStatus.SEARCHING,
-                        searchAttempts: attempts,
-                        lastCheckedAt: new Date()
-                    }
-                });
+                await markSearched(waiting.map(unit => unit.id), attempts);
             }
         }
     }
@@ -744,12 +819,18 @@ export const startScheduler = async () => {
 
     await log(`started, scanning every ${ scanIntervalMs() / 60000 } minutes, reading the client back every ${ syncIntervalMs() / 60000 }`);
 
+    // the round is how often the scanner wakes up, the ladder is how often any one title
+    // is actually looked for — two numbers that get confused for each other exactly once
+    // per install, which is the reason both are printed
+    await log(`a title is searched for ${ ladderText() }, counted from the first search that came up empty`);
+
     // the one timer in the app that destroys files, so it says so on every boot rather
     // than only on a page nobody opens twice
     await log(
-        `a finished download is deleted with its files ${ MOVIE_KEEP_DAYS } days after it lands, `
-        + `a series ${ EPISODE_KEEP_DAYS } days per episode downloaded — never sooner than the seed time `
-        + `(${ minKeepDays() } days) and never later than ${ MAX_KEEP_DAYS }; any row can be given its own number in the library`
+        `a finished download is deleted with its files ${ SINGLE_KEEP_DAYS } days after it lands — a film or a `
+        + `single episode — and a season pack ${ EPISODE_KEEP_DAYS } days per episode it carries; never sooner `
+        + `than the seed time (${ minKeepDays() } days) and never later than ${ MAX_KEEP_DAYS }; any row can be `
+        + `given its own number in the library`
     );
 
     // a list can be empty, and a check that cannot reject anything must not look like

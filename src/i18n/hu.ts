@@ -63,7 +63,7 @@ export const hu: Messages = {
     userMenu: {
         administrator: "adminisztrátor",
         user: "felhasználó",
-        account: "A fiókod",
+        account: "Fiókbeállítások",
         changePassword: "Jelszó módosítása",
         signOut: "Kijelentkezés",
         password: {
@@ -292,7 +292,11 @@ export const hu: Messages = {
     },
 
     account: {
-        title: "A fiókod",
+        title: "Fiókbeállítások",
+        titleFor: "{name} fiókbeállításai",
+        backToUsers: "Vissza a felhasználókhoz",
+        forSomebodyElse: "Ezek {name} saját beállításai — lent minden „te” őrá vonatkozik. Amit itt átállítasz, azt az app neki fogja csinálni, és ő a saját oldalán bármikor visszaállíthatja.",
+        missing: "Nincs ilyen fiók.",
         who: "{email} · {role}",
         name: "Név",
         nameHint: "Ezen a néven szólít a napló és a figyelőlista. Nem lehet üres.",
@@ -309,8 +313,6 @@ export const hu: Messages = {
         languagesHintShared: "Valaki más más nyelvű példánya nem számít a tiédnek: mindenki a saját fájlját kapja.",
         acceptAny: "A listán bármelyik nyelv jó",
         acceptAnyHint: "Kikapcsolva egy cím, ami az első nyelveden nem létezik, soha nem töltődik le — ott ül a figyelőlistádon „release-re vár” állapotban, miközben a release más nyelven megjelent. Ez a biztonságos irány, és ez az alapértelmezés, mert nem szabad a hátad mögött megelégedni egy nyelvvel, amit nem kértél. Bekapcsolva a scanner bármelyiket elviheti, továbbra is az elsőt előnyben részesítve. Egyetlen címre a figyelőlistán van nyelv oszlop.",
-        untagged: "A jelöletlen release nyelve",
-        untaggedHint: "A legtöbb release-en egyáltalán nincs nyelvi tag. Ezt tekintjük a nyelvének — és ha az első nyelved nem ez, akkor egy jelöletlen release nem a tiéd.",
         languageFirst: "A nyelv előbbre való a felbontásnál",
         languageFirstHint: "Bekapcsolva, és egy új fiók így indul: a te nyelveden lévő 720p megelőzi az idegen nyelvű 1080p-t. Kikapcsolva a legélesebb példány nyer, és a nyelv csak döntetlent bont — a kettő között nincs beállítás, mert egy nyelv, ami csak „számít valamennyit”, az egy nyelv, ami pár seederrel szemben veszít.",
         excluded: "Nyelvek, amiket sosem kérsz",
@@ -319,7 +321,8 @@ export const hu: Messages = {
         saved: "Mentve.",
         saveFailed: "Ezt nem sikerült elmenteni.",
         webhookFailed: "A webhookot nem sikerült meghívni.",
-        providerOnly: "Ez a fiók az identitásszolgáltatón keresztül lép be, és nincs itt jelszava. Egy adminisztrátor tud neki adni."
+        providerOnly: "Ez a fiók az identitásszolgáltatón keresztül lép be, és nincs itt jelszava. Egy adminisztrátor tud neki adni.",
+        providerOnlyTheirs: "Ez a fiók az identitásszolgáltatón keresztül lép be, és nincs itt jelszava. A felhasználók listájában a „Jelszó beállítása” ad neki egyet."
     },
 
     watchlistToast: {
@@ -365,6 +368,15 @@ export const hu: Messages = {
             "Download dialog": "Letöltési ablak",
             "Access": "Hozzáférés",
             "Log": "Napló"
+        },
+        indexers: {
+            button: "Beolvasás",
+            title: "Megkérdezi az indexer-kezelőt, mi van nála beállítva, és abból tölti ki a listát",
+            saveFirst: "Előbb mentsd el az URL-t és az API kulcsot — a lista az elmentettekkel olvasódik be.",
+            unchanged: "Mind a(z) {n} már bent van a listában.",
+            added: "Hozzáadva: {added}. Mentsd el, hogy megmaradjon.",
+            addedAndRemoved: "Hozzáadva: {added}. Eltávolítva, mert a kezelőnél már nincs meg: {removed}. Mentsd el, hogy megmaradjon.",
+            failed: "Nem sikerült beolvasni az indexer-listát."
         },
         callback: {
             label: "Callback cím a providernek",
@@ -421,6 +433,7 @@ export const hu: Messages = {
         withPassword: "jelszó",
         withSso: "egyszeri bejelentkezés",
         withNothing: "még semmi",
+        accountSettings: "Fiókbeállítások",
         setPassword: "Jelszó beállítása",
         makeUser: "Legyen sima felhasználó",
         makeAdmin: "Legyen adminisztrátor",

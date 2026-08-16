@@ -16,7 +16,7 @@ import {
 import { settingNumber, settingText } from "@/lib/settings";
 import { AddedRelease, addRelease } from "@/lib/torrent";
 import { LibraryAudience } from "@/lib/audience";
-import { logWarn } from "@/lib/log";
+import { logInfo, logWarn } from "@/lib/log";
 import { RejectionCode } from "@/types/download";
 import {
     GrabbedEpisode,
@@ -189,6 +189,12 @@ const ownHash = async (item: LibraryRow, added: AddedRelease, releaseTitle: stri
         await logWarn("download", `${ releaseTitle }: the torrent client did not take it`, added.reason || undefined);
 
         return null;
+    }
+
+    // a download nobody here started, followed from now on and deleted by the retention
+    // one day. Nothing about the row says so afterwards, so this line is the whole record
+    if (added.adopted) {
+        await logInfo("download", `${ releaseTitle }: the client already had this, taken over instead of downloading it again`, added.adopted);
     }
 
     const owner = await rowHoldingTorrent(added.hash, item.id);

@@ -6,6 +6,10 @@
  * film wanted in Hungarian and in English is two different files, and treating them
  * as one meant whoever configured the app decided for everybody else.
  *
+ * One of the five went back to the admin page on 2026-08-16: what an **untagged** release
+ * counts as. That one was never a preference — it is a claim about how release names work,
+ * and a claim is either right or wrong for the whole install. See `untaggedLanguage`.
+ *
  * The list is ordered and the **first entry is the primary**. That one is the only
  * language the scanner grabs on its own — everything below it is a fallback that a
  * person has to accept by hand, in front of the release list, knowing what they are
@@ -13,12 +17,22 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { settingText } from "@/lib/settings";
 
 export type LanguageProfile = {
     /// ordered, first is the primary
     preferred: string[];
     exclude: string[];
-    /// what a release carrying no language tag at all is taken to be
+    /**
+     * What a release carrying no language tag at all is taken to be.
+     *
+     * The install's, not this person's — `QUALITY_UNTAGGED_LANGUAGE` on the admin page. It
+     * sits in this type beside the personal fields because everything that judges a release
+     * needs it in one place, but it is the same value for everybody: an untagged file either
+     * is Hungarian or it is not, and two accounts cannot each be right about it. What *is*
+     * personal is what follows from it — somebody whose first language is not this gets no
+     * untagged release unattended.
+     */
     untagged: string;
     /**
      * Language outranks resolution. **On by default**, because that is what wanting a
@@ -47,7 +61,8 @@ export type LanguageProfile = {
 
 /**
  * What a new account starts with, and what a search falls back to when the account
- * behind it is gone.
+ * behind it is gone. `untagged` here is only the floor under the setting — the value
+ * that decides anything is `untaggedLanguage()`.
  */
 export const LANGUAGE_DEFAULTS: LanguageProfile = {
     preferred: [ "hun", "eng" ],
@@ -62,17 +77,29 @@ export const parseLanguageList = (value: string) => value
     .map(entry => entry.trim().toLowerCase())
     .filter(Boolean);
 
-/** The columns as the app wants them. Anything a person may edit is read from here. */
+/**
+ * What an untagged release is taken to be, install wide. Read on every call like every
+ * other setting, so changing it on the admin page holds from the next search rather than
+ * from the next restart — and read here rather than at each call site, because a fallback
+ * copied around is a fallback that drifts.
+ */
+export const untaggedLanguage = () => {
+    return settingText("QUALITY_UNTAGGED_LANGUAGE").trim().toLowerCase() || LANGUAGE_DEFAULTS.untagged;
+};
+
+/**
+ * The columns as the app wants them, plus the one thing in this profile that is not the
+ * person's — see `untagged`. Anything a person may edit is read from the row.
+ */
 export const toLanguageProfile = (user: {
     preferredLanguages: string;
     excludeLanguages: string;
-    defaultLanguage: string;
     languageFirst: boolean;
     acceptAnyLanguage: boolean;
 }): LanguageProfile => ({
     preferred: parseLanguageList(user.preferredLanguages),
     exclude: parseLanguageList(user.excludeLanguages),
-    untagged: user.defaultLanguage.trim().toLowerCase() || LANGUAGE_DEFAULTS.untagged,
+    untagged: untaggedLanguage(),
     first: user.languageFirst,
     acceptAny: user.acceptAnyLanguage
 });
@@ -117,5 +144,7 @@ export const searchLanguages = (profile: LanguageProfile, requested?: string | n
 export const languageProfileOf = async (userId: number): Promise<LanguageProfile> => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
-    return user ? toLanguageProfile(user) : LANGUAGE_DEFAULTS;
+    // the untagged rule holds even with nobody behind the search: it is the install's
+    // answer, and a deleted account cannot make an untagged release a different language
+    return user ? toLanguageProfile(user) : { ...LANGUAGE_DEFAULTS, untagged: untaggedLanguage() };
 };

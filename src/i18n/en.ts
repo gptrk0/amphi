@@ -63,7 +63,7 @@ export const en = {
     userMenu: {
         administrator: "administrator",
         user: "user",
-        account: "Your account",
+        account: "Account settings",
         changePassword: "Change password",
         signOut: "Sign out",
         password: {
@@ -299,7 +299,11 @@ export const en = {
     },
 
     account: {
-        title: "Your account",
+        title: "Account settings",
+        titleFor: "{name}'s account settings",
+        backToUsers: "Back to users",
+        forSomebodyElse: "These are {name}'s own settings — every \"you\" below is them. What you change here is what the app does for them, and they can change it back from their own page.",
+        missing: "There is no such account.",
         who: "{email} · {role}",
         name: "Name",
         nameHint: "What the log and the watchlist call you. It cannot be empty.",
@@ -316,8 +320,6 @@ export const en = {
         languagesHintShared: "Somebody else's copy in another language does not count as yours: you each get your own file.",
         acceptAny: "Any language on this list will do",
         acceptAnyHint: "Off, and a title that exists in none of your first language is never downloaded at all — it sits on your watchlist saying \"waiting for release\" while the release is out in another language. That is the safe direction and it is the default, because settling for a language you did not ask for should not happen behind your back. On, the scanner may take any of them, still preferring the first. For one title only, the watchlist has a language column.",
-        untagged: "Untagged release counts as",
-        untaggedHint: "Most releases carry no language tag at all. This is what they are taken to be — and with a first language that is not this, an untagged release is not yours.",
         languageFirst: "Language outranks resolution",
         languageFirstHint: "On, which is how a new account starts: a 720p release in your language beats a 1080p one that is not. Off means the sharpest copy wins and the language is only a tie-breaker — there is no setting between the two, because a language that merely counts for something is a language that loses to a few more seeders.",
         excluded: "Languages you never want",
@@ -326,7 +328,8 @@ export const en = {
         saved: "Saved.",
         saveFailed: "Could not save that.",
         webhookFailed: "The webhook could not be called.",
-        providerOnly: "This account signs in through the identity provider and has no password here. An administrator can give it one."
+        providerOnly: "This account signs in through the identity provider and has no password here. An administrator can give it one.",
+        providerOnlyTheirs: "This account signs in through the identity provider and has no password here. \"Set a password\" in the users list gives it one."
     },
 
     watchlistToast: {
@@ -373,6 +376,15 @@ export const en = {
             "Download dialog": "Download dialog",
             "Access": "Access",
             "Log": "Log"
+        },
+        indexers: {
+            button: "Read them in",
+            title: "Ask the indexer manager what it has set up, and fill the list in from that",
+            saveFirst: "Save the URL and the API key first — the list is read with the saved ones.",
+            unchanged: "All {n} are already in the list.",
+            added: "Added: {added}. Save to keep it.",
+            addedAndRemoved: "Added: {added}. Removed, the manager no longer has them: {removed}. Save to keep it.",
+            failed: "Could not read the indexer list."
         },
         callback: {
             label: "Callback address for the provider",
@@ -429,6 +441,7 @@ export const en = {
         withPassword: "password",
         withSso: "single sign-on",
         withNothing: "nothing yet",
+        accountSettings: "Account settings",
         setPassword: "Set a password",
         makeUser: "Make a plain user",
         makeAdmin: "Make an administrator",

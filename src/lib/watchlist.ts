@@ -772,18 +772,19 @@ export const removeFromWatchlist = async (id: number) => {
  * account's answer: change the account and every row that never asked for anything of
  * its own follows it.
  *
- * The backoff is reset with it. A row that has spent two days failing to find a
- * Hungarian release is up to a 24 hour wait by then — and the English search it is now
- * asking for has never been made once, so making it wait would be answering the old
- * question. The status is left alone: `SEARCHING` is still true, it just says nothing
- * about the new language.
+ * The search starts over with it. A row that has spent two days failing to find a
+ * Hungarian release is down to one look every twelve hours by then — and the English
+ * search it is now asking for has never been made once, so making it wait would be
+ * answering the old question. That is `searchingSince` as much as the counter: the age
+ * the ladder is read off belongs to a search that is over. The status is left alone:
+ * `SEARCHING` is still true, it just says nothing about the new language.
  */
 export const setRequestedLanguage = async (id: number, language: string) => {
     await prisma.watchlist.update({ where: { id }, data: { language } });
 
     await prisma.watchlistUnit.updateMany({
         where: { watchlistId: id },
-        data: { searchAttempts: 0, lastCheckedAt: null }
+        data: { searchAttempts: 0, lastCheckedAt: null, searchingSince: null }
     });
 
     return await getWatchlistItemWithMedia(id);

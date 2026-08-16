@@ -99,6 +99,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
     const visible = menus.filter(menu => ! menu.admin || isAdmin);
 
+    // a page below one of these — /users/3, somebody's account settings — is still that
+    // entry as far as anybody reading the sidebar is concerned. "/" is left out of the
+    // prefix rule for the obvious reason.
+    const isOn = (url: string) => pathname === url || (url !== "/" && pathname.startsWith(`${ url }/`));
+
     /**
      * On a phone this sidebar is a sheet over the whole screen, so leaving it open after
      * a tap means the page you just asked for is behind it and the next thing you do is
@@ -135,7 +140,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             <SidebarMenu>
                                 {item.items.map((item, i) => (
                                     <SidebarMenuItem key={i}>
-                                        <SidebarMenuButton asChild isActive={ pathname === item.url }>
+                                        <SidebarMenuButton asChild isActive={ isOn(item.url) }>
                                             {/* onClick as well as the effect below: tapping the page
                                                 you are already on changes no pathname, and the sheet
                                                 would sit there as if the tap had missed */}

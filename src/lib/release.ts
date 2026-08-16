@@ -124,7 +124,10 @@ export const getQualityProfile = (language: LanguageProfile, requireLanguages: s
         defaultLanguage: language.untagged,
         languageFirst: language.first,
         requireLanguages,
-        // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it
+        // the order of INDEXER_IDS is the priority unless INDEXER_PRIORITY overrides it.
+        // Both empty is a real answer and not a missing one: nobody named an order, so no
+        // indexer outranks another and the seeder count decides — which is exactly what
+        // happened before too, when an unnamed list meant one aggregate id
         indexerPriority: priority.length > 0 ? priority : getIndexerIds()
     };
 };

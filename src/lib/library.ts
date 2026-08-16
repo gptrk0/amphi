@@ -32,15 +32,18 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const seedRequiredMs = () => Math.max(settingNumber("LIBRARY_SEED_DAYS"), 0) * DAY_MS;
 
 /**
- * Where a download's retention starts, before anybody touches it. A film is one evening,
- * so it is one number; a season is watched over weeks, so it gets its time **per episode**
- * — a ten episode pack is not the same request as a single episode, and one number for
- * both would either throw the pack away half-watched or keep the single one for a month.
+ * Where a download's retention starts, before anybody touches it.
+ *
+ * One sitting is one number, and it does not matter whether that sitting is a film or a
+ * single episode: both are watched in an evening and both wait on the same thing, which
+ * is somebody having an evening. A pack is not that request — a season is watched over
+ * weeks — so it gets its time **per episode** instead, or it would be thrown away half
+ * watched.
  *
  * Deliberately not settings. The number that decides anything is the one on the row, and
  * that one is editable in the library; these two only say where a new row starts.
  */
-export const MOVIE_KEEP_DAYS = 5;
+export const SINGLE_KEEP_DAYS = 7;
 export const EPISODE_KEEP_DAYS = 3;
 
 /** Nothing is kept longer than this, chosen or computed. */
@@ -54,13 +57,19 @@ export const MAX_KEEP_DAYS = 60;
  */
 export const minKeepDays = () => Math.max(Math.round(settingNumber("LIBRARY_SEED_DAYS")), 1);
 
-/** What a row is kept for when nobody has said otherwise. */
+/**
+ * What a row is kept for when nobody has said otherwise. A film and a download that
+ * carries one episode are the same case; only a pack counts its parts.
+ *
+ * A row whose episode list is empty is one of those too: a film has none by construction,
+ * and a series row from before the list existed cannot be counted, so it is kept for the
+ * length of the thing it most likely is rather than for the three days a count of zero
+ * would work out to.
+ */
 export const defaultKeepDays = (item: { type: ContentType, episodes: string[] }) => {
-    const days = item.type === ContentType.MOVIE
-        ? MOVIE_KEEP_DAYS
-        : EPISODE_KEEP_DAYS * Math.max(item.episodes.length, 1);
+    const parts = item.type === ContentType.MOVIE ? 0 : item.episodes.length;
 
-    return clampKeepDays(days);
+    return clampKeepDays(parts > 1 ? EPISODE_KEEP_DAYS * parts : SINGLE_KEEP_DAYS);
 };
 
 export const clampKeepDays = (days: number) => Math.min(Math.max(Math.round(days), minKeepDays()), MAX_KEEP_DAYS);
@@ -408,9 +417,12 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
         }
 
         if (item.type === ContentType.MOVIE) {
+            // and it starts over on the shortest rung of the search ladder: something
+            // was found for this once, so there is a second copy of it to be found now,
+            // and the age of a search that ended in a download is not the age of this one
             await prisma.watchlistUnit.updateMany({
                 where: { watchlistId: created.id, seasonNumber: null },
-                data: { monitored: true, searchAttempts: { increment: 1 }, lastCheckedAt: null }
+                data: { monitored: true, searchAttempts: { increment: 1 }, lastCheckedAt: null, searchingSince: null }
             });
 
         } else {
@@ -425,10 +437,11 @@ export const restoreToWatchlist = async (item: LibraryRow) => {
             }
 
             // due at once: the release that failed is on the blocklist, so the next
-            // round looks for a different one rather than the same dead torrent
+            // round looks for a different one rather than the same dead torrent — and
+            // on the shortest rung, because looking for that different one starts now
             await prisma.watchlistUnit.updateMany({
                 where: { watchlistId: created.id },
-                data: { lastCheckedAt: null }
+                data: { lastCheckedAt: null, searchingSince: null }
             });
         }
 
@@ -676,7 +689,7 @@ export const runLibraryCleanup = async (): Promise<CleanedUp[]> => {
         where: { deleteRequested: true, removedAt: null, ...seedIsUp }
     });
 
-    // the retention is per row now — five days for a film, three per episode for a pack,
+    // the retention is per row now — a week for one sitting, three days per episode of a pack,
     // or whatever somebody typed in the library — so the due date cannot be a `where`.
     // The candidates are narrow enough to date here: finished, unmarked, out of seed. A row
     // that never finished has no retention clock at all; what it needs is another search,

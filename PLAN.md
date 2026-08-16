@@ -205,7 +205,7 @@ Mért tények az nCore-ról (Jackett `t=caps` + éles próbahívások, 2026-08-0
 - A seederek megvannak a válaszban (`<torznab:attr name="seeders" …>`, pl. 331 / 1619), de a mostani `XMLParser` `ignoreAttributes` miatt eldobja őket.
 
 - [x] **[src/lib/indexer.ts](src/lib/indexer.ts)** — torznab réteg, indexerenként külön hívással:
-  - `INDEXER_IDS` env (vesszős Jackett indexer id lista, default `all`), `getCaps(indexerId)` 6 órás cache-sel (`INDEXER_CAPS_TTL_MINUTES`), a `movie-search`/`tv-search` `supportedParams` kiparsolásával.
+  - `INDEXER_IDS` beállítás (vesszős Jackett indexer id lista; **üresen minden konfigurált indexer**, 2026-08-16 óta — korábban `all` volt az alapérték), `getCaps(indexerId)` 6 órás cache-sel (`INDEXER_CAPS_TTL_MINUTES`), a `movie-search`/`tv-search` `supportedParams` kiparsolásával.
   - Képesség-alapú lekérdezés: `imdbid`, ha az adott indexer tudja arra a módra, egyébként `q` = eredeti cím (+ év filmnél, + `season`/`ep` sorozatnál). Ha a `tv-search` egyáltalán nincs, `t=search` + `Cím S01E02`.
   - Ha az indexer mégis elutasítja az `imdbid`-t (a caps hazudik), egyszer automatikusan újrapróbál cím alapú kereséssel.
   - `XMLParser({ ignoreAttributes: false })` + seeder/peer a `torznab:attr`-ból, és a `jackettindexer` id-ból tudjuk, melyik indexer adta a találatot aggregate módban is.
@@ -349,11 +349,16 @@ Amit ebből átvettem:
 
 ### Fázis 7 — Robusztusság / üzemeltetés
 - [x] A scanner retry/backoff-ja megvan (`searchAttempts`, `lastCheckedAt`), az indexer-hívások hibái nem dobnak, csak logolnak és üres listát adnak, a torznab `error` válasz (pl. `203`) fallbackot indít.
-- [x] **Növekvő várakozás, plafon nélküli újrapróbálkozás** (2026-08-07-i kérés). Eddig `MAX_SEARCH_ATTEMPTS=10` és fix 30 perc volt: egy elem **5 óra alatt** elérte a 10 próbálkozást, `FAILED` lett, és a `dueFilter` (`searchAttempts < MAX`) **soha többé nem vette elő** — vagyis az app pont azokat adta fel, amiket figyelnie kellett volna (még meg nem jelent, vagy trackeren még nem fent lévő tartalom). Most a várakozás duplázódik (`SEARCH_BACKOFF_MINUTES=30` → 1h → 2h → 4h → … `SEARCH_MAX_BACKOFF_HOURS=24`), és nincs feladás.
-  - A `dueFilter` a lekérdezésben csak durva előszűrő (a legrövidebb lehetséges várakozás), a soronkénti backoffot az `isDue` alkalmazza JS-ben. Így a beállítás átírása azonnal hat, nem fagy bele egy tárolt `nextCheckAt` oszlopba — és nem kell hozzá migráció sem.
+- [x] **Növekvő várakozás, plafon nélküli újrapróbálkozás** (2026-08-07-i kérés). Eddig `MAX_SEARCH_ATTEMPTS=10` és fix 30 perc volt: egy elem **5 óra alatt** elérte a 10 próbálkozást, `FAILED` lett, és a `dueFilter` (`searchAttempts < MAX`) **soha többé nem vette elő** — vagyis az app pont azokat adta fel, amiket figyelnie kellett volna (még meg nem jelent, vagy trackeren még nem fent lévő tartalom). Nincs feladás azóta sem: a várakozás előbb duplázódott minden eredménytelen kereséssel, **2026-08-15 óta pedig kor szerinti létra** (ld. a következő pontot).
+  - A `dueFilter` a lekérdezésben csak durva előszűrő (a legrövidebb lehetséges várakozás), a soronkénti várakozást az `isDue` alkalmazza JS-ben. Így a beállítás átírása azonnal hat, nem fagy bele egy tárolt `nextCheckAt` oszlopba.
   - A `MAX_SEARCH_ATTEMPTS` és a `PACK_AFTER_ATTEMPTS` ezzel **kikerült a kódból**.
   - A `WatchStatus.FAILED`-et így **semmi nem állítja be automatikusan**. Az enum benne marad (a `deriveStatus`, a badge és a `GRABBABLE_STATUS` kezeli), későbbi kézi „feladom" funkcióhoz.
-  - Élőben ellenőrizve: `attempts=5` + „1 órája nézve" → a scanner kihagyta (a backoff ekkor 16h); „20 órája nézve" → feldolgozta, és `attempt 6, next in 24h` került a logba.
+- [x] **Keresési létra a duplázás helyett** (2026-08-15-i kérés: „első nap 30 percenként, második nap 2 óránként, azután 12 óránként"). Egy `SEARCH_BACKOFF_LADDER` táblázat-beállítás (`nap:perc`, alapból `0:30,1:120,2:720`), az utolsó fok örökre szól. A régi `SEARCH_BACKOFF_MINUTES` és `SEARCH_MAX_BACKOFF_HOURS` megszűnt.
+  - **Miért nem a `searchAttempts`.** A duplázás *köröket* számolt, nem időt: egy hétvégére leállított konténer vagy egy megduplázott scan-intervallum mellett ugyanaz a szám más kort jelentett. A probléma alakja viszont idő — egy rész általában a leadás utáni órákban jelenik meg, ami két nap után sincs meg, az egy csapatra vár, nem a következő negyedórára.
+  - **Új horgony: `WatchlistUnit.searchingSince`** (`20260815120000_search_ladder`), az **első eredménytelen** kereséskor íródik, utána nem mozdul. Nem a felvétel dátuma: egy fél évvel a megjelenés után feltett filmet nem fél éve keressük, hanem ma kezdtük. Nullázódik, valahányszor a keresés újraindul — nyelvváltás (`setRequestedLanguage`) és meghiúsult letöltés (`restoreToWatchlist`) —, mert onnantól egy soha fel nem tett kérdésre válaszolunk.
+  - A migráció a **már keresett** soroknak visszatölti a kort (`max(addedAt, airDate)`), különben a frissítés utáni első kör az egész watchlistet a legrövidebb fokra tette volna, és egyszerre esett volna neki minden indexernek. Amit még sosem kerestünk, az marad `NULL` — pontosan azt jelenti.
+  - A `searchAttempts` megmarad **számlálónak** (a watchlist sor ezt mutatja, a log ezt írja), de már nem dönt semmiről.
+  - Élőben ellenőrizve (2026-08-15, egy valódi sorral): 2 napja + 9 perce keresett elem 3 óra után **nem** került elő (a 12 órás fokon áll), 13 óra után igen, `attempt 6, next in 12h`; horgony nélküli sor első üres keresése `next in 30m`-et írt és beírta a `searchingSince`-t; a második keresés a `lastCheckedAt`-et vitte előre, a horgonyt **nem**. Induláskor a log kiírja a létrát: `a title is searched for every 30m to begin with, every 2h from day 1, every 12h from day 2`.
 - [x] A háttér-job logol minden döntést (`[scheduler] …`: mit talált, mit indított, mi hibázott, hányadik próbálkozás). **2026-08-08 óta ugyanezek a sorok a `LogEntry` táblába is mennek**, és a `/log` oldalon élőben látszanak — ld. a lenti „Admin log oldal" alfejezetet.
 - [x] **Log a felületen** (2026-08-08) — `/log`: szint/forrás/szöveg szűrő, SSE-s élő követés, megőrzési idő. A fontos műveletek (scanner-döntések, kézi letöltés, beállítás-változás és -törlés, watchlist-műveletek, kifelé menő hibák) mind írnak bele.
 - [x] `discover` route hibakezelése: a catch-ág nem `return`-ölt, csak konstruált egy eldobott `Response`-t — most logol, és a hibás oldal egyszerűen kimarad az eredményből.
@@ -1129,7 +1134,7 @@ Négy bejelentés egyszerre: (1) más épp futó letöltése nem látszik a libr
 
 Ebből következik a modell:
 
-- **A `User` megkapta az egész Language csoportot** (`preferredLanguages`, `excludeLanguages`, `defaultLanguage`, `languageBonus`, `languageFirst`), a `Setting` registryből pedig kikerült mind az öt. A migráció (`20260809260000_personal_languages`) **átmásolja az eddigi globális értékeket minden meglévő userre**, tehát a bevezetés napján semmi nem változik: mérve, mindkét fiók `hun,eng`-gel indult, és az öt `Setting` sor eltűnt.
+- **A `User` megkapta az egész Language csoportot** (`preferredLanguages`, `excludeLanguages`, `defaultLanguage`, `languageBonus`, `languageFirst`), a `Setting` registryből pedig kikerült mind az öt. *(A `defaultLanguage` 2026-08-16-án visszakerült az installhoz `QUALITY_UNTAGGED_LANGUAGE` néven — ld. a lenti bejelentést; a többi maradt személyes.)* A migráció (`20260809260000_personal_languages`) **átmásolja az eddigi globális értékeket minden meglévő userre**, tehát a bevezetés napján semmi nem változik: mérve, mindkét fiók `hun,eng`-gel indult, és az öt `Setting` sor eltűnt.
 - **A `Library` sor kapott `language` mezőt.** Üres = a bevezetés előtti letöltés: az *ismeretlen mindenkié*, különben egy frissítés az egész könyvtárat újra letöltötte volna.
 - **„Megvan-e már" kérdés nincs többé önmagában** — csak „megvan-e *neki*". Ezt a [audience.ts](src/lib/audience.ts) mondja meg: egy sor akkor számít a tiédnek, ha (a) ugyanaz a kiadás, vagy (b) *érted* töltötték le (a kézzel elfogadott másik nyelv), vagy (c) a bevezetés előttről való. Erre épül a `heldEpisodes`, a `hasLibraryItem`, a `seasonStarted`, és a poszterek jelvényét adó `libraryState` is — utóbbi nélkül a más nyelvén letöltött film „Available"-nek látszott volna nálad is.
 - **A `moveToLibrary` már nem viszi el mindenki unitját**, csak azokét, akikért a keresés ment (`forUsers`). Aki más nyelvet vár, az tovább keres — neki ez egy másik film.
@@ -1693,7 +1698,10 @@ Kérés: „bármi ha letöltünk, akkor az nem törölhető minimum `LIBRARY_SE
 
 **Amit ez megváltoztat, az nem a szám, hanem hogy hol lakik.** Eddig egy install-szintű beállítás (`LIBRARY_RETENTION_DAYS = 7`) mondta meg minden letöltésre ugyanazt. Egy film egy este, egy tízrészes évadcsomag viszont hetek programja — egy szám a kettőre vagy félig megnézve dobja el a csomagot, vagy egy hónapig őrzi a filmet. Ezért a megőrzés a **sor tulajdonsága** lett: `Library.keepDays`, nullázható.
 
-- **A `null` a szabály, nem a hiány.** Aki nem döntött róla, az a sor alakját követi: film 5 nap, sorozat **letöltött részenként** 3 nap (`defaultKeepDays`). Beíródó default helyett azért számolt érték, mert a beírt szám egy szabály pillanatképe lenne, a szabály alsó határa (a seed-idő) viszont változhat alatta.
+- **A `null` a szabály, nem a hiány.** Aki nem döntött róla, az a sor alakját követi (`defaultKeepDays`). Beíródó default helyett azért számolt érték, mert a beírt szám egy szabály pillanatképe lenne, a szabály alsó határa (a seed-idő) viszont változhat alatta.
+  - **2026-08-15 óta:** egy ülés egy szám, és mindegy, hogy film vagy egyetlen rész — **7 nap** mindkettőnek (`SINGLE_KEEP_DAYS`). Csak az **évadcsomag** számolja a részeit: `részek száma * 3 nap`. Eddig film 5 nap volt, egy rész pedig 3 — de egy egyrészes letöltés ugyanúgy egy estét jelent, mint egy film, és ugyanarra vár: hogy legyen egy estéd.
+  - Következménye, hogy egy **kétrészes** csomag 6 napot kap, tehát kevesebbet, mint egy egyrészes. Így lett kérve, és így is van a kódban; ha zavaró, egy `Math.max(SINGLE_KEEP_DAYS, …)` a `defaultKeepDays`-ben elteszi.
+  - A részlista nélküli sor (film, vagy a lista bevezetése előtti sorozat-sor) szintén 7 napot kap — egy nullás szorzat 3 napot adna olyasminek, amiről csak annyit tudunk, hogy nem tudjuk, hány részes.
 - **Alsó és felső határ.** A padló a `LIBRARY_SEED_DAYS` (legalább 1 nap): a takarító a seed-ablakon belül amúgy sem töröl, tehát egy rövidebb szám olyan ígéret, amit senki nem tud betartani — csak látszik. A plafon **60 nap**, és a *default* is ehhez van vágva: egy 30 részes csomag 90 napja már nem megőrzés, hanem archiválás. A `setKeepDays` és az API is vág, nem csak a beviteli mező.
 - **A libraryban egy oszlop lett belőle** („Megőrzés"), és ez az egy szám az, amiből a mellette lévő cella `deleted in …` sora számol. Kattintásra átírható, `{min}`–`{max}` között, plusz egy „Alapérték (N nap)" gomb, ami visszaadja a sort a szabálynak. **Adminé**, mint a törlés gomb: a fájlok a háztartásé, és a szám rövidítése ugyanazt jelenti, mint a törlés — csak később.
 - **A törlés nem kérdez a fájlokról.** Eddig három gomb volt (mégse / fájlok megtartása / fájlokat is), most kettő. A `Library.deleteFiles` oszlop kikerült, a `DELETE /api/library/:id` `files` paramétere is: a sort a fájlok nélkül eltávolítani a két kimenet közül a rosszabb volt — az appban semmi nem tud róluk többé, a lemez viszont ugyanannyira tele van.
@@ -1720,6 +1728,93 @@ API:  GET /api/library -> keepRange {min:3,max:60}, a soron keepDays/keepDaysDef
 `tsc --noEmit` és `next lint` tiszta, a `/`, `/library`, `/settings`, `/account` 200.
 
 **Amire figyelni kell.** A migráció (`20260813120000_library_keep_days`) **a meglévő sorokra is érvényes**, a befejezés dátumától — egy 08-09-én elkészült film 5 napja tehát már le is telt. Ebben az adatbázisban ez semmit nem érintett: a hét `Library` sor **mindegyike `removedAt`-os tombstone**, azokat a takarító nem is nézi (ez a mérés előtt le van ellenőrizve). Egy másik installon viszont, ahol van élő sor, az első kör a régi letöltéseket elviheti — a fájlokkal együtt —, ezért ott a frissítés előtt érdemes a libraryban a hosszabb megőrzést beírni. A `Setting` táblából a `LIBRARY_RETENTION_DAYS` sora törlődik (itt nem is volt ilyen sor, a default 7 volt érvényben).
+
+#### „Ez már megvan a kliensben" elindult letöltés, nem hibás grab (2026-08-15-i kérés) ✅
+
+Kérés: „ha elkezdenék letölteni egy torrentet ami már qbittorrentben szerepel, akkor nem sikerül neki felvennie és watchlistre kerül a film… az lenne az elvárt hogy észreveszi hogy ugyanaz már szerepel qbittorrentben és ugyanúgy bekerül libraryba a megfelelő státusszal".
+
+**A mérés adta meg a hibát, nem a kód olvasása.** Egy valódi duplikátum-add (magnet a kliensben már meglévő infohash-ből, tehát semmi új nem jöhetett létre) **qBittorrent v5.2.2-n `409 Conflict`** — nem `Ok.`, nem `Fails.`, nem `failure_count`. Ez az `addRelease` `catch` ágára esett, ahol a szöveg ráadásul félrevezetett („a kliens nem tudott mit kezdeni a linkkel"), a `hash` `null` lett, a `moveToLibrary`-vel már létrehozott sort az `executeMovieGrab` visszabontotta a watchlistre — miközben a fájl ott volt a lemezen, készen.
+
+- **A négy kijárat közül mind a négy megkérdezi az `adopt`-ot**: `refused` (`Fails.`), `failure_count > 0`, a tag-keresés 5 másodperces lejárata, és a `catch`. A kliens verziója dönti el, melyiken jön ki ugyanaz a tény, tehát nem lehet egyre felkészülni.
+- **Névvel keres, mert az infohash nem ismert**: pont a kliens az, ami nem adja oda. Egy kézzel, saját megjelenítési névvel felvett másolat így nem ismerhető fel — ezt a 409 hint most ki is mondja, hogy ne kelljen kitalálni.
+- **A kategóriát nem mozgatja.** Ez az egyetlen dolog itt, ami *fájlokat* érinthet (a qBittorrent viszi őket a kategóriával, ha úgy van beállítva), és semmit nem ér: a `resolveTorrent` hash szerint is megtalálja. Amit viszont nem hagy békén, az a megőrzés — egy átvett sor library sor, a takarító egy nap a fájlokkal együtt törli.
+- **A státusz magától jó lesz.** Az átvett sor `DOWNLOADING`-ként születik, a percenkénti `syncDownloads` (és minden `?live=1` watchlist-lekérés) pedig kész torrenten átbillenti `AVAILABLE`-re, mérettel és seed-ablakkal — ugyanaz az út, mint bármelyik letöltésé.
+- **Egy sor a naplóba, egyszer**: „the client already had this, taken over instead of downloading it again", a kategóriával és az állapottal. Cserébe a `resolveTorrent` „outside the managed category" sora **DEBUG** lett: egy átvett sornál ez az elvárt állapot, és percenként újraírva 1440 sor lenne naponta.
+
+**Mérve** (valódi kliens, valódi torrent, a teszt-tag a végén levéve, a kategória érintetlen):
+
+```
+raw duplicate add -> 409 "Conflict"          <- qBittorrent v5.2.2
+addRelease        -> hash 1db716a3…, reason null,
+                     adopted: "the client already held it under the "amphi" category (stalledUP)…"
+                     (0 mp — a catch ág nem várja ki az 5 másodperces tag-keresést)
+```
+
+**Amit a mérés még kidobott:** a `TORRENT_CATEGORY` ebben az installban **`aioseerr`**, miközben az app négy saját torrentje az **`amphi`** kategóriában ül (az egyiken ott a `amphi-51fd9367-310` tag). A `listManagedTorrents` tehát nullát lát, és minden ilyen sor a hash-lookupon keresztül él. Nem törik el tőle semmi, de érdemes a beállítást `amphi`-ra írni.
+
+#### A jelöletlen release nyelve visszakerült az installhoz (2026-08-16-i kérés) ✅
+
+Kérés: „Untagged release counts as profil beállításokból kiszedni, mert nem kell, elég a szerver globális".
+
+**Ez az egy nem is volt preferencia.** A Language csoport 2026-08-09-én azért lett személyes, mert egy háztartás nem ért egyet abban, *mit akar* — de a jelöletlen release nyelve nem azt mondja, mit akarsz, hanem hogy egy fájl **mi**. Két fiók nem lehet külön-külön igaza abban, hogy egy tag nélküli release angol-e, és a kódban sem kérdezte soha senki fiókonként: minden olvasója egyetlen választ akart.
+
+- **Új beállítás:** `QUALITY_UNTAGGED_LANGUAGE` a Minőség csoportban (alapérték `eng`). Azért oda, mert az a csoport arról szól, hogyan *olvasunk* egy release-t — felbontás, kodek, méret —, és ez is ilyen.
+- **Új beállítás-típus: `option`** — egy érték egy zárt halmazból. A meglévő `OptionSelect` rendereli (a kereshető választó, ami eredetileg épp ehhez a mezőhöz készült a fiók oldalon), és a `PUT /api/settings` visszautasítja a halmazon kívüli értéket: egy 33 elemű nyelvkatalógusnál egy elgépelt kód olyan szabály, amire soha semmi nem fog illeszkedni.
+- **A `User.defaultLanguage` oszlop megszűnt** (`20260816120000_untagged_is_the_installs`). A migráció az install-szintű értéket abból veszi, amit a fiókok már mondtak — többség dönt, döntetlen ábécé szerint —, és **nem ír sort**, ha az eredmény az alapérték; így egy install, ami sosem nyúlt hozzá, „nem módosított" állapotban marad. Ebben az adatbázisban mind a három fiók `eng` volt, tehát nem is keletkezett sor.
+- **A `LanguageProfile.untagged` megmaradt a típusban**, de a `untaggedLanguage()`-ből jön, nem a sorból: mindenki, aki egy release-t megítél, egy helyen akarja az egészet. Az is innen jön, ha a keresés mögötti fiók már törölve van — egy megszűnt account nem tesz egy jelöletlen fájlt más nyelvűvé.
+- **A `PATCH /api/auth/me` a `defaultLanguage`-et már nem is olvassa**, elutasítani sem: egy régi kliens fél mentése csendben elhagyódik, nem az egész bukik el.
+
+**Mérve** (a `Setting` sor a végén visszaállítva, ideiglenes admin-munkamenettel, ami törölve):
+
+```
+nincs sor (alapérték)   setting=eng   profile.untagged=eng   egy jelöletlen release: eng
+"hun"-ra állítva        setting=hun   profile.untagged=hun   egy jelöletlen release: hun
+
+/api/auth/me            defaultLanguage a válaszban: nincs
+PUT ...=klingon     ->  400 "klingon" is not one of the values Untagged release counts as can take.
+GET /api/settings   ->  type="option", group="Quality", value="eng", source="default", 33 opció
+                        (első: {"value":"hun","label":"Hungarian","keywords":["hungarian","magyar","hu"]})
+```
+
+#### Az indexer-azonosítók beolvashatók a kezelőből (2026-08-15-i kérés) ✅
+
+Kérés: „az `INDEXER_IDS` beállításánál legyen egy gomb amit megnyomva synceli az összes elérhető indexer azonosítót (ehhez persze meg kell legyen adva elsőnek az `INDEXER_URL` és `INDEXER_API_KEY`)".
+
+**A végpont nem az volt, aminek látszott.** A Jackett kezelő-API-ja (`/api/v2.0/indexers?configured=true`) az app kulcsával **`400 Cookies required`** — az a dashboard jelszava mögött ül, nem a torznab kulcs mögött. Ami az api kulccsal megnyílik, az a torznab végpont, és az válaszol a `t=indexers`-re: `<indexer id="ncore" configured="true"><title>nCore</title>…`. A Prowlarr `/api/v1/indexer`-je 404 (ez az install Jackett) — a `listIndexers` így egy `request("all", { t: "indexers" })`, ugyanazon a soron, amin minden más keresés megy.
+
+- **Nincs cache-elve**, szemben a caps-szel: azért nyomsz gombot, mert egy perce vettél fel egy indexert.
+- **Összefésül, nem felülír.** A lista **rendezett**, és a sorrend a prioritás — ami már bent van, az a helyén marad, az új a végére kerül, ami a kezelőnél már nincs meg, az lekerül (egy ismeretlen id csak üres keresésre jó). Ez veszi le az `all`-t is az első nyomásra, ami épp a gomb értelme.
+- **Nem ment.** Az érték úgy kerül a mezőbe, mintha beírtad volna: átrendezhető, és a Mentés gomb ugyanúgy számolja, mint bármelyik változást.
+- **A mentett URL-t és kulcsot használja**, nem az űrlapban állót — különben egy olyan konfigurációról adna választ, amivel az app nem fut. Ha ezek pont módosítva vannak, az oldal „előbb mentsd el"-t mond ahelyett, hogy elhasalna. Üres URL vagy kulcs mellett a gomb tiltva.
+- **Adminé** (`refuseUnlessAdmin`), mint a lap, amit kiszolgál: a szerverrel hívat egy címet, amit valaki megadott — ugyanaz, amit ez a csoport amúgy is csinál, de csak azoknak, akik azt a címet megadhatják.
+
+**Mérve** (valódi Jackett, valódi kulcs, ideiglenes admin-munkamenettel, ami a végén törölve):
+
+```
+signed out           /api/settings/indexers -> 401 {"success":false,"message":"Sign in first."}
+as Patrick (admin)   /api/settings/indexers -> 200 majomparade, ncore, limetorrents, thepiratebay
+merge                current ncore,majomparade
+                     after   ncore,majomparade,limetorrents,thepiratebay
+                     added   limetorrents, thepiratebay      removed —
+```
+
+**Utána, ugyanaznap: az `all` megszűnt (2026-08-16-i kérés).** „`all`-ra nincs szükség, úgy működjön ha nincs megadva érték akkor mindet használja". Az alapérték `all` helyett **üres**, és az üres lista mostantól nem az aggregate végpontot jelenti, hanem azt, hogy a `searchIndexerIds` megkérdezi a kezelőt, és **egyenként** kérdezi végig, amit talál.
+
+- **Ez nem kényelmi csere, hanem a képesség-alapú keresés helyreállítása.** A Jackett aggregate végpontja a képességek **unióját** mondja: egy indexer, ami nem tud `imdbid`-vel keresni, pont ugyanúgy néz ki, mint amelyik tud — vagyis egy üres beállítás mellett az egész kör csendben cím szerinti keresésre esett vissza. Ugyanaz a kényelem, csak őszintén.
+- **Egy eltárolt `all` kiesik** a listából (`getIndexerIds` szűri), tehát egy régi install is az új viselkedést kapja, nem a régit egy megmaradt sor miatt.
+- **Cache-elve** a caps TTL-jével (6 óra), mert ez minden keresés útján ott van, egy kör pedig tucatnyi keresés. A `listIndexers` maga cache nélkül marad: azt a gomb hívja, és ott a *mostani* válasz a kérdés. Következmény: egy frissen felvett Jackett-indexer üres beállítás mellett legfeljebb 6 óra múlva kerül be a keresésekbe — vagy azonnal, ha megnyomod a Beolvasás gombot és elmented.
+- **Üres beállítás + a kezelőnél sincs semmi**: `logFailure`-rel egy sor a naplóba, mert egy kör, ami nulla indexert kérdez, pont úgy néz ki, mint egy kör, ami nem talált semmit. Ez az eset nincs cache-elve — egy percre elérhetetlen kezelő nem jelenthet hat óra vak keresést.
+- **A prioritás üres listával semleges** (`indexerPriority: []`, minden találat rangja 0, a seederek döntenek) — ami pontosan az eddigi viselkedés, amikor egyetlen `all` id volt a listán.
+
+**Mérve** (valódi Jackett, a `Setting` sor a végén visszaállítva arra, ahogy volt):
+
+```
+setting="ncore,majomparade"  named [ncore, majomparade]   searched [ncore, majomparade]
+setting=""                   named []                     searched [majomparade, ncore, limetorrents, thepiratebay]
+nincs sor (alapérték)        named []                     searched [majomparade, ncore, limetorrents, thepiratebay]
+setting="all"                named []                     searched [majomparade, ncore, limetorrents, thepiratebay]
+setting="all,ncore"          named [ncore]                searched [ncore]
+```
 
 #### A kiadásválasztó vízszintesen görgethető lett (2026-08-13-i bejelentés) ✅ a kódban, böngészőben nem próbáltam
 

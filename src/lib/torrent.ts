@@ -268,13 +268,11 @@ const findTorrentByName = async (title: string): Promise<TorrentStatus | null> =
 };
 
 /**
- * The same lookup across every category, and only ever to explain a failure.
+ * The same lookup across every category.
  *
  * A torrent the client already holds under somebody else's category is invisible to
- * `listManagedTorrents`, so an add for it answers "Ok.", adds nothing, and leaves the app
- * with no idea why. It is not adopted — it is not this app's torrent and its files may be
- * anywhere — but it is by far the most common answer to "why did nothing happen", and a log
- * line that names it is the difference between a mystery and a two second explanation.
+ * `listManagedTorrents`, so an add for it answers "Ok." or a failure count and nothing
+ * appears where the app is looking.
  */
 const findAnywhereByName = async (title: string): Promise<{ torrent: TorrentStatus, category: string } | null> => {
     try {
@@ -305,8 +303,12 @@ export const addTag = async (hash: string, tag: string) => {
  * What an add came to. `hash` is the torrent to follow; `reason` is why there is none, in
  * words meant for the log — the caller has nothing else to go on, since the client answers
  * a refusal and a success with almost the same thing.
+ *
+ * `adopted` is set when the hash is one the client already had rather than one this add
+ * created. Also for the log, and not optional there: from that moment the app follows — and
+ * one day deletes — a torrent nobody here started.
  */
-export type AddedRelease = { hash: string | null, reason: string | null };
+export type AddedRelease = { hash: string | null, reason: string | null, adopted?: string | null };
 
 const ADD_ATTEMPTS = 10;
 const ADD_INTERVAL_MS = 500;
@@ -349,13 +351,66 @@ const readAddAnswer = (data: unknown): AddAnswer => {
 };
 
 /**
+ * The copy the client already had, taken over as this row's download.
+ *
+ * **"You already have this" is a started download, not a failed grab.** qBittorrent
+ * refuses a torrent it already holds — by infohash, whatever the thing is called and
+ * whichever category it sits in — and it says so in whichever way its version prefers: an
+ * `Ok.` with nothing appearing, a `Fails.`, or a `failure_count` on the 5.2 summary. Every
+ * one of those used to end with the request back on the watchlist while the file it was
+ * asking for was on the disk, halfway down or finished. So all of them come here.
+ *
+ * Found by name, because the infohash is not known until the client has the torrent — and
+ * the client is exactly what will not hand it over. A copy added by hand under a display
+ * name of somebody's own is therefore not recognised; there is nothing in the protocol left
+ * to recognise it by.
+ *
+ * **The category is left where it is.** Moving it is the one thing here that could touch
+ * somebody's files — qBittorrent moves them with the category when the client is set to do
+ * that — and following a torrent in place costs nothing: `resolveTorrent` looks a hash up
+ * directly when it is not in the managed list. What it does *not* leave alone is the
+ * retention: an adopted row is a library row, and the cleanup will one day delete it with
+ * its files like any other.
+ */
+const adopt = async (title: string, tag: string): Promise<AddedRelease | null> => {
+    const managed = await findTorrentByName(title);
+
+    if (managed) {
+        await addTag(managed.hash, tag);
+
+        return {
+            hash: managed.hash,
+            reason: null,
+            adopted: `it was already in the "${ category() }" category (${ managed.state }), so the add was ignored`
+        };
+    }
+
+    const elsewhere = await findAnywhereByName(title);
+
+    if (! elsewhere) {
+        return null;
+    }
+
+    await addTag(elsewhere.torrent.hash, tag);
+
+    const where = elsewhere.category ? `under the "${ elsewhere.category }" category` : "with no category set";
+
+    return {
+        hash: elsewhere.torrent.hash,
+        reason: null,
+        adopted: `the client already held it ${ where } (${ elsewhere.torrent.state }), so the add was ignored`
+            + ` — it is followed where it is, its category and its files are left alone`
+    };
+};
+
+/**
  * The add endpoint only answers "Ok.", so the hash is read back by the tag we set.
  * An empty `savePath` leaves the destination to qBittorrent, which is what the
  * category is already configured for.
  *
- * A release the client already holds never turns up under the new tag, so the last
- * word is a lookup by name — that one is adopted and tagged, because "you already
- * have this" is a started download, not a failed one.
+ * A release the client already holds never turns up under the new tag, and it is the
+ * client's way of saying so that varies rather than the fact — so every way this can end
+ * without a hash asks `adopt` first.
  *
  * The client is read once **before** the add, because the tag alone cannot tell the
  * torrent this call created from one that was carrying that tag already. Fetching the
@@ -384,14 +439,19 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
             ...(savePath ? { savepath: savePath } : {})
         })));
 
+        // a duplicate is one of the things "no" means here, so a refusal is a question
+        // about the client's contents before it is an answer to the caller
         if (answer.refused) {
-            return { hash: null, reason: `the client refused the link and answered "${ answer.refused }"` };
+            return await adopt(release.title, tag)
+                || { hash: null, reason: `the client refused the link and answered "${ answer.refused }"` };
         }
 
         // it read the link and would have nothing to show for it, so there is no point
-        // waiting five seconds to find that out
+        // waiting five seconds to find that out. qBittorrent 5.2 counts a torrent it
+        // already holds as a failure here, which is the most common way of all to reach it
         if (answer.failed > 0 && answer.pending === 0) {
-            return { hash: null, reason: `the client refused the link outright and added nothing (${ answer.failed } failed)` };
+            return await adopt(release.title, tag)
+                || { hash: null, reason: `the client refused the link outright and added nothing (${ answer.failed } failed)` };
         }
 
         for (let attempt = 0; attempt < ADD_ATTEMPTS; attempt++) {
@@ -404,26 +464,15 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
             await sleep(ADD_INTERVAL_MS);
         }
 
-        const existing = await findTorrentByName(release.title);
+        // nothing new appeared under the tag, which for a release the client already has is
+        // exactly what happens — that is the first thing to rule out, not the last
+        const existing = await adopt(release.title, tag);
 
         if (existing) {
-            await addTag(existing.hash, tag);
-
-            return { hash: existing.hash, reason: null };
+            return existing;
         }
 
         const seconds = Math.round(ADD_ATTEMPTS * ADD_INTERVAL_MS / 1000);
-        const elsewhere = await findAnywhereByName(release.title);
-
-        if (elsewhere) {
-            const where = elsewhere.category ? `under the "${ elsewhere.category }" category` : "with no category set";
-
-            return {
-                hash: null,
-                reason: `the client already holds this torrent ${ where } (${ elsewhere.torrent.state }), so the add was`
-                    + ` ignored — this app only follows "${ category() }", so it never saw it appear`
-            };
-        }
 
         return {
             hash: null,
@@ -440,13 +489,21 @@ export const addRelease = async (release: IndexerResult, tag: string, savePath =
         // qBittorrent answers `409 Conflict` to anything it cannot make sense of and `415`
         // to a link that did not turn out to be a torrent file. Neither word says that by
         // itself, and "Conflict" in a log is a question rather than an answer.
+        //
+        // 5.2.2 answers 409 to a torrent it already holds too — measured, and it is what
+        // sent every such request back to the watchlist. `adopt` above has already ruled
+        // that out by name, so reaching this line with a 409 means the copy it has is under
+        // a name this app cannot match to the release.
         const status = text.match(/failed: (\d{3})/)?.[1];
 
-        const hint = status === "409" ? " — the client could not make sense of the link"
+        const hint = status === "409" ? " — the client could not make sense of the link, or it already holds this torrent under a name that does not match the release"
             : status === "415" ? " — the link did not answer with a torrent file"
                 : "";
 
-        return { hash: null, reason: `${ text }${ hint }` };
+        // and here too, because the version that turns a duplicate into a status code is
+        // the version this app has not met yet. A client that is simply unreachable answers
+        // nothing to these lookups either, so this cannot turn a dead client into a success
+        return await adopt(release.title, tag) || { hash: null, reason: `${ text }${ hint }` };
     }
 };
 

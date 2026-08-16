@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Copy, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Copy, Loader2, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
+import { OptionSelect } from "@/components/option-select";
 import { TagInput } from "@/components/tag-input";
 import { AdminOnly } from "@/components/admin-only";
 import { useLocale } from "@/context/locale";
@@ -24,13 +25,14 @@ type SettingItem = {
     key: string;
     group: string;
     label: string;
-    type: "string" | "number" | "boolean" | "list" | "table";
+    type: "string" | "number" | "boolean" | "list" | "table" | "option";
     // only decides how the log writes about it — the value itself is shown here, see
     // the comment on `toItem` in the api route
     secret: boolean;
     ordered: boolean;
-    // a list that can only hold these: ticked instead of typed
-    options: { value: string, label: string, help?: string }[];
+    // the closed set this may hold: ticked instead of typed for a list, picked from a
+    // searchable dropdown for a single value
+    options: { value: string, label: string, help?: string, keywords?: string[] }[];
     help: string;
     placeholder: string;
     default: string;
@@ -77,6 +79,7 @@ function SettingsPage() {
     const [ oidc, setOidc ] = useState<OidcInfo>();
     const [ values, setValues ] = useState<Record<string, string>>({});
     const [ isSaving, setSaving ] = useState(false);
+    const [ isSyncing, setSyncing ] = useState(false);
     const [ tab, setTab ] = useState("");
 
     const load = (data: { settings: SettingItem[], oidc?: OidcInfo }) => {
@@ -170,6 +173,61 @@ function SettingsPage() {
         }
     };
 
+    /**
+     * The indexer ids, filled in from the manager itself rather than copied out of its list
+     * by hand — one typo there and that indexer is simply never searched, silently.
+     *
+     * A merge, not an overwrite: this list is **ordered**, and the order is the priority, so
+     * an id that is already in it stays exactly where it was put. New ones go on the end,
+     * ones the manager no longer has come off — an id it does not know can only ever search
+     * nothing. That takes `all` off the list too the first time it is pressed, which is the
+     * point of the button: naming them is what the help text asks for.
+     *
+     * It does not save. The value lands in the field like a typed one, so it can be
+     * reordered first and the change is counted on the Save button like every other.
+     */
+    const syncIndexers = async (item: SettingItem) => {
+        // the route reads the saved url and key, so an unsaved one would be asked about a
+        // configuration that is not the one running
+        if ("INDEXER_URL" in dirty || "INDEXER_API_KEY" in dirty) {
+            toast(t("settingsPage.indexers.saveFirst"));
+
+            return;
+        }
+
+        setSyncing(true);
+
+        try {
+            const res = await axios.get("/api/settings/indexers");
+            const available: string[] = (res.data.indexers || []).map((entry: { id: string }) => entry.id);
+
+            const current = (values[item.key] ?? "").split(",").map(v => v.trim()).filter(Boolean);
+
+            const kept = current.filter(id => available.includes(id));
+            const added = available.filter(id => ! current.includes(id));
+            const removed = current.filter(id => ! available.includes(id));
+
+            setValues(prev => ({ ...prev, [item.key]: [ ...kept, ...added ].join(",") }));
+
+            if (added.length === 0 && removed.length === 0) {
+                toast(t("settingsPage.indexers.unchanged", { n: available.length }));
+
+                return;
+            }
+
+            toast(removed.length === 0
+                ? t("settingsPage.indexers.added", { added: added.join(", ") })
+                : t("settingsPage.indexers.addedAndRemoved", { added: added.join(", ") || "—", removed: removed.join(", ") }));
+
+        } catch(err) {
+            console.error(err);
+            toast(axios.isAxiosError(err) && err.response?.data?.message || t("settingsPage.indexers.failed"));
+
+        } finally {
+            setSyncing(false);
+        }
+    };
+
     const groups = useMemo(() => [ ...new Set((items || []).map(item => item.group)) ], [ items ]);
 
     if (! items) {
@@ -196,6 +254,12 @@ function SettingsPage() {
                     <span className="text-sm text-muted-foreground">{ t(isOn(value) ? "settingsPage.on" : "settingsPage.off") }</span>
                 </div>
             );
+        }
+
+        // exactly one out of a closed set, searchable — a language catalogue is 33 entries
+        // long and a typed code that is not one of them is a rule nothing can ever match
+        if (item.type === "option") {
+            return <OptionSelect value={value} onChange={set} options={item.options} />;
         }
 
         // a fixed set of values is ticked rather than typed: a misspelt event was
@@ -320,6 +384,20 @@ function SettingsPage() {
 
                                     <div className="flex items-start gap-2">
                                         <div className="min-w-0 flex-1">{ field(item) }</div>
+
+                                        {item.key === "INDEXER_IDS" && <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="shrink-0 cursor-pointer"
+                                            // the url and the key are what it asks through, so
+                                            // with either one empty there is nothing to ask
+                                            disabled={isSyncing || ! values["INDEXER_URL"] || ! values["INDEXER_API_KEY"]}
+                                            title={t("settingsPage.indexers.title")}
+                                            onClick={() => syncIndexers(item)}
+                                        >
+                                            <RefreshCw className={classNames({ "animate-spin": isSyncing })} />
+                                            { t("settingsPage.indexers.button") }
+                                        </Button>}
 
                                         {item.source === "database" && <Button
                                             variant="ghost"

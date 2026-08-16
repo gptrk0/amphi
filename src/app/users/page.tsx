@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import axios from "axios";
 import { toast } from "sonner";
-import { KeyRound, Loader2, MoreHorizontal, ShieldCheck, Trash2, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, MoreHorizontal, ShieldCheck, Trash2, UserCog, UserPlus } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -259,6 +260,18 @@ export default function Page() {
                                     </DropdownMenuTrigger>
 
                                     <DropdownMenuContent align="end">
+                                        {/* their own settings page, opened by somebody
+                                            else — the languages they want and where their
+                                            notifications go, which is the part of setting
+                                            an account up that nobody wants to explain over
+                                            the phone */}
+                                        <DropdownMenuItem asChild className="cursor-pointer">
+                                            <Link href={`/users/${ user.id }`}>
+                                                <UserCog />
+                                                { t("users.accountSettings") }
+                                            </Link>
+                                        </DropdownMenuItem>
+
                                         <DropdownMenuItem
                                             className="cursor-pointer"
                                             onClick={() => { setPasswordFor(user); setPassword(""); }}
@@ -291,7 +304,7 @@ export default function Page() {
                                                 onClick={() => setRemoving(user)}
                                             >
                                                 <Trash2 />
-                                                Delete
+                                                { t("users.delete") }
                                             </DropdownMenuItem>
                                         </>}
                                     </DropdownMenuContent>

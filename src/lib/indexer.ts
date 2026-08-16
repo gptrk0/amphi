@@ -69,19 +69,28 @@ const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_
 
 type CapsCacheEntry = { value: IndexerCaps, expiresAt: number };
 
-const globalForIndexer = global as unknown as { indexerCaps: Map<string, CapsCacheEntry> };
+const globalForIndexer = global as unknown as {
+    indexerCaps: Map<string, CapsCacheEntry>,
+    // what the manager answered when nothing was named — see `searchIndexerIds`
+    discoveredIds: { value: string[], expiresAt: number } | null
+};
+
 const capsCache = globalForIndexer.indexerCaps || new Map<string, CapsCacheEntry>();
 globalForIndexer.indexerCaps = capsCache;
 
 /**
- * Jackett indexer ids to query. Each one is queried separately so its own
- * capabilities decide the query: the aggregate endpoint reports the union of
- * capabilities, which makes imdbid support impossible to tell apart.
+ * The indexer ids somebody named, in the order they named them — which is also the
+ * priority. Empty is not "none": it means every indexer the manager has, and finding out
+ * which those are takes a call, so only `searchIndexerIds` can answer it.
+ *
+ * `all` is dropped rather than queried. It was this setting's default until 2026-08-16 and
+ * Jackett does answer to it — that is the problem: the aggregate endpoint reports the
+ * *union* of every indexer's capabilities, so one that cannot search by imdb id looks
+ * exactly like one that can, and a whole round quietly falls back to matching by title. An
+ * install that still has it stored gets the same convenience the honest way.
  */
 export const getIndexerIds = (): string[] => {
-    const ids = settingList("INDEXER_IDS");
-
-    return ids.length > 0 ? ids : [ "all" ];
+    return settingList("INDEXER_IDS").filter(id => id.toLowerCase() !== "all");
 };
 
 type TorznabResponse = {
@@ -176,6 +185,96 @@ export const getCaps = async (indexerId: string): Promise<IndexerCaps> => {
 
 export const clearCapsCache = () => {
     capsCache.clear();
+    globalForIndexer.discoveredIds = null;
+};
+
+export type IndexerEntry = { id: string, title: string };
+
+/**
+ * Every indexer the manager has set up, so the ids can be filled in from the settings page
+ * instead of copied out of Jackett's own list by hand — one typo there and that indexer is
+ * simply never searched, silently.
+ *
+ * Asked through the **torznab** endpoint (`t=indexers`), not Jackett's management API. That
+ * one sits behind the dashboard's own password: `/api/v2.0/indexers?configured=true` with
+ * this app's api key answers `400 Cookies required`, measured on 2026-08-15. The api key
+ * opens the torznab endpoint and nothing else, so this is the whole of what can be asked
+ * with what the app has.
+ *
+ * Not cached: it is asked when somebody presses a button, and the answer they want is the
+ * one from that moment — an indexer they added a minute ago is the reason they pressed it.
+ * The search path goes through `searchIndexerIds`, which is where the caching lives.
+ *
+ * `all` in the path is Jackett's aggregate endpoint being used as a route to ask this
+ * question, not an indexer being searched — nothing else answers `t=indexers`.
+ */
+export const listIndexers = async (): Promise<{ indexers?: IndexerEntry[], error?: string }> => {
+    const res = await request("all", { t: "indexers", configured: "true" });
+
+    if (res.error) {
+        await logFailure("all", "indexer listing", res.error.description);
+
+        return { error: res.error.description };
+    }
+
+    const found = res.data?.indexers?.indexer;
+
+    // one indexer is a single node rather than a list of one, and no indexers at all is a
+    // missing node — neither is an error, they are answers
+    const list = found ? (Array.isArray(found) ? found : [ found ]) : [];
+
+    return {
+        indexers: list
+            // `configured=true` above already asks for this, and it is cheap to not depend
+            // on a query parameter being honoured for something that decides what is saved
+            .filter((entry: any) => String(entry?.["@_configured"] ?? "true") !== "false")
+            .map((entry: any) => ({
+                id: String(entry?.["@_id"] || ""),
+                title: String(entry?.title || entry?.["@_id"] || "")
+            }))
+            .filter((entry: IndexerEntry) => !! entry.id)
+    };
+};
+
+/**
+ * The indexers a search actually runs on: the ones named in the setting, or — when nothing
+ * is named — every one the manager has configured, each queried on its own so its own
+ * capabilities decide the query.
+ *
+ * Cached for the capability TTL, unlike `listIndexers` itself: this is on the path of every
+ * search and a scan round is dozens of them, while the button on the settings page is a
+ * person asking about this minute.
+ */
+export const searchIndexerIds = async (): Promise<string[]> => {
+    const named = getIndexerIds();
+
+    if (named.length > 0) {
+        return named;
+    }
+
+    const hit = globalForIndexer.discoveredIds;
+
+    if (hit && hit.expiresAt > Date.now()) {
+        return hit.value;
+    }
+
+    const { indexers } = await listIndexers();
+    const ids = (indexers || []).map(entry => entry.id);
+
+    if (ids.length === 0) {
+        // nothing named and nothing found is a round that searches nothing at all, which
+        // otherwise looks exactly like a round that found nothing. `listIndexers` says so
+        // when the manager answered with an error; this is the quiet half
+        await logFailure("all", "indexer discovery", "no indexer is named in the settings and the manager has none configured");
+
+        // and it is not cached: a manager that was unreachable for a minute must not mean
+        // six hours of searching nothing
+        return [];
+    }
+
+    globalForIndexer.discoveredIds = { value: ids, expiresAt: Date.now() + capsTtlMs() };
+
+    return ids;
 };
 
 const attributes = (item: any): Record<string, string> => {
@@ -347,19 +446,19 @@ const findSeasonReleasesOn = async (indexerId: string, query: SeasonQuery): Prom
 };
 
 export const findMovieReleases = async (query: MovieQuery): Promise<IndexerResult[]> => {
-    const results = await Promise.all(getIndexerIds().map(id => findMovieReleasesOn(id, query)));
+    const results = await Promise.all((await searchIndexerIds()).map(id => findMovieReleasesOn(id, query)));
 
     return dedupe(results.flat());
 };
 
 export const findEpisodeReleases = async (query: EpisodeQuery): Promise<IndexerResult[]> => {
-    const results = await Promise.all(getIndexerIds().map(id => findEpisodeReleasesOn(id, query)));
+    const results = await Promise.all((await searchIndexerIds()).map(id => findEpisodeReleasesOn(id, query)));
 
     return dedupe(results.flat());
 };
 
 export const findSeasonReleases = async (query: SeasonQuery): Promise<IndexerResult[]> => {
-    const results = await Promise.all(getIndexerIds().map(id => findSeasonReleasesOn(id, query)));
+    const results = await Promise.all((await searchIndexerIds()).map(id => findSeasonReleasesOn(id, query)));
 
     return dedupe(results.flat());
 };

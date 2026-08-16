@@ -34,7 +34,7 @@ export type GrabOption = {
     seeders: number;
     resolution: string | null;
     // what the release name says it is in. An untagged one is shown as whatever the
-    // account says untagged means, because that is how it will be treated
+    // install says untagged means, because that is how it will be treated
     languages: string[];
     indexer: string;
     // why the profile threw this one away. Null on everything it accepted — including

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { LANGUAGE_OPTIONS } from "@/types/language";
 import { NOTIFY_EVENTS } from "@/types/notify";
 
 /**
@@ -39,9 +40,11 @@ export class NotConfiguredError extends Error {
     }
 }
 
-export type SettingType = "string" | "number" | "boolean" | "list" | "table";
+export type SettingType = "string" | "number" | "boolean" | "list" | "table" | "option";
 
-export type SettingOption = { value: string, label: string, help?: string };
+// `keywords` is the other spellings that should find it in the dropdown — a language is
+// stored as `hun` and looked for as "magyar", "hungarian" or "hu"
+export type SettingOption = { value: string, label: string, help?: string, keywords?: string[] };
 
 export type SettingDef = {
     key: string;
@@ -81,7 +84,7 @@ export const SETTINGS: SettingDef[] = [
     // Indexers
     { key: "INDEXER_URL", group: "Indexers", label: "Jackett / Prowlarr URL", type: "string", placeholder: "http://host:9117" },
     { key: "INDEXER_API_KEY", group: "Indexers", label: "API key", type: "string", secret: true },
-    { key: "INDEXER_IDS", group: "Indexers", label: "Indexers", type: "list", ordered: true, default: "all", placeholder: "indexer id", help: "Queried one by one, by capability, and the order is also the priority. `all` uses Jackett's aggregate endpoint, which silently drops any indexer that cannot search by imdb id — naming them is better." },
+    { key: "INDEXER_IDS", group: "Indexers", label: "Indexers", type: "list", ordered: true, default: "", placeholder: "indexer id", help: "Empty means every indexer the manager has configured. Naming them decides two things instead: which ones are asked, and in what order — the order is the priority. Either way each one is queried on its own, so its own capabilities shape the query. The button next to this fills in what the manager has; ones already listed keep their place." },
     { key: "INDEXER_PRIORITY", group: "Indexers", label: "Priority order", type: "list", ordered: true, help: "Only if it should differ from the order above. At equal resolution and language the earlier indexer always wins, however many seeders the other one has — that is what naming an order means. If the preferred one has no acceptable release, the next one's is taken." },
     { key: "INDEXER_CAPS_TTL_MINUTES", group: "Indexers", label: "Capability cache (minutes)", type: "number", default: "360" },
 
@@ -95,7 +98,8 @@ export const SETTINGS: SettingDef[] = [
 
     // Library
     // How long a download is kept is not here: it belongs to the download, not to the
-    // install — five days for a film, three per episode for a series, and editable per row
+    // install — a week for a film or a single episode, three days per episode of a season
+    // pack, and editable per row
     // in the library. See `defaultKeepDays` in src/lib/library.ts.
     { key: "LIBRARY_SEED_DAYS", group: "Library", label: "Seed for (days)", type: "number", default: "3", help: "Counted from qBittorrent's own seeding time, not from when the download landed: a torrent that is paused is not serving its time, and one that was already seeding before this app saw it is not asked to serve it twice. Nothing is deleted before this is up — not by hand and not by the retention: until then a download can only be marked, and it goes by itself when the time comes. This is also the shortest retention the library will accept. The torrent keeps seeding afterwards until you delete it. 0 makes everything deletable at once." },
 
@@ -109,16 +113,21 @@ export const SETTINGS: SettingDef[] = [
     { key: "QUALITY_EXCLUDE", group: "Quality", label: "Excluded keywords", type: "list", default: "cam,camrip,hdcam,ts,telesync,hdts,telecine,tc,workprint,screener,scr,exe,msi,apk", help: "Matched on word boundaries, so 'ts' does not hit random words." },
     { key: "QUALITY_MIN_SIZE_MOVIE", group: "Quality", label: "Minimum film size per resolution", type: "table", default: "2160p:8,1080p:2,720p:0.8,480p:0.3", help: "A file this much smaller than the resolution it claims is not that video. GB per entry." },
     { key: "QUALITY_MIN_SIZE_EPISODE", group: "Quality", label: "Minimum episode size per resolution", type: "table", default: "2160p:1.5,1080p:0.4,720p:0.15,480p:0.05" },
+    // The one language rule that is the install's rather than a person's, and it is here
+    // rather than on the account page for the reason the whole group left: what a release
+    // with no tag turns out to be is a fact about how releases are named, and two people
+    // cannot each be right about it. Wanting Hungarian is a preference; believing an
+    // untagged file is Hungarian is a claim about the file.
+    { key: "QUALITY_UNTAGGED_LANGUAGE", group: "Quality", label: "Untagged release counts as", type: "option", options: LANGUAGE_OPTIONS, default: "eng", help: "Most releases carry no language tag at all. This is what they are taken to be. Somebody whose first language is not this gets no untagged release unattended — to them it is a file in another language." },
 
-    // Language is not here any more: it is on the account page, one set per person.
+    // The rest of Language is not here: it is on the account page, one set per person.
     // Two people wanting the same film in different languages get two downloads, and a
     // single house-wide list could not express that. See src/lib/language.ts.
 
     // Scanner
     { key: "WATCHLIST_SCAN_INTERVAL_MINUTES", group: "Scanner", label: "Scan every (minutes)", type: "number", default: "15" },
     { key: "DOWNLOAD_SYNC_INTERVAL_MINUTES", group: "Scanner", label: "Read the client back every (minutes)", type: "number", default: "1" },
-    { key: "SEARCH_BACKOFF_MINUTES", group: "Scanner", label: "First wait after an empty search (minutes)", type: "number", default: "30", help: "Doubles with every fruitless search. Nothing is ever given up on." },
-    { key: "SEARCH_MAX_BACKOFF_HOURS", group: "Scanner", label: "Longest wait (hours)", type: "number", default: "24" },
+    { key: "SEARCH_BACKOFF_LADDER", group: "Scanner", label: "Search ladder (day:minutes)", type: "table", default: "0:30,1:120,2:720", help: "How often something is searched for, by how long it has been searched for — counted from the first empty search, not from when it was added. The default reads: every 30 minutes on the first day, every 2 hours on the second, every 12 hours from then on. The last rung holds forever: nothing is ever given up on." },
     { key: "EPISODE_SEARCH_CONCURRENCY", group: "Scanner", label: "Parallel episode searches", type: "number", default: "3" },
     { key: "SCAN_DRY_RUN", group: "Scanner", label: "Dry run", type: "boolean", default: "0", help: "On: the scanner only logs what it would grab. Manual downloads are always real." },
 
