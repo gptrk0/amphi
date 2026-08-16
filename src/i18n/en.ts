@@ -521,7 +521,7 @@ export const en = {
 
     libraryPage: {
         title: "Library",
-        intro: "Everything the house has and everything on its way. A finished download seeds for a while before it can be deleted, and then goes on its own — with its files — once the time under \"Kept for\" is up. A film is kept for 5 days by default and a series 3 days per episode downloaded; any row can be given its own number.",
+        intro: "Everything the house has and everything on its way, a row per title — open one to see the downloads it is made of. A finished download seeds for a while before it can be deleted, and then goes on its own — with its files — once the time under \"Kept for\" is up. A film or a single episode is kept for 7 days by default and a season pack 3 days per episode it carries; any row can be given its own number.",
         empty: "Nothing here yet — whatever the app downloads shows up in this list.",
         filters: {
             all: "All",
@@ -543,6 +543,15 @@ export const en = {
         ready: "Ready to watch",
         downloading: "Downloading",
         notInClient: "not in the client",
+        // a title's row is what the house has of it; the downloads it is made of are inside
+        episodesCovered: "{n} episodes",
+        downloadCount: "{n} downloads",
+        editionCount: "{n} editions",
+        readyOf: "{done}/{total} ready",
+        markedCount: "{n} marked for deletion",
+        firstDeletedIn: "first goes in {time}",
+        showDownloads: "Show the downloads",
+        hideDownloads: "Hide the downloads",
         kbPerSecond: "{n} kB/s",
         mbPerSecond: "{n} MB/s",
         minutesLeft: "{n}m left",

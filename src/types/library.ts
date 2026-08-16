@@ -16,9 +16,10 @@ export type LibraryEntry = {
     releaseTitle: string;
     // which edition this is. Empty for rows from before downloads had one
     language: string;
-    // "S03E07", "S01 — 10 episodes", empty for a film
-    covers: string;
-    episodeCount: number;
+    // what this one covers, as `season:episode` keys — empty for a film, one entry for a
+    // single episode, all of them for a pack. Keys rather than a sentence: the page groups
+    // a title's downloads and has to add these up, and the wording is the reader's
+    episodeKeys: string[];
     // how big the torrent is. Null on an old row whose torrent is no longer in the
     // client, which is the only place the size could have been read from
     sizeBytes: number | null;
@@ -32,7 +33,8 @@ export type LibraryEntry = {
     expiresAt: string | null;
     // how long it is kept after it finished, in days
     keepDays: number;
-    // what that would be if nobody had chosen: 5 for a film, 3 per episode for a series
+    // what that would be if nobody had chosen: 7 for a film or a single episode, 3 per
+    // episode of a season pack
     keepDaysDefault: number;
     // somebody chose the number above, rather than it being the default
     keepDaysCustom: boolean;

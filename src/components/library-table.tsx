@@ -1,11 +1,11 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, ReactNode, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, ChevronsUpDown, Clock, Pencil, Trash2, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsUpDown, Clock, Pencil, Trash2, Undo2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,15 @@ import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
 import { MessageKey, Translate } from "@/i18n";
+import {
+    coversText,
+    episodeListText,
+    Group,
+    groupEpisodes,
+    groupSize,
+    toGroups,
+    unique
+} from "@/lib/library-view";
 import { KeepRange, LibraryItem } from "@/types/library";
 
 type Column = {
@@ -33,6 +42,12 @@ type Column = {
     label: string;
     value?: (item: LibraryItem) => string | number;
     render: (item: LibraryItem) => ReactNode;
+    // the same cell for a title with several downloads under it. What it cannot add up —
+    // the seed window, the retention, the delete button — stays on the rows inside
+    groupValue?: (group: Group) => string | number;
+    groupRender?: (group: Group) => ReactNode;
+    // the cell inside an open group, where the title and poster are already on the row above
+    childRender?: (item: LibraryItem) => ReactNode;
     className?: string;
 };
 
@@ -136,6 +151,10 @@ export function LibraryTable() {
     const [ deleting, setDeleting ] = useState<LibraryItem | null>(null);
     const [ keeping, setKeeping ] = useState<LibraryItem | null>(null);
     const [ keepInput, setKeepInput ] = useState("");
+    // which titles are open. Null until somebody opens or closes one: until then a title
+    // with something still downloading is open on its own, so the percentages are visible
+    // without a click
+    const [ expanded, setExpanded ] = useState<string[] | null>(null);
     // the floor is the seed time, which is a setting — until the first answer arrives the
     // input is guarded by the api rather than by these
     const [ range, setRange ] = useState<KeepRange>({ min: 1, max: 60 });
@@ -247,6 +266,18 @@ export function LibraryTable() {
         return <Image src={item.media.poster_img} alt="" width={32} height={48} className="shrink-0 rounded-sm" />;
     };
 
+    // the filter is a question about downloads, so it is asked before the grouping: a
+    // series with one episode still running shows only that one under "Downloading"
+    const groups = toGroups((items || []).filter(item => filter === "ALL" || item.status === filter));
+
+    const open = expanded ?? groups
+        .filter(group => group.items.length > 1 && group.items.some(item => item.status === "DOWNLOADING"))
+        .map(group => group.key);
+
+    const toggleOpen = (key: string) => {
+        setExpanded(open.includes(key) ? open.filter(v => v !== key) : [ ...open, key ]);
+    };
+
     const columns: Column[] = [
         {
             key: "name",
@@ -261,8 +292,57 @@ export function LibraryTable() {
                             { name(item) }
                         </Link>
 
-                        {item.covers && <div className="text-xs text-muted-foreground">{ item.covers }</div>}
+                        {item.episodeKeys.length > 0 && (
+                            <div className="text-xs text-muted-foreground" title={episodeListText(item.episodeKeys)}>
+                                { coversText(item.episodeKeys, t) }
+                            </div>
+                        )}
                     </div>
+                </div>
+            ),
+            groupValue: group => group.items[0].media?.name?.toLowerCase() || String(group.items[0].tmdbId),
+            groupRender: group => {
+                const item = group.items[0];
+                const isOpen = open.includes(group.key);
+                const episodes = groupEpisodes(group);
+
+                return (
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            className="cursor-pointer"
+                            title={t(isOpen ? "libraryPage.hideDownloads" : "libraryPage.showDownloads")}
+                            onClick={() => toggleOpen(group.key)}
+                        >
+                            {isOpen
+                                ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                                : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />}
+                        </button>
+
+                        { poster(item) }
+
+                        <div className="min-w-0">
+                            <Link href={`/details/${ item.type }/${ item.tmdbId }`} className="font-medium hover:underline">
+                                { name(item) }
+                            </Link>
+
+                            {/* what the house has of this title, added up — and the exact
+                                list in the tooltip, which is the question a summary of a
+                                series fetched episode by episode always raises */}
+                            <div className="text-xs text-muted-foreground" title={episodes.length > 0 ? episodeListText(episodes) : undefined}>
+                                { episodes.length > 0
+                                    ? coversText(episodes, t)
+                                    : t("libraryPage.editionCount", { n: group.items.length }) }
+                            </div>
+                        </div>
+                    </div>
+                );
+            },
+            // the poster and the title are on the row above; what this download covers is
+            // the one thing that tells it from its siblings
+            childRender: item => (
+                <div className="pl-[3.25rem] text-xs text-muted-foreground" title={item.episodeKeys.length > 0 ? episodeListText(item.episodeKeys) : undefined}>
+                    { coversText(item.episodeKeys, t) || "—" }
                 </div>
             )
         },
@@ -273,6 +353,14 @@ export function LibraryTable() {
             render: item => (
                 <span className="block max-w-[22rem] truncate text-xs text-muted-foreground" title={item.releaseTitle}>
                     { item.releaseTitle || "—" }
+                </span>
+            ),
+            // a title's release names are as many as its downloads and none of them is the
+            // title's own, so the group says how many there are instead
+            groupValue: group => group.items.length,
+            groupRender: group => (
+                <span className="text-xs text-muted-foreground">
+                    { t("libraryPage.downloadCount", { n: group.items.length }) }
                 </span>
             )
         },
@@ -286,7 +374,17 @@ export function LibraryTable() {
                 <span className="text-xs text-muted-foreground">
                     { item.language ? item.language.toUpperCase() : "—" }
                 </span>
-            )
+            ),
+            groupValue: group => unique(group.items.map(item => item.language)).sort().join(" "),
+            groupRender: group => {
+                const languages = unique(group.items.map(item => item.language)).sort();
+
+                return (
+                    <span className="text-xs text-muted-foreground">
+                        { languages.length > 0 ? languages.map(value => value.toUpperCase()).join(" · ") : "—" }
+                    </span>
+                );
+            }
         },
         {
             key: "watchers",
@@ -301,7 +399,18 @@ export function LibraryTable() {
                     title={item.watchers.join(", ")}
                 >
                     { item.watchers.join(", ") }
-                </span>
+                </span>,
+            // everybody who wanted any part of this title, each named once
+            groupValue: group => unique(group.items.flatMap(item => item.watchers)).join(", ").toLowerCase(),
+            groupRender: group => {
+                const watchers = unique(group.items.flatMap(item => item.watchers));
+
+                return watchers.length === 0
+                    ? <span className="text-xs text-muted-foreground">—</span>
+                    : <span className="block max-w-[12rem] truncate text-xs" title={watchers.join(", ")}>
+                        { watchers.join(", ") }
+                    </span>;
+            }
         },
         {
             key: "size",
@@ -310,6 +419,14 @@ export function LibraryTable() {
             render: item => (
                 <span className="text-xs whitespace-nowrap text-muted-foreground">
                     { sizeText(item.sizeBytes) }
+                </span>
+            ),
+            // what the whole title is taking up, which is the number a disk filling up
+            // is asked about
+            groupValue: group => groupSize(group),
+            groupRender: group => (
+                <span className="text-xs whitespace-nowrap">
+                    { sizeText(groupSize(group) || null) }
                 </span>
             )
         },
@@ -344,7 +461,27 @@ export function LibraryTable() {
                         <div className="text-xs text-muted-foreground">{ t("libraryPage.notInClient") }</div>
                     )}
                 </div>
-            )
+            ),
+            groupValue: group => group.items.some(item => item.status === "DOWNLOADING") ? "DOWNLOADING" : "AVAILABLE",
+            groupRender: group => {
+                const ready = group.items.filter(item => item.status === "AVAILABLE").length;
+
+                if (ready === group.items.length) {
+                    return <Badge>{ t("libraryPage.ready") }</Badge>;
+                }
+
+                // no aggregate percentage: the downloads are different sizes and an average
+                // of their progress would be a number that means nothing
+                return (
+                    <div className="min-w-[8rem]">
+                        <Badge variant="secondary">{ t("libraryPage.downloading") }</Badge>
+
+                        <div className="text-xs text-muted-foreground">
+                            { t("libraryPage.readyOf", { done: ready, total: group.items.length }) }
+                        </div>
+                    </div>
+                );
+            }
         },
         {
             key: "seed",
@@ -387,6 +524,30 @@ export function LibraryTable() {
                         )}
                     </div>
                 );
+            },
+            // the soonest of them, because that is the one with consequences: a collapsed
+            // title must not hide that something under it goes tonight
+            groupValue: group => group.items.map(item => item.expiresAt).filter(Boolean).sort()[0] || "",
+            groupRender: group => {
+                const marked = group.items.filter(item => item.deleteRequested).length;
+
+                if (marked > 0) {
+                    return <div className="min-w-[7rem] text-xs text-destructive">{ t("libraryPage.markedCount", { n: marked }) }</div>;
+                }
+
+                const next = group.items
+                    .filter(item => ! item.deleteRequested)
+                    .map(item => item.expiresAt)
+                    .filter((value): value is string => !! value)
+                    .sort()[0];
+
+                const left = next ? untilText(next, t) : "";
+
+                return (
+                    <div className="min-w-[7rem] text-xs text-muted-foreground">
+                        { left ? t("libraryPage.firstDeletedIn", { time: left }) : "—" }
+                    </div>
+                );
             }
         },
         {
@@ -418,13 +579,25 @@ export function LibraryTable() {
                         <Pencil className="size-3" /> { text }
                     </Button>
                 );
-            }
+            },
+            // a retention belongs to one torrent — a season pack and a single episode of
+            // the same series are kept for different lengths on purpose
+            groupValue: group => Math.max(...group.items.map(item => item.keepDays)),
+            groupRender: () => <span className="text-xs text-muted-foreground">—</span>
         },
         {
             key: "startedAt",
             label: t("libraryPage.columns.added"),
             value: item => item.startedAt,
-            render: item => <span className="text-muted-foreground">{ ago(item.startedAt, t) }</span>
+            render: item => <span className="text-muted-foreground">{ ago(item.startedAt, t) }</span>,
+            // the latest, so a series that is still being filled in sorts as what it is:
+            // something that arrived today
+            groupValue: group => [ ...group.items ].map(item => item.startedAt).sort().pop() || "",
+            groupRender: group => (
+                <span className="text-muted-foreground">
+                    { ago([ ...group.items ].map(item => item.startedAt).sort().pop() || null, t) }
+                </span>
+            )
         },
         {
             key: "actions",
@@ -462,18 +635,23 @@ export function LibraryTable() {
             : { key, direction: "asc" });
     };
 
-    const visible = (items || []).filter(item => filter === "ALL" || item.status === filter);
     const column = columns.find(v => v.key === sort.key);
 
+    // a column that says nothing about a whole title sorts by its first download, which
+    // for the ones that have no `groupValue` is the only row there is
+    const sortValue = (group: Group) => column?.groupValue
+        ? column.groupValue(group)
+        : column!.value!(group.items[0]);
+
     const sorted = column?.value
-        ? [ ...visible ].sort((a, b) => {
-            const left = column.value!(a);
-            const right = column.value!(b);
+        ? [ ...groups ].sort((a, b) => {
+            const left = sortValue(a);
+            const right = sortValue(b);
             const order = left < right ? -1 : left > right ? 1 : 0;
 
             return sort.direction === "asc" ? order : -order;
         })
-        : visible;
+        : groups;
 
     return (
         <div className="p-4">
@@ -530,15 +708,33 @@ export function LibraryTable() {
                 </TableHeader>
 
                 <TableBody>
-                    {sorted.map(item => (
-                        <TableRow key={item.id}>
+                    {sorted.map(group => group.items.length === 1
+                        ? <TableRow key={group.key}>
                             {columns.map(col => (
                                 <TableCell key={col.key} className={classNames(col.className, "py-1")}>
-                                    { col.render(item) }
+                                    { col.render(group.items[0]) }
                                 </TableCell>
                             ))}
                         </TableRow>
-                    ))}
+                        : <Fragment key={group.key}>
+                            <TableRow>
+                                {columns.map(col => (
+                                    <TableCell key={col.key} className={classNames(col.className, "py-1")}>
+                                        { col.groupRender ? col.groupRender(group) : null }
+                                    </TableCell>
+                                ))}
+                            </TableRow>
+
+                            {open.includes(group.key) && group.items.map(item => (
+                                <TableRow key={item.id} className="bg-muted/30">
+                                    {columns.map(col => (
+                                        <TableCell key={col.key} className={classNames(col.className, "py-1")}>
+                                            { (col.childRender || col.render)(item) }
+                                        </TableCell>
+                                    ))}
+                                </TableRow>
+                            ))}
+                        </Fragment>)}
                 </TableBody>
             </Table>}
 

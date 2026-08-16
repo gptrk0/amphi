@@ -513,7 +513,7 @@ export const hu: Messages = {
 
     libraryPage: {
         title: "Gyűjtemény",
-        intro: "Minden, ami a háznak megvan, és minden, ami útban van. A befejezett letöltés egy ideig seedel, mielőtt törölhetővé válik, aztán magától elmegy — a fájljaival együtt —, amint lejár a „Megőrzés\" oszlopban álló idő. Egy film alapból 5 napig marad, a sorozat pedig letöltött részenként 3 napig; bármelyik sornak adható saját érték.",
+        intro: "Minden, ami a háznak megvan, és minden, ami útban van, címenként egy sorban — nyisd ki, és látszanak a letöltések, amikből összeáll. A befejezett letöltés egy ideig seedel, mielőtt törölhetővé válik, aztán magától elmegy — a fájljaival együtt —, amint lejár a „Megőrzés\" oszlopban álló idő. Egy film vagy egyetlen epizód alapból 7 napig marad, egy évadpack pedig a benne lévő epizódonként 3 napig; bármelyik sornak adható saját érték.",
         empty: "Még nincs itt semmi — amit az app letölt, ebben a listában jelenik meg.",
         filters: {
             all: "Összes",
@@ -535,6 +535,15 @@ export const hu: Messages = {
         ready: "Megnézhető",
         downloading: "Letöltés alatt",
         notInClient: "nincs a kliensben",
+        // a cím sora az, ami a háznak megvan belőle; a letöltések, amikből összeáll, benne vannak
+        episodesCovered: "{n} epizód",
+        downloadCount: "{n} letöltés",
+        editionCount: "{n} kiadás",
+        readyOf: "{done}/{total} kész",
+        markedCount: "{n} törlésre jelölve",
+        firstDeletedIn: "az első {time} múlva megy",
+        showDownloads: "Letöltések mutatása",
+        hideDownloads: "Letöltések elrejtése",
         kbPerSecond: "{n} kB/s",
         mbPerSecond: "{n} MB/s",
         minutesLeft: "{n} perc",

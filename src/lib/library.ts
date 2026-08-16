@@ -783,8 +783,10 @@ export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = ne
     status: item.status,
     releaseTitle: item.releaseTitle,
     language: item.language,
-    covers: coverText(item.episodes),
-    episodeCount: item.episodes.length,
+    // the keys, not `coverText`: the library page adds several downloads of one title
+    // together and says it in the reader's language. `coverText` stays for the log and
+    // the notifications, which are written once and in the record language
+    episodeKeys: item.episodes,
     sizeBytes: item.sizeBytes,
     startedAt: item.startedAt.toISOString(),
     completedAt: item.completedAt ? item.completedAt.toISOString() : null,

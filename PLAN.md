@@ -406,7 +406,7 @@ Eddig egyetlen művelet volt: a watchlistről levétel **törölte a sort**, ami
 
 **Élő ellenőrzés** (eldobható sorokon, a te adataidhoz nyúlás nélkül): letöltött elem `Stop watching` után megmaradt `DOWNLOADED`/`monitored=false` állapotban; letöltés nélküli elem sora eltűnt; a kliensből eltűnt kész torrent a `movie 13: removed from the client after finishing, treated as watched and deleted` sorral takarításra került; a `Delete` a torrent-eltávolítással együtt lefutott.
 
-- **Nyitva:** egy részben letöltött sorozat (pl. 1/30 epizód) nem jelenik meg a `Downloaded` alatt, mert a származtatott státusza nem `DOWNLOADED`. Ha a `Downloaded` inkább „mi van a lemezen" nézet, akkor ott epizód-szinten kellene listázni.
+- ~~**Nyitva:** egy részben letöltött sorozat (pl. 1/30 epizód) nem jelenik meg a `Downloaded` alatt, mert a származtatott státusza nem `DOWNLOADED`.~~ **Megoldva** — a 2026-08-09-i watchlist/library szétválasztással a `Downloaded` nézetből `Library` lett, és abban minden letöltés saját sor: egy epizód is, egy évadpack is. Ami utána maradt, azt a lenti „A gyűjtemény címenként áll össze" fejezet zárja le.
 
 #### Epizódonkénti választás és élő watchlist-pipák (2026-08-07-i kérés) ✅
 
@@ -1928,6 +1928,38 @@ A jelszó SCRAM-SHA-256, amit az átnevezés **nem** töröl (az md5-öt igen �
 5. **A migráció neve nem az app neve.** A `renamed_to_lumina` mappanév egy lefutott migrációt azonosít, nem az appot — átnevezni nem lehet (checksum), és nem is kell: a migráció tartalma attól helyes, hogy a *régi* kategóriát (`aioseerr`) írja be, nem attól, hogy hogy hívják. A benne lévő komment is „lumina"-ra hivatkozik mint új default; ez ugyanezért nem javítható, és ez a bekezdés a helyesbítése. A registry defaultja `amphi`.
 6. **A repó könyvtára maradt `aioseerr`** a lemezen, mert a munkakönyvtár átnevezése minden nyitott shellt, a compose bind mountját és a git remote-ot egyszerre érinti — az külön, kézi lépés, nem kódmódosítás.
 
+#### A gyűjtemény címenként áll össze (2026-08-16-i kérés) ✅ a kódban, böngészőben nem néztem meg
+
+A kérés a terv egy régi, nyitva hagyott pontja volt: „egy részben letöltött sorozat nem jelenik meg a `Downloaded` alatt, ott epizód-szinten kellene listázni". **A felmérés szerint ez fele részben már nem állt:** a 2026-08-09-i szétválasztás óta a library minden *letöltést* külön sorban mutat — egy epizód is sor, egy évadpack is —, tehát az 1/30 epizódnál tartó sorozat ott van. Ami maradt, az a másik fele: harminc külön epizód **harminc sor**, dátum szerint szétszórva, és sehol egy hely, ami megmondja, mi van meg a címből. Ugyanez a baja a két nyelven meglévő filmnek: két sor, amit csak a nyelv oszlop különböztet meg.
+
+**Ezért a tábla mostantól címenként egy sor, ami lenyílik a letöltéseire.** Az egyetlen letöltéssel bíró cím ugyanaz a sima sor marad, ami eddig volt — egy nyitógomb, ami a fölötte lévő sor másolatát mutatja meg, csak zaj.
+
+- **A csoportsor azt mondja, amit egy címről *lehet* mondani:** mi van meg belőle (`S01–S02 — 6 epizód`, a pontos lista tooltipben), hány letöltésből, milyen nyelveken, kik várták (egyesítve), mennyi helyet foglal **összesen**, és `3/4 kész`, ha még megy valami. Aggregált százalék szándékosan nincs: különböző méretű letöltések progress-átlaga olyan szám, ami semmit nem jelent.
+- **Amit nem lehet összeadni, az a sorokon marad:** a seed-ablak, a megőrzés és a törlés gomb egy torrenté. A csoportsor a seed oszlopban csak azt mondja, ami következménnyel jár — `2 törlésre jelölve`, vagy hogy az első mikor megy —, mert egy becsukott cím nem rejtheti el, hogy ma este eltűnik alóla valami.
+- **A csoporton belül a sorrend az, hogy mit fed le, nem az, hogy mikor jött:** egy héttel később elkapott epizód is a negyedik rész. Filmnél nincs mi szerint, ott a dátum dönt.
+- **A szűrő a letöltésekre kérdez, a csoportosítás előtt.** A `Letöltés alatt` szűrő egy sorozatból csak azt az egy epizódot mutatja, ami tényleg megy — nem a teljes címet, amiből valami éppen töltődik.
+- **Alapból nyitva az a cím, amiben van futó letöltés**, és a nyitott halmaz az első kattintásig ebből származik, utána a felhasználóé (ugyanaz a minta, mint a [season-picker.tsx](src/components/season-picker.tsx)-ben).
+
+**Egy adatmodell-változás jár vele.** A DTO eddig kész mondatot küldött (`covers: "S01 — 10 episodes"`), amit a szerver írt meg — angolul, a magyar felületre is. Most a kulcsokat küldi (`episodeKeys: ["1:1", …]`), és az oldal mondja ki őket az olvasó nyelvén; a `coverText` a [library.ts](src/lib/library.ts)-ben marad, mert a napló és az értesítés egyszer íródik, a rekord nyelvén, és nem olvasónként. A tiszta függvények — csoportosítás, összegzés, szövegezés — átkerültek a [library-view.ts](src/lib/library-view.ts)-be: egyikük sem rajzol semmit, és így önmagukban futtathatók. Az `episodeCount` mező kikerült, mert az `episodeKeys.length` ugyanaz és nem tud eltérni tőle.
+
+**Két elavult mondat is javítva:** a library oldal bevezetője (mindkét nyelven) és a `keepDaysDefault` kommentje még „5 nap egy filmre, 3 naponta epizódonként"-et mondott, holott 2026-08-16 óta egy film **vagy egyetlen epizód** 7 nap, és csak az évadpack számol epizódonként.
+
+**Élő ellenőrzés** (a konténerben, `tsc --noEmit` és `next lint` tiszta): hét **eldobható** library sor a valódi adatbázisban — egy sorozat három külön epizódja plusz egy 3 részes évadpack, egy film két nyelven, és egy magányos film —, majd a felület tiszta függvényei rájuk futtatva, mindkét nyelven. A sorok `torrentHash` nélkül készültek, tehát a `syncDownloads` (ami csak hash-es sorokat néz) nem nyúlt hozzájuk, a 7 napos megőrzés pedig nem járt le alattuk; a teszt után mind a hét törölve, a tábla újra üres. A kimenet:
+
+```
+=== en — 7 downloads in 3 titles ===
+GROUP Breaking Bad | S01–S02 — 6 episodes | 4 downloads | ENG · HUN | Patrick, mob | 12.4 GB | 3/4 ready
+        tooltip: S01E01, S01E02, S01E03, S02E01, S02E02, S02E03
+  ↳   S01E01 | …HUN-VERIFY | HUN | 1.3 GB | AVAILABLE | 7 days
+  ↳   S01E02 | …HUN-VERIFY | HUN | 1.3 GB | AVAILABLE | 7 days
+  ↳   S01E03 | …HUN-VERIFY | HUN | 1.3 GB | DOWNLOADING | 7 days
+  ↳   S02 — 3 episodes | …ENG-VERIFY | ENG | 8.6 GB | AVAILABLE | 9 days
+GROUP Inception | 2 editions | 2 downloads | ENG · HUN | Patrick, mob, theb0rdi | 14.9 GB | Ready to watch
+ROW   Fight Club | — | ENG | 6.0 GB | AVAILABLE
+```
+
+A TMDB-címek valódiak (a rendszer saját cache-én át jöttek), az epizód-sorrend a lefedettség szerinti, a `9 days` pedig a háromrészes pack `3 × 3` napja — vagyis a megőrzési szabály is a csoporton belül marad soronkénti. **Amit nem néztem meg: hogy néz ki.** A nyitógomb, a behúzás és a csoportsor tördelése böngészőben nincs ellenőrizve.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -2020,6 +2052,8 @@ docker compose -p amphi-prodtest -f docker-compose.yml -f <(echo 'services: {amp
 | [src/lib/torrent.ts](src/lib/torrent.ts) | qBittorrent kliens: hozzáadás kategóriával/taggel, hash visszaolvasás, állapot (a `seeding_time`-mal együtt), törlés |
 | [src/lib/grab.ts](src/lib/grab.ts) | keresés → pontozás → qBittorrent → DB lánc (`planMovieGrab`, `planSeasonGrab`, `planGrabs`, `execute*`) |
 | [src/lib/watchlist.ts](src/lib/watchlist.ts) | watchlist CRUD, származtatott státusz, évad-monitorozás, unit-állapotok |
+| [src/lib/library.ts](src/lib/library.ts) | ami letöltésre került: a sor születése, a seed-ablak, a megőrzés, a törlés és a tombstone |
+| [src/lib/library-view.ts](src/lib/library-view.ts) | ugyanaz olvasói szemmel: a letöltések címenkénti csoportosítása, összegzése és szövegezése — semmit nem rajzol, ezért önmagában futtatható |
 | [src/lib/scheduler.ts](src/lib/scheduler.ts) | periodikus job: sync, film-scanner, epizód-scanner, TMDB frissítő |
 | [src/lib/stall.ts](src/lib/stall.ts) | az elakadás órája (memóriában, mert egy újraindítás nem számít nála) |
 | [src/lib/blocklist.ts](src/lib/blocklist.ts) | az eldobott release-ek feketelistája — `BlockedRelease` tábla + szinkron olvasású memória-cache |
