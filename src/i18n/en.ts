@@ -39,6 +39,7 @@ export const en = {
         all: "All",
         movies: "Movies",
         series: "Series",
+        manualSearch: "Manual search",
         collection: "LIBRARY",
         watchlist: "Watchlist",
         library: "Library",
@@ -201,6 +202,38 @@ export const en = {
         nothing: "Nothing found for \"{query}\".",
         loadMore: "Load more",
         loading: "Loading..."
+    },
+
+    // the manual search page: the indexers asked by name, with the quality profile as a
+    // button rather than a rule
+    releaseSearch: {
+        title: "Manual search",
+        intro: "Your indexers asked for a name, and every release they answer with — no title matching, no quality profile deciding for you. Each row says what your profile thinks of it, and the filter button hides or shows the ones it would have refused. Your size limits do not apply here at all: those are about how much disk something may take while nobody is watching, and nothing here is unattended. Downloading a release files it under the title its own name resolves to, which is on the row before you press anything.",
+        placeholder: "A release name, or the title you are after…",
+        search: "Search",
+        prompt: "Type a name and search. This asks the indexers directly, so it takes a few seconds.",
+        searching: "Searching your indexers for \"{query}\"...",
+        found: "{n} releases",
+        capped: "showing the first {n} of {total}",
+        hidden: "{n} hidden by your quality profile",
+        showingFiltered: "{n} of these your quality profile would have refused",
+        allFiltered: "Every one of the {n} releases found was refused by your quality profile — turn the filter off to see them.",
+        nothing: "Your indexers have nothing for \"{query}\".",
+        // the two states of the one button this page is about
+        filterOn: "Quality profile on",
+        filterOff: "Quality profile off",
+        filterOnHint: "Only the releases your quality profile would accept. Click to see everything that was found.",
+        filterOffHint: "Everything the indexers answered with, refused ones included — each says why. Click to go back to your quality profile's own list.",
+        seeders: "{n} seeders, {p} peers",
+        noImage: "no img",
+        inLibrary: "already yours",
+        unknownTitle: "no telling which title this is — it cannot be downloaded from here",
+        noEpisodes: "the name says no season or episode, so this would cover none",
+        download: "Download",
+        started: "Started",
+        searchFailed: "Could not search the indexers.",
+        startFailed: "Could not start the download.",
+        expired: "This search expired, searching again..."
     },
 
     details: {
@@ -599,8 +632,8 @@ export const en = {
         searching: "Searching your indexers...",
         pickHint: "Pick a release for each line. The first one is what your quality profile would have taken.",
         haveAll: "{lines} — already downloaded in {languages}, so there is nothing left to fetch.",
-        notFound: "Not on your indexers right now. Add it to your watchlist and it will be downloaded as soon as it shows up?",
-        notFoundFiltered: "Not on your indexers right now — {n} results were filtered out by your quality profile. Add it to your watchlist and it will be downloaded as soon as it shows up?",
+        notFound: "Not on your indexers right now, and nothing has been put anywhere. If you want it fetched the moment it turns up, say so below.",
+        notFoundFiltered: "Not on your indexers right now — {n} results were filtered out by your quality profile — and nothing has been put anywhere. You can go and look at those releases yourself, or have it watched for.",
         showMore: "Show {n} more releases the profile passed over",
         hideMore: "Hide those releases",
         filtered: "{n} of these were thrown away by your quality profile — the reason is on the line.",
@@ -626,8 +659,14 @@ export const en = {
         wrongLanguage: "Nothing in {languages} for {lines}. Left alone, this would stay on your watchlist until a release in your language turns up — downloading now means watching it in another one.",
         wrongLanguageAccept: "That is fine, download it anyway.",
         watchMissing: "Nothing found for {lines}. Put it on my watchlist and download it as soon as it shows up.",
-        noThanks: "No thanks",
+        // the same question when *nothing* was found. Unticked, like every other question
+        // in this dialog: pressing Download is not a request to be put on a waiting list
+        watchNothing: "Put it on my watchlist and download it as soon as it shows up.",
         close: "Close",
+        // the way on from "nothing available": those filtered releases do exist, and the
+        // manual search page is where they can be looked at
+        manualSearch: "Manual search",
+        manualSearchFiltered: "Show the {n} filtered releases",
         addToWatchlist: "Add to watchlist",
         confirm: "Download",
         confirmMany: "Download {n} items",

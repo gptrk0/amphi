@@ -247,6 +247,68 @@ export async function searchMedia(query: string, page: number): Promise<MediaPag
     return { results: [], page, totalPages: 0 };
 }
 
+/**
+ * The one title a name is most likely to mean, asked of the typed endpoints rather than
+ * of multi search: a manual search already knows from the release name whether it is
+ * looking at a film or at episodes, and `/search/multi` would happily answer a film with
+ * the documentary series about it.
+ *
+ * The year is a filter and not a preference, so it is dropped and the search made again
+ * when it comes back empty: the year on a release name is whatever the parser could read
+ * out of it, and a wrong one must not be the reason a release cannot be downloaded.
+ */
+export async function fetchMediaByName(
+    name: string,
+    type: Media["type"],
+    year: string | null,
+    language: string
+): Promise<Media | null> {
+    const ask = async (withYear: boolean) => {
+        const res = await axios.get(`${ TMDB_BASE_URL }/search/${ type }`, {
+            params: {
+                api_key: apiKey(),
+                language,
+                include_adult: false,
+                query: name,
+                ...(withYear && year ? (type === "movie" ? { year } : { first_air_date_year: year }) : {})
+            }
+        });
+
+        return (res.data.results || [])[0] || null;
+    };
+
+    try {
+        const found = await ask(true) || (year ? await ask(false) : null);
+
+        return found ? toMedia(found, type) : null;
+
+    } catch(err) {
+        await logTmdbFailure(err);
+    }
+
+    return null;
+}
+
+/**
+ * Cached like every other read here, and keyed on the reader's language because the name
+ * and the poster that come back are what they will see. The search itself matches every
+ * language TMDB knows the title in whatever this is set to — which is the reason an
+ * `ncore` release named in Hungarian finds the same film an English scene release does.
+ */
+export async function findMediaByName(
+    name: string,
+    type: Media["type"],
+    year: string | null = null
+): Promise<Media | null> {
+    const language = await readerLanguage();
+
+    return await cached(
+        `named:${ language }:${ type }:${ name.toLowerCase() }:${ year || "" }`,
+        () => fetchMediaByName(name, type, year, language),
+        (value) => value === null
+    );
+}
+
 const CATEGORIES: Record<string, string[]> = {
     all: [ "trending" ],
     movie: [ "trending", "popular", "top_rated", "now_playing", "upcoming" ],

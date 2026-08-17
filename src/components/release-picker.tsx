@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, Loader2, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, SearchCode, TriangleAlert } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,9 @@ type Props = {
     onPick: (key: string, guid: string) => void;
     onCancel: () => void;
     onConfirm: (watchMissing: boolean) => void;
+    // the way out of "nothing found": the same words on the manual search page, with the
+    // quality profile switched off — which is where the releases it threw away are
+    onManualSearch: () => void;
 };
 
 const GB = 1024 * 1024 * 1024;
@@ -245,7 +248,7 @@ function ChoiceRow({ choice, picked, onPick, single }: {
  * the releases found for it and the quality profile's own pick preselected. What
  * could not be found at all is offered to the watchlist instead.
  */
-export function ReleasePicker({ open, name, preview, isLoading, isStarting, picks, onPick, onCancel, onConfirm }: Props) {
+export function ReleasePicker({ open, name, preview, isLoading, isStarting, picks, onPick, onCancel, onConfirm, onManualSearch }: Props) {
     const { t } = useLocale();
     const [ watchMissing, setWatchMissing ] = useState(false);
     const [ acceptOtherLanguage, setAcceptOtherLanguage ] = useState(false);
@@ -385,18 +388,61 @@ export function ReleasePicker({ open, name, preview, isLoading, isStarting, pick
                     </label>
                 </>}
 
+                {/**
+                  * Nothing was found, so watching for it is a **question and not the
+                  * obvious answer**. It used to be the primary button: somebody pressed
+                  * Download, the app said "nothing available", and the one button that
+                  * looked like OK put the title on their watchlist — an action they never
+                  * asked for, dressed as dismissing a dialog.
+                  *
+                  * Now it is the same unticked box the rest of this dialog asks its
+                  * questions with, and the button below it cannot be pressed until it is
+                  * answered. Closing the dialog leaves nothing behind anywhere.
+                  */}
+                {! isLoading && nothingFound && <>
+                    <Separator />
+
+                    <label className="flex cursor-pointer items-start gap-2 text-sm">
+                        <Checkbox
+                            checked={watchMissing}
+                            onCheckedChange={(value) => setWatchMissing(value === true)}
+                            className="mt-0.5"
+                        />
+
+                        <span>{ t("download.watchNothing") }</span>
+                    </label>
+                </>}
+
                 <DialogFooter>
+                    {/* "No thanks" used to be here, because the dialog was proposing
+                        something. It is not any more — the box above is — so this is the
+                        plain way out, and taking it leaves nothing behind. */}
                     <Button variant="outline" className="cursor-pointer" onClick={close}>
-                        { nothingFound ? t("download.noThanks") : haveItAll ? t("download.close") : t("common.cancel") }
+                        { haveItAll || nothingFound ? t("download.close") : t("common.cancel") }
                     </Button>
+
+                    {/* Offered exactly where the app has just said no: the search found
+                        nothing it would take, and this is the only way to see the releases
+                        behind that sentence. With a count when there are refused ones to
+                        look at, because then it is not a retry — they are already found. */}
+                    {nothingFound && (
+                        <Button variant="secondary" className="cursor-pointer" onClick={onManualSearch}>
+                            <SearchCode />
+                            { preview && preview.filtered > 0
+                                ? t("download.manualSearchFiltered", { n: preview.filtered })
+                                : t("download.manualSearch") }
+                        </Button>
+                    )}
 
                     {haveItAll
                         ? null
                         : nothingFound
                         ? <Button
                             className="cursor-pointer"
-                            disabled={isStarting}
-                            onClick={() => onConfirm(true)}
+                            // the box above is the answer; without it there is nothing
+                            // here to confirm, and the dialog closes empty handed
+                            disabled={isStarting || ! watchMissing}
+                            onClick={confirm}
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isStarting })} />
                             { t("download.addToWatchlist") }

@@ -390,6 +390,8 @@ Amit ebből átvettem:
 - [x] **Epizód-szintű nézet és választás** — lásd a lenti alfejezetet (2026-08-07).
 - [x] **Évad-monitorozás kézi váltása a felületen** — ugyanott; a régi, sosem hívott `PATCH /api/watchlist/:id/seasons/:n` végpont helyére a `PATCH /api/watchlist` lépett.
 - [x] **`Stop watching` vs. `Delete` szétválasztva** (2026-08-07-i kérés) — lásd a lenti alfejezetet.
+- [x] **Kézi keresés** (2026-08-17) — az indexerek név szerint, a minőségi profil gombbal kikapcsolható, méretkorlát nélkül, és az adatlap „nincs találat" ablaka innen mutatja meg a kiszűrt release-eket. Ld. a lenti „Kézi keresés: az indexerek név szerint, a profil egy gombbal" alfejezetet.
+- [x] **„Nincs találat" — a figyelőlista kérdés lett** (2026-08-17) — a dialógus elsődleges gombja nem veszi fel többé magától; ld. a lenti alfejezetet.
 
 #### „Figyelem" és „megvan a lemezen" szétválasztása (2026-08-07-i kérés) ✅
 
@@ -1960,6 +1962,80 @@ ROW   Fight Club | — | ENG | 6.0 GB | AVAILABLE
 
 A TMDB-címek valódiak (a rendszer saját cache-én át jöttek), az epizód-sorrend a lefedettség szerinti, a `9 days` pedig a háromrészes pack `3 × 3` napja — vagyis a megőrzési szabály is a csoporton belül marad soronkénti. **Amit nem néztem meg: hogy néz ki.** A nyitógomb, a behúzás és a csoportsor tördelése böngészőben nincs ellenőrizve.
 
+#### Kézi keresés: az indexerek név szerint, a profil egy gombbal (2026-08-17-i kérés) ✅ a kódban és a szerveren mérve, böngészőben nem kattintottam végig
+
+Négy kérés, egy oldal: legyen hely, ahol **név alapján** lehet torrentet keresni és célzottan letölteni; a találati lista legyen egyszerű, de legyen rajta minden fontos adat és egy kis kép; a **minőségi profil szűrése kikapcsolható** legyen egy gombbal; és ha az adatlapon nincs találat, viszont X darabot kiszűrt a profil, akkor **onnan egy gomb** vigyen át ide kitöltött keresőmezővel és eleve kikapcsolt szűrővel.
+
+Az app minden más keresése egy olyan címről szól, amit ismer: van imdb id-ja, tudja, melyik évad hiányzik, és a minőségi profil dönt arról, mit szabad elvinni. Ez a helyes viselkedés attól, ami felügyelet nélkül fut — és pont ez a rossz viselkedés akkor, amikor valaki ott áll előtte, és azt mondja: „tudom, hogy ott van, mutasd". Ezért ez az útvonal mind a hármat feladja: **a kérés szó, nem azonosító**; **semmi nincs címhez egyeztetve**, mert nincs cím, amihez; és **a profil csak címkéz, nem vesz el**.
+
+**A szűrő nézet, nem keresés.** A szerver mindkét felét elküldi — amit a profil elfogadott, és amit eldobott, mindegyiken az okával —, a gomb pedig már meglévő sorokat rejt el és mutat meg. Egy indexer-keresés tíz-húsz másodperc; az, hogy valaki meggondolja magát a szűrőről, nem kerülhet még egyet. Ezért nincs a szűrő az URL-ben sem: csak az van benne, *hogyan érkezett* valaki az oldalra (`profile=0`), onnantól a gomb a felhasználóé.
+
+**A méretkorlátok itt egyáltalán nem élnek** (2026-08-17-i döntés, a `withoutSizeLimits` a [release.ts](src/lib/release.ts)-ben). Ez az a rész a minőségi profilban, ami nem a fájlról szól, hanem az **installról**: mennyi helyet vihet el valami akkor, amikor senki nem figyeli, és mekkora alatt valószínűleg nem is a film az. Egy kézi keresésben viszont senki nem figyelmetlen — és pont a 40 GB-os remux vagy a 400 MB-os példány volt az, amit nem lehetett elhozni. Így a `too-big` és a `too-small` nem szerepelhet ezen az oldalon egyetlen soron sem, akárhogy áll a szűrő gomb. Ezzel a névből olvasott alak (`movie` / `episode` / `pack`) és a pack-mennyezet is értelmét vesztette itt: mindkettő csak a méretszabályokat szolgálta, tehát célt sem kap a `rateRelease`. A `titles` lista amúgy is üres lett volna, tehát **`mismatch` itt nem létezik** — „nem úgy tűnik, hogy ez a cím" olyan vélemény, amit nem lehet kimondani arról, amiről senki nem mondott címet.
+
+**Aminek ez az ára:** a méret-alsóhatár eddig kiszűrt egy csomó szemetet is — mintafájlt, zenei kiadást, XXX-klipet, ami csak névben egyezik. Azok most ott vannak a listában. Minden soron ott a méret, tehát látszik, hogy mi az; és a beazonosítás („NO MATCH") a legtöbbjükön eleve letöltés-gomb nélküli sort ad. Ha ez sok, a felezőút a felső korlát elhagyása és az alsó megtartása lenne — egy sor a `withoutSizeLimits`-ben.
+
+**Egy dolog mégsem látszik: aminek nincs letöltési linkje.** Az nem választás, hanem zsákutca választásnak öltözve — a `filtered` számban benne van, a listában nem. A seeder-minimum alatti release ellenben **látszik** (sárgán, „túl kevés seeder"), szemben a kiadásválasztó ablakkal, ami elrejti: ez az az egy oldal, ahol ez a döntés az emberé.
+
+**A letöltésnek cím kell, és a cím a release nevéből jön.** A library TMDB id-ra kulcsolt, egy letöltés pedig, amire semmi nem mutat, olyan torrent, amit soha senki nem fog törölni. Ezért minden release nevéből kiolvasódik, miről szól (`releaseSubject` + `parseNumbering`), és az a név megkérdeződik a TMDB **típusos** kereső végpontjától — a `search/multi` egy filmet készséggel megválaszol a róla szóló dokumentumfilm-sorozattal. Az évszám filmnél szűr, sorozatnál nem (egy sorozat release-nevén az évszám ugyanolyan gyakran az epizódé, mint a sorozaté), és ha üresre szűr, a keresés **megismétlődik évszám nélkül**: egy félreolvasott évszám nem lehet az ok, amiért egy release nem letölthető. Ugyanez a lekérés adja a **kis képet** is a soron.
+
+- **A beazonosítás a soron van, még mielőtt bármit megnyomnál** — cím, évszám, mit fed le, és link az adatlapjára. Ez az egyetlen dolog ezen az útvonalon, ami úgy tud tévedni, hogy utána semmi nem mutatja; így viszont látszik.
+- **Ami semmire nem azonosítható be, az is ott van a listában, csak letöltés gomb nélkül** (sárgán megírva, hogy miért). Egy „Archetype-Silo-16BIT-WEB-FLAC" nevű zenei kiadás pontosan ilyen — mérve, ld. lentebb.
+- **Az adatlapról érkezés átadja a címet** (`type` + `id`), de az **csak tartalék**: kizárólag azoknál a soroknál használja, amiknek a saját nevét a TMDB nem tudja hova tenni. És eldobja abban a pillanatban, amikor valaki új keresést ír be — különben a keresőmező átírása után is annak a lapnak a címe alá kerülnének a letöltések, ahonnan a keresés indult.
+
+**Hogy mit fed le egy release, azt is a neve mondja meg.** `S03E07` → azt az egyet; ami évadot nevez meg epizódszám nélkül (vagy több évadot), az pack, és minden olyan epizódot lefed, amit a TMDB abból az évadból ismer — **kivéve ami még nem ment le**, mert egy fájl nem tud olyan epizódot tartalmazni, ami nem létezik. Ami sorozatra azonosítódik be, de a nevében nincs se évad, se epizód, az **semmit nem fed le**: a letöltés akkor is a sorozat alá kerül, de nem szűnik meg tőle semmi keresése — és a sor sárgán meg is írja ezt, mielőtt valaki rákattint.
+
+**Azt nem ellenőrzi, mi van már meg.** A kereső utak azért teszik, mert még döntenek; egy kézzel kiválasztott release **maga a döntés**, és a második példány néha pont az, amit valaki akar. Amit az app megtehet: a sor kiírja, hogy „már megvan" (ugyanabban a kiadásban, ugyanennek az embernek), a napló pedig egy sorban rögzíti, mi alá került és hogy már megvolt-e.
+
+**A sorrend a profil sorrendje, aztán a seedereké.** Elöl, pontszám szerint, amit a profil elvitt volna — utána, amit eldobott, seeder szerint, mert a profil saját listáján túl az mondja meg, hogy egy release ér-e egyáltalán valamit. A lista 100 sornál elvágódik, és az oldal **kiírja**, hogy mennyiből mennyit mutat.
+
+**A keresés szerveroldalon marad**, ugyanazon TTL alatt, mint a kiadásválasztó terve (`DOWNLOAD_PLAN_TTL_MINUTES`) — a böngésző egy *sort* ad vissza, és hogy mit kell letölteni, azt a szerver keresi ki magánál. Lejárt keresésre a `POST /api/download/manual` 410-cel válaszol, az oldal pedig újrakeres, ugyanúgy, ahogy a kiadásválasztó teszi a lejárt tervvel.
+
+**Két dolog egyszerűbb lett közben.** Az `executeMovieGrab` minden letöltés közös alja lett `executeGrab` néven (cím, típus, release, lefedett epizódok) — a film ennek egy sora `episodes: []`-tel, a kézi választás ugyanaz a hívás a névből kiolvasott epizódokkal. A `announceStarted` pedig kikerült a `POST /api/download` route-jából a [lib/announce.ts](src/lib/announce.ts)-be: egy letöltés, amit az egyik úton bejelent az app, a másikon meg nem, olyan Telegram-csatorna és olyan napló, amit nem lehet olvasni.
+
+**Élő ellenőrzés** (a konténerben, `tsc --noEmit` és `next lint` tiszta, letöltés **nem** indult):
+
+```
+searching for "silo" as Patrick, languages hun
+total 55, filtered 14, shown 55
+[ok] Silo.S03E07.1080p.WEB.H264-CAKES | eng 1080p h264 4.2GB 956s ncore | tv 125988 Silo (2023) covers 1 held=false poster=true
+[ok] Silo.S02.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-NTb | eng 1080p h264 38.5GB 1s majomparade | tv 125988 Silo (2023) covers 10 held=false poster=true
+[resolution] Silo.S02E04.480p.ATVP.WEB-DL.AAC2.0.H264-B9R | eng 480p h264 0.7GB 2s majomparade | tv 125988 Silo (2023) covers 1
+[seeders] Silo.S02E10.Into.the.Fire.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb | eng 1080p h264 4.5GB 0s majomparade | tv 125988 Silo (2023) covers 1
+reasons on screen: {"ok":41,"resolution":1,"seeders":13}
+```
+
+**A méretszabályok elhagyása külön is le van mérve**, a korábbi ítélettel összevetve (profil érintetlen, alak a névből, pack-mennyezet). A `silo` keresésen **egyetlen** sor ítélete változott: egy `Archetype-Silo-…-FLAC` nevű zenei kiadás, ami eddig `too-small` volt, most `[ok]` — letöltés-gomb nélkül, mert semmilyen címre nem azonosítható be. A `dune` keresésen **15 sor** változott, és pontosan a két irányba:
+
+```
+15 rows judged differently than before the change:
+  204.12GB  now [ok]  Dune.Prophecy.S01.2024.2160p.UHD.BluRay.REMUX.TrueHD.Atmos.7.1.HDR10 | Dune: Prophecy
+  201.24GB  now [ok]  Dune.Prophecy.S01.2160p.UHD.BluRay.HYBRID.REMUX.TrueHD.Atmos.7.1.DoV | Dune: Prophecy
+   56.64GB  now [ok]  Dune.Prophecy.S01.2160p.MAX.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265.HUN.ENG | Dune: Prophecy
+    0.41GB  now [ok]  MetArtX.25.11.01.Shelena.Shelenas.Dune.2.XXX.1080p.MP4-DRNC | NO MATCH
+    0.00GB  now [ok]  Frank Herbert - Frank Herbert's Dune Saga Collection | NO MATCH
+    0.11GB  now [ok]  Dune-Cant_Stop_Raving-(577_365-2)-CDM-FLAC-1995-WRE | NO MATCH
+```
+
+Felül a három UHD remux évadpack, amit eddig az epizódonkénti 5 GB-os mennyezet dobott el — ezek a kérés tárgya. Alul, amit az alsó határ nélkül beengedünk: ebook, zenei kiadás, XXX-klip, mind `NO MATCH`, tehát letöltés-gomb nélküli sor. A `dune` keresés a nyelvi sorrendet is megmutatja: a `hun/eng`-gel jelölt release-ek állnak elöl — a nyelv előbbre való a felbontásnál ezen a fiókon —, a `Dune.Prophecy.S01` pack `covers 6`, az epizódos sorok `covers 1`. A név-olvasás nyolc valódi release-néven külön is ki van próbálva: `Ted Lasso S01 …` → pack, `[1]`; `Foundation.S01-S02.COMPLETE` → pack, `[1,2]`; `Show.Name.2024.S02E01E02` → episode, `[1,2]`; `Severance 2x03` → episode; `A.baranyok.hallgatnak.1991.HUN…` → movie, 1991; név nélküli szemét → movie, évszám nélkül.
+
+A felület szerver oldala is mérve: `/releases?q=silo&profile=0` egy eldobható munkamenettel **200**, magyarul, a szűrő gombján „Minőségi profil ki" — vagyis az adatlapról érkezés állapota az URL-ből helyesen áll fel. A `GET /api/search/releases?q=silo&type=tv&id=125988` a route-on át ugyanazt a DTO-t adja (`total 55`, `filtered 15`, `searchId`, soronként `match`, `poster`, `episodeKeys`). Az eldobható munkamenet utána törölve.
+
+**Amit nem néztem meg:** hogy néz ki és hogyan kattintható. A böngészőben egyetlen letöltés sem indult el innen — az valódi torrentet tenne a kliensbe, és ez az egy dolog, amit egy ellenőrzés nem tehet meg helyetted.
+
+#### „Nincs találat" — a figyelőlista kérdés lett, nem javaslat (2026-08-17-i kérés) ✅ a kódban
+
+A kérés: ha a letöltés gombra nyomva nincs találat, ne kerüljön automatikusan a figyelőlistára, hanem kérdezze meg.
+
+**Ami valóban történt eddig** — mert az „automatikusan" félig volt igaz, és a másik fele a rosszabb: a szerver **soha nem** írt semmit ilyenkor. A `POST /api/download/preview` keres és emlékezik, de nem ír (lemérve: a figyelőlista sorainak száma előtte és utána ugyanannyi), és `choices: []`-nél a felület a `POST /api/download`-ot meg sem hívja. Amit a dialógus tett: a „nincs találat" állapotban az **elsődleges gombja** `Figyelőlistára` volt, ami azonnal fel is vette — vagyis az a gomb, ami minden más dialógusban az „OK", itt egy olyan műveletet végzett el, amit senki nem kért. Aki reflexből lezárta az ablakot, annak felkerült a cím a listájára. Ez az „automatikus".
+
+**Mostantól ugyanaz a bepipálandó kérdés, amivel ez a dialógus a többi döntését is felteszi** (a duplikátum és az idegen nyelv mintája): egy alapból **üres** jelölőnégyzet — „Vedd fel a figyelőlistámra, és töltsd le, amint megjelenik" —, és a `Figyelőlistára` gomb **addig nem nyomható**, amíg be nem jelölik. Az ablak bezárása így garantáltan nem hagy hátra semmit, se a felületen, se a DB-ben.
+
+- A kilépő gomb `Kösz, nem`-ből `Bezárás` lett, és a `download.noThanks` kulcs kikerült mindkét szótárból: „nem, kösz" egy javaslatra adott válasz, ez viszont már nem javaslat, hanem az út ki.
+- A leírás szövege is ezt követi mindkét nyelven: eddig azt kérdezte, hogy „felvegyük?", most azt állítja, hogy **semmi nem került fel sehova**, és lentebb meg lehet kérni rá. A kiszűrt találatok száma ugyanott marad, mert az a mondat másik fele: azok a release-ek megvannak, csak a profil nem kérte őket — ld. az előző alfejezet „Kézi keresés" gombját.
+- A részben talált eset (van, ami meglett, és van, ami nem) érintetlen: annak eddig is jelölőnégyzete volt, alapból kikapcsolva.
+
+**Élő ellenőrzés:** `tsc --noEmit` és `next lint` tiszta. A „nincs találat" alak valódi adaton előállítva — egy olyan filmre, amit a scanner nyolc kör alatt sem talált meg: `{"found":true,"choices":0,"missingMovie":true,"filtered":1}`, és **a figyelőlista 2 sora 2 maradt**, tehát a keresés önmagában továbbra sem ír semmit. **Amit nem néztem meg:** böngészőben nem kattintottam rá — hogy a pipa nélkül a gomb tényleg halott-e, azt a típusok és a kód mondják, nem egy kattintás.
+
 ---
 
 ## 5. Javasolt sorrend
@@ -2077,6 +2153,10 @@ docker compose -p amphi-prodtest -f docker-compose.yml -f <(echo 'services: {amp
 | [src/context/watchlist.tsx](src/context/watchlist.tsx) | kliens oldali watchlist állapot (slim lista + add/remove/destroy) |
 | [src/context/download.tsx](src/context/download.tsx) | a kiadásválasztó ablak állapota, minden letöltés ezen megy keresztül |
 | [src/lib/download-plan.ts](src/lib/download-plan.ts) | a keresés eredménye szerveroldalon tárolva, a választott kiadások alkalmazása |
+| [src/lib/release-search.ts](src/lib/release-search.ts) | a kézi keresés: név szerinti indexer-keresés, a release nevéből beazonosított cím és lefedett epizódok, a profil verdiktje címkeként — és a kiválasztott release elindítása |
+| [src/types/release-search.ts](src/types/release-search.ts) | amit a kézi keresés egy soráról tudni lehet: a torrent adatai, a beazonosított cím a poszterével, és hogy a profil miért dobta volna el |
+| [src/components/release-search.tsx](src/components/release-search.tsx) | a kézi keresés oldala: keresőmező, a szűrő gomb, és a sorok kis képpel — a szűrő már meglévő sorokat rejt el, nem keres újra |
+| [src/lib/announce.ts](src/lib/announce.ts) | egy kézzel indított letöltés naplósora és értesítése, a két kézi útvonalnak egy helyen |
 | [src/components/searchbar.tsx](src/components/searchbar.tsx) | debounce-olt keresősáv, `/search?q=…` navigációval |
 | [src/app/search/page.tsx](src/app/search/page.tsx) | keresési találatok `MediaCard` griddel + lapozás |
 | [src/lib/sections.ts](src/lib/sections.ts) | a discover nézetek sorainak összeállítása + sorok közötti dedup + hero választás |
@@ -2097,6 +2177,7 @@ docker compose -p amphi-prodtest -f docker-compose.yml -f <(echo 'services: {amp
 | `GET /api/discover/sections?view` | a főoldal / `/movies` / `/series` kész sorai, sorok között dedupálva, hero-val |
 | `GET /api/genres?type` | TMDB genre lista (`movie` / `tv`) |
 | `GET /api/search?q&page` | TMDB multi-search, `person` nélkül, lapozható |
+| `GET /api/search/releases?q&type&id` | kézi keresés: az indexerek név szerint, minden találat a profil verdiktjével (`rejection`) és a release nevéből beazonosított címmel; `type`+`id` csak tartalék a be nem azonosítható sorokhoz |
 | `GET /api/watchlist` | dúsított lista (TMDB metaadattal) |
 | `GET /api/watchlist?slim=1` | csak azonosítók + állapot, TMDB-hívás nélkül |
 | `POST /api/watchlist` | `{ tmdbId, type, seasons? }` — `seasons` esetén csak azokat monitorozza |
@@ -2104,6 +2185,7 @@ docker compose -p amphi-prodtest -f docker-compose.yml -f <(echo 'services: {amp
 | `PATCH /api/watchlist` | `{ tmdbId, type, monitored, seasonNumber?, episodes? }` — évad vagy egyes epizódok be/ki; felveszi a sort, ha kell, és törli, ha kiürül (`result: null`) |
 | `POST /api/download/preview` | `{ type, id, seasons? }` — keres, de nem tölt: soronként a választható kiadások + `planId` |
 | `POST /api/download` | `{ planId, picks }` a kiadásválasztó ablakból, vagy `{ type, id, seasons? }` a profil saját döntésével → `{ started, missing / missingMovie }` |
+| `POST /api/download/manual` | `{ searchId, guid }` a kézi keresés egy soráról — a profilt nem kérdezi meg újra; lejárt kereséssel 410, be nem azonosított címnél 400 |
 | `POST /api/scan` | egy scanner-kör kézi indítása; `{ force: true }` esetén a backoffot hagyja figyelmen kívül (a megjelenési dátumokat **nem**) |
 | `GET /api/settings` | a beállítások csoportokkal, érvényes értékkel, forrással (`database` / `default` / `unset`), a defaultjával és — pipálható listánál — a választható értékekkel; **a titok értéke is visszajön** (2026-08-10 óta, ld. „Nyolc apróság") |
 | `PUT /api/settings` | `{ values: { KEY: "..." } }` — csak a változott kulcsokat kell küldeni. Üres érték: **listánál eltárolva** (a szabály kikapcsolva), másnál a sor törlése (titoknál is); szám típusra a nem-szám 400 |

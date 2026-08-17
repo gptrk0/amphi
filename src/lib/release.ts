@@ -161,6 +161,26 @@ const releaseTitleOf = (title: string, parsed: { title?: string }) => {
     return (parsed.title || title).replace(SEASON_SUFFIX, "");
 };
 
+export type ReleaseSubject = { name: string, year: string | null };
+
+/**
+ * What a release name claims to be about, in the two words a catalogue can be searched
+ * with: the title with the release noise and any trailing season marker taken off, and
+ * the year if the name carries one.
+ *
+ * The same reading `matchesTarget` does below, made available on its own — there it
+ * answers "is this the title we asked for", and a manual search has no title to ask
+ * about and has to work out what it is looking at from the name alone.
+ */
+export const releaseSubject = (title: string): ReleaseSubject => {
+    const parsed = PTT.parse(title) as { title?: string, year?: number };
+
+    return {
+        name: releaseTitleOf(title, parsed),
+        year: parsed.year ? String(parsed.year) : null
+    };
+};
+
 /**
  * The release name has to be about the requested title, not merely contain it —
  * "The Odyssey The Making Of An Epic" is a different film.
@@ -520,9 +540,29 @@ export const rateRelease = (release: IndexerResult, profile: QualityProfile, tar
     return { release, resolution, score: score(release, resolution, profile, language.rank) };
 };
 
-const isScored = (value: ScoredRelease | RejectedRelease): value is ScoredRelease => {
+export const isScored = (value: ScoredRelease | RejectedRelease): value is ScoredRelease => {
     return (value as ScoredRelease).score !== undefined;
 };
+
+/**
+ * The same profile with every size rule taken out of it: no ceiling, no floor, and so no
+ * pack allowance to work out either. What is left is what a release *is* — its resolution,
+ * its language, the keywords in its name, whether it was tried once and dropped.
+ *
+ * Only the manual search judges with this, and it is the difference between the two kinds
+ * of rule in a quality profile. A resolution nobody wants is a statement about the file. A
+ * size limit is a statement about the **install**: how much disk something may take when
+ * nobody is watching, and how small a file may be before it is probably not the film. There
+ * is nothing unattended about somebody typing a name and reading a list, and the 40GB remux
+ * or the 400MB copy they went looking for on purpose was exactly what they could not have.
+ */
+export const withoutSizeLimits = (profile: QualityProfile): QualityProfile => ({
+    ...profile,
+    maxSizeGb: 0,
+    maxPackSizeGb: 0,
+    minSizeMovie: {},
+    minSizeEpisode: {}
+});
 
 export const selectRelease = (
     releases: IndexerResult[],

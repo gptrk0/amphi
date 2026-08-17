@@ -19,6 +19,8 @@ import { LibraryAudience } from "@/lib/audience";
 import { logInfo, logWarn } from "@/lib/log";
 import { RejectionCode } from "@/types/download";
 import {
+    coverText,
+    episodeKey,
     GrabbedEpisode,
     heldEpisodes,
     libraryTag,
@@ -358,12 +360,20 @@ export const planSeasonGrab = async (
 };
 
 /**
- * A film is one download and nothing else: the moment it starts there is nothing
- * left to watch for, so it goes straight into the library and off the watchlist.
+ * One release into the client and one row in the library, which is what every download
+ * here comes down to. `episodes` is what this release carries — empty for a film — and
+ * the only difference between the callers is who worked that out: a plan built from a
+ * season search, or a person who picked a release off a manual search.
+ *
+ * Nothing is checked against what is already held. The callers that search do that while
+ * they are still deciding what to grab; a release somebody picked by hand is the decision
+ * itself, and a second copy is a thing they may knowingly want.
  */
-export const executeMovieGrab = async (
+export const executeGrab = async (
     tmdbId: number,
+    type: ContentType,
     release: IndexerResult,
+    episodes: GrabbedEpisode[],
     context: GrabContext,
     // null when the scanner did it: then the people it belongs to are the ones whose
     // units it carries off
@@ -371,9 +381,9 @@ export const executeMovieGrab = async (
 ): Promise<StartedDownload | null> => {
     const item = await moveToLibrary({
         tmdbId,
-        type: ContentType.MOVIE,
+        type,
         releaseTitle: release.title,
-        episodes: [],
+        episodes,
         // read off the release rather than taken from the search: unattended the two
         // are the same, but a person who accepted an English file at the dialog has an
         // English row, and their Hungarian search is not ended by it for anybody else
@@ -382,7 +392,7 @@ export const executeMovieGrab = async (
         requestedBy
     });
 
-    const added = await addRelease(release, await libraryTag(item.id), moviePath());
+    const added = await addRelease(release, await libraryTag(item.id), type === ContentType.TV ? tvPath() : moviePath());
     const hash = await ownHash(item, added, release.title);
 
     if (! hash) {
@@ -394,13 +404,26 @@ export const executeMovieGrab = async (
     await setTorrentHash(item.id, hash);
 
     return {
-        label: "movie",
+        label: episodes.length > 0 ? coverText(episodes.map(episodeKey)) : "movie",
         title: release.title,
         hash,
-        episodeNumbers: [],
+        episodeNumbers: episodes.map(episode => episode.episodeNumber),
         libraryId: item.id,
         watchedBy: item.watchedBy
     };
+};
+
+/**
+ * A film is one download and nothing else: the moment it starts there is nothing
+ * left to watch for, so it goes straight into the library and off the watchlist.
+ */
+export const executeMovieGrab = async (
+    tmdbId: number,
+    release: IndexerResult,
+    context: GrabContext,
+    requestedBy: number | null = null
+): Promise<StartedDownload | null> => {
+    return await executeGrab(tmdbId, ContentType.MOVIE, release, [], context, requestedBy);
 };
 
 /**

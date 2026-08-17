@@ -53,6 +53,12 @@ const menus: {
             {
                 title: "nav.series",
                 url: "/series"
+            },
+            // last, and under discover rather than beside the library: it is a way of
+            // finding something, and the one that goes past the app's own judgement
+            {
+                title: "nav.manualSearch",
+                url: "/releases"
             }
         ]
     },

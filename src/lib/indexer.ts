@@ -48,6 +48,16 @@ export type MovieQuery = {
     year?: string | null;
 };
 
+/**
+ * The one search this app makes that is not about a title it already knows: the words
+ * somebody typed, handed to every indexer's plain `search` mode. No imdb id to be exact
+ * with, no season or episode to narrow it down, and nothing on the way back is matched
+ * against a title — whoever typed it is the one who decides what they were looking for.
+ */
+export type NameQuery = {
+    query: string;
+};
+
 export type EpisodeQuery = {
     imdbId?: string | null;
     title: string;
@@ -443,6 +453,30 @@ const findSeasonReleasesOn = async (indexerId: string, query: SeasonQuery): Prom
     }
 
     return parseItems(indexerId, res.data);
+};
+
+/**
+ * `t=search` and nothing else. Capabilities are not consulted: every torznab indexer
+ * answers the plain search mode, and there is no id here that a mode could be chosen
+ * for — an indexer that does not take the free text simply comes back empty, and the
+ * others still answer.
+ */
+const findReleasesByNameOn = async (indexerId: string, query: NameQuery): Promise<IndexerResult[]> => {
+    const res = await request(indexerId, { t: "search", q: query.query });
+
+    if (res.error) {
+        await logFailure(indexerId, "text search", res.error.description);
+
+        return [];
+    }
+
+    return parseItems(indexerId, res.data);
+};
+
+export const findReleasesByName = async (query: NameQuery): Promise<IndexerResult[]> => {
+    const results = await Promise.all((await searchIndexerIds()).map(id => findReleasesByNameOn(id, query)));
+
+    return dedupe(results.flat());
 };
 
 export const findMovieReleases = async (query: MovieQuery): Promise<IndexerResult[]> => {

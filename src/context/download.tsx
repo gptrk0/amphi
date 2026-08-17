@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import axios from "axios";
 import { toast } from "sonner";
 
@@ -38,6 +39,7 @@ export const useDownload = () => useContext(DownloadContext);
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
     const { add, refresh } = useWatchlist();
     const { t } = useLocale();
+    const router = useRouter();
 
     const [ target, setTarget ] = useState<DownloadTarget | null>(null);
     const [ preview, setPreview ] = useState<DownloadPreview | null>(null);
@@ -210,6 +212,34 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         }
     }, [ target, preview, picks, refresh, search, watchTheRest, t ]);
 
+    /**
+     * Out of the dialog and onto the manual search, with the title's name in the box and
+     * the quality profile switched off.
+     *
+     * The dialog it leaves has just said "nothing available", usually with a count of what
+     * the profile threw away — and that count is the whole reason to go: those releases
+     * exist, they were found, and this is the page that lists them. The title is handed
+     * over as well, so a release whose name TMDB cannot place still has somewhere to be
+     * filed if it is downloaded from there.
+     */
+    const manualSearch = useCallback(() => {
+        if (! target) {
+            return;
+        }
+
+        const params = new URLSearchParams({
+            q: target.name,
+            profile: "0",
+            type: target.type,
+            id: String(target.tmdbId)
+        });
+
+        setTarget(null);
+        setPreview(null);
+
+        router.push(`/releases?${ params.toString() }`);
+    }, [ target, router ]);
+
     // the dialog's own state lives here, so without this every keystroke of a search
     // in progress would re-render the page behind it
     const value = useMemo(() => ({ startDownload }), [ startDownload ]);
@@ -237,6 +267,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
                 onPick={(key, guid) => setPicks(prev => ({ ...prev, [key]: guid }))}
                 onCancel={() => { setTarget(null); setPreview(null); }}
                 onConfirm={confirm}
+                onManualSearch={manualSearch}
             />
         </DownloadContext.Provider>
     );
