@@ -4,7 +4,9 @@ import { errorText } from "@/lib/log";
 import { settingFlag } from "@/lib/settings";
 
 /**
- * A notification to a URL somebody pasted in.
+ * A notification to a URL somebody pasted in. **Both channels are this now** — the
+ * install's own (`NOTIFY_WEBHOOK_URL`) and each person's (`User.webhookUrl`) — because the
+ * question they answer is the same one, and it is not "which service".
  *
  * **One field, two shapes.** Telegram's `sendMessage` is a GET with the text in the
  * query string; a Discord webhook is a POST with the text in a JSON body. Rather than
@@ -29,9 +31,16 @@ export type WebhookFields = {
     title: string;
     detail: string;
     event: string;
+    /**
+     * Whose download it was, or who did the thing. Only the install channel is ever given
+     * one — the person it names could be anybody in the house — and it is already part of
+     * `message`, so a URL only needs the placeholder to keep it in a field of its own.
+     * Empty for a person's own webhook, where the only name it could carry is the reader's.
+     */
+    who: string;
 };
 
-export const PLACEHOLDERS = [ "message", "title", "detail", "event" ] as const;
+export const PLACEHOLDERS = [ "message", "title", "detail", "event", "who" ] as const;
 
 const hasPlaceholder = (url: string) => PLACEHOLDERS.some(name => url.includes(`{${ name }}`));
 

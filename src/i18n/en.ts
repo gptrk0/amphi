@@ -342,8 +342,6 @@ export const en = {
         nameHint: "What the log and the watchlist call you. It cannot be empty.",
         webhook: "Your webhook",
         webhookOff: "off",
-        test: "Test",
-        exampleTitle: "Use this as a starting point",
         webhookHint: "A URL the app calls when something of yours happens — never anybody else's downloads. Put {message} in it and it is fetched with the text filled in; leave it without one and it is posted to as JSON (content), which is what a Discord webhook wants. {title}, {detail} and {event} are the other placeholders. Empty turns it off.",
         events: "What to send you",
         eventsHint: "Only ever about your own downloads. Nothing ticked sends nothing, and so does an empty webhook above.",
@@ -360,9 +358,17 @@ export const en = {
         pickLanguage: "pick a language",
         saved: "Saved.",
         saveFailed: "Could not save that.",
-        webhookFailed: "The webhook could not be called.",
         providerOnly: "This account signs in through the identity provider and has no password here. An administrator can give it one.",
         providerOnlyTheirs: "This account signs in through the identity provider and has no password here. \"Set a password\" in the users list gives it one."
+    },
+
+    // both webhook fields — the install's under Settings / Notifications and each person's
+    // on their account page — so the same button never ends up worded two ways
+    webhook: {
+        test: "Test",
+        testTitle: "Send one message now, to the address in the field as it stands",
+        exampleTitle: "Use this as a starting point",
+        failed: "The webhook could not be called."
     },
 
     watchlistToast: {
@@ -549,7 +555,11 @@ export const en = {
         offListFailed: "Could not take {name} off the watchlist.",
         languageSet: "{name} will be looked for in {language}.",
         languageAuto: "{name} follows your account again — {languages}.",
-        languageFailed: "Could not change the language of {name}."
+        languageFailed: "Could not change the language of {name}.",
+        ownerTooltip: "Whose want this is. Hand the row over and everything still to be found on it goes with it — and it is looked for in whatever the new owner's account asks for.",
+        ownerSet: "{name} is on {user}'s watchlist now.",
+        ownerTaken: "{user} already has {name} on their watchlist, and two lists cannot be merged into one.",
+        ownerFailed: "Could not hand {name} over."
     },
 
     libraryPage: {
@@ -610,6 +620,13 @@ export const en = {
         deleteNote: "The torrent and its files are both removed from qBittorrent, and it will not be downloaded again. This cannot be undone.",
         markConfirm: "Mark it for deletion",
         deleteConfirm: "Delete it with its files",
+        watchersNobody: "nobody",
+        watchersTooltip: "Who asked for this — click to change it. They are the ones told about it, and the ones whose watchlist it goes back on if the download fails.",
+        watchersTooltipNobody: "Nobody is down as having asked for this, so nobody is told about it and it goes back on no watchlist if it fails. Click to say who it was for.",
+        watchersQuestion: "Who asked for {name}?",
+        watchersNote: "They are told when it lands or goes, it goes back on their watchlist if the download fails, and it shows on their home page. The app fills this in from who was waiting for it at the time, and a download started by hand is credited to whoever pressed the button — so put right whatever that missed.",
+        watchersToast: "{name} was asked for by {users}.",
+        watchersNoneToast: "{name} is nobody's request now.",
         keepDaysValue: "{n} days",
         keepTooltip: "How long it stays after it finished. Left alone this one is {n} days — click to change it.",
         keepQuestion: "How long should {name} be kept?",

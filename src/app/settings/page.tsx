@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Copy, Loader2, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Copy, Loader2, RefreshCw, RotateCcw, Save, Send, Trash2 } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { OptionSelect } from "@/components/option-select";
 import { TagInput } from "@/components/tag-input";
+import { WebhookExamples } from "@/components/webhook-examples";
 import { AdminOnly } from "@/components/admin-only";
 import { useLocale } from "@/context/locale";
 import { MessageKey } from "@/i18n";
@@ -80,6 +81,7 @@ function SettingsPage() {
     const [ values, setValues ] = useState<Record<string, string>>({});
     const [ isSaving, setSaving ] = useState(false);
     const [ isSyncing, setSyncing ] = useState(false);
+    const [ isTesting, setTesting ] = useState(false);
     const [ tab, setTab ] = useState("");
 
     const load = (data: { settings: SettingItem[], oidc?: OidcInfo }) => {
@@ -170,6 +172,27 @@ function SettingsPage() {
         } catch(err) {
             console.error(err);
             toast(t("settingsPage.clearFailed"));
+        }
+    };
+
+    /**
+     * The install's webhook, called once, now — with the field as it is on screen, so a typo
+     * shows up before it is saved rather than by nothing arriving weeks later. The same
+     * button the account page has for a person's own.
+     */
+    const testWebhook = async () => {
+        setTesting(true);
+
+        try {
+            const res = await axios.post("/api/settings/notify/test", { url: values["NOTIFY_WEBHOOK_URL"] ?? "" });
+
+            toast(res.data.message);
+
+        } catch(err) {
+            toast(axios.isAxiosError(err) && err.response?.data?.message || t("webhook.failed"));
+
+        } finally {
+            setTesting(false);
         }
     };
 
@@ -382,8 +405,25 @@ function SettingsPage() {
                                         <code className="text-[11px] text-muted-foreground">{ item.key }</code>
                                     </div>
 
+                                    <div className="min-w-0 space-y-2">
                                     <div className="flex items-start gap-2">
                                         <div className="min-w-0 flex-1">{ field(item) }</div>
+
+                                        {/* the same button the account page has for a
+                                            person's own webhook, and it sends what is in
+                                            the field rather than what is saved */}
+                                        {item.key === "NOTIFY_WEBHOOK_URL" && <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="shrink-0 cursor-pointer"
+                                            disabled={isTesting || ! (values[item.key] ?? "").trim()}
+                                            title={t("webhook.testTitle")}
+                                            onClick={testWebhook}
+                                        >
+                                            <Loader2 className={classNames("animate-spin", { "hidden": ! isTesting })} />
+                                            <Send className={classNames({ "hidden": isTesting })} />
+                                            { t("webhook.test") }
+                                        </Button>}
 
                                         {item.key === "INDEXER_IDS" && <Button
                                             variant="outline"
@@ -410,6 +450,13 @@ function SettingsPage() {
                                         >
                                             { item.hasDefault ? <RotateCcw /> : <Trash2 className="text-destructive" /> }
                                         </Button>}
+                                    </div>
+
+                                    {item.key === "NOTIFY_WEBHOOK_URL" && (
+                                        <WebhookExamples
+                                            onPick={(url) => setValues(prev => ({ ...prev, [item.key]: url }))}
+                                        />
+                                    )}
                                     </div>
                                 </div>
                             ))}

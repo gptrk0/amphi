@@ -10,16 +10,18 @@ import {
     MAX_KEEP_DAYS,
     minKeepDays,
     requestDelete,
-    setKeepDays
+    setKeepDays,
+    setWatchedBy
 } from "@/lib/library";
 import { notify, notifyUsers } from "@/lib/notify";
+import { usersByIds } from "@/lib/users";
 
 type Params = { params: Promise<{ id: string }> };
 
 /**
- * Two decisions about one download: how long it is kept, and whether it is to be deleted
- * when the seed time is up. The second one is what the delete button becomes while the
- * seed time is still running — the row goes by itself the moment it is up.
+ * Three decisions about one download: who it was for, how long it is kept, and whether it
+ * is to be deleted when the seed time is up. The last one is what the delete button becomes
+ * while the seed time is still running — the row goes by itself the moment it is up.
  */
 export async function PATCH(req: Request, { params }: Params) {
     const refusal = await refuseUnlessAdmin();
@@ -45,6 +47,39 @@ export async function PATCH(req: Request, { params }: Params) {
         const body = await req.json();
         const who = await currentUser();
         const label = await libraryLabel(item);
+
+        // who asked for it. The whole list arrives every time rather than one name at a
+        // time: it is a set somebody looked at and corrected, and "add Anna" cannot say
+        // that Béla was never in it
+        if (body?.watchedBy !== undefined) {
+            if (! Array.isArray(body.watchedBy)) {
+                return Response.json({ success: false, message: 'watchedBy has to be a list of user ids.' }, { status: 400 });
+            }
+
+            const wanted = [ ...new Set((body.watchedBy as unknown[]).map(Number)) ];
+
+            if (wanted.some(id => ! Number.isInteger(id) || id <= 0)) {
+                return Response.json({ success: false, message: 'watchedBy has to be a list of user ids.' }, { status: 400 });
+            }
+
+            // an id that names nobody would be a person this download can never be
+            // attributed to and never notify, so it is refused rather than stored
+            const users = await usersByIds(wanted);
+
+            if (users.length !== wanted.length) {
+                return Response.json({ success: false, message: 'One of those accounts does not exist.' }, { status: 400 });
+            }
+
+            const result = await setWatchedBy(itemId, wanted);
+
+            await logInfo(
+                "library",
+                `wanted by ${ users.map(user => user.name).join(", ") || "nobody" }: ${ label }`,
+                withActor("they are the ones told about it, and the ones it goes back to if it fails", who)
+            );
+
+            return Response.json({ success: true, result });
+        }
 
         // how long it stays. `null` hands it back to the default for its shape; anything
         // else has to be inside the range the library offers — the api is the guard, not

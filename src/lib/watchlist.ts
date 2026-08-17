@@ -791,6 +791,45 @@ export const setRequestedLanguage = async (id: number, language: string) => {
 };
 
 /**
+ * Whose want this row is.
+ *
+ * One watchlist per person means the owner is not a label on the row — it *is* the row, so
+ * this hands the whole thing over: its units, its history and its language go with it, and
+ * the person it left has nothing of it any more. Which is what makes it an administrator's
+ * only, and why the caller has to have checked first that the row is not already on the
+ * other person's list: `userId + tmdbId + type` is unique, and two rows for the same title
+ * cannot be one.
+ *
+ * **The search may start over.** What a row is looked for in is the owner's account rule
+ * unless the row named a language of its own — so a handover can change what is being
+ * searched for without touching the row's own answer. When it does, the ladder is reset for
+ * the same reason `setRequestedLanguage` resets it: the two days of failure behind the
+ * current backoff were spent on a question nobody is asking any more. When it does not,
+ * the backoff is left where it is; nothing about the search changed.
+ */
+export const setOwner = async (id: number, userId: number) => {
+    const item = await prisma.watchlist.findUnique({ where: { id } });
+
+    if (! item || item.userId === userId) {
+        return await getWatchlistItemWithMedia(id);
+    }
+
+    const before = searchLanguages(await languageProfileOf(item.userId), item.language);
+    const after = searchLanguages(await languageProfileOf(userId), item.language);
+
+    await prisma.watchlist.update({ where: { id }, data: { userId } });
+
+    if (before.join(",") !== after.join(",")) {
+        await prisma.watchlistUnit.updateMany({
+            where: { watchlistId: id },
+            data: { searchAttempts: 0, lastCheckedAt: null, searchingSince: null }
+        });
+    }
+
+    return await getWatchlistItemWithMedia(id);
+};
+
+/**
  * Stop watching: the watchlist is only what is still to be found, so nothing is
  * left to keep the row for. What was already downloaded is a library row and is
  * untouched by this — the torrent client is not asked anything either.

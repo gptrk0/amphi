@@ -332,8 +332,6 @@ export const hu: Messages = {
         nameHint: "Ezen a néven szólít a napló és a figyelőlista. Nem lehet üres.",
         webhook: "A webhookod",
         webhookOff: "ki",
-        test: "Teszt",
-        exampleTitle: "Használd ezt kiindulásnak",
         webhookHint: "Egy URL, amit az app meghív, ha valami a tiéddel történik — soha nem mások letöltéseivel. Ha van benne {message}, akkor a behelyettesített szöveggel hívja meg; ha nincs, akkor JSON-t POST-ol rá (content), amit egy Discord webhook vár. A többi behelyettesíthető: {title}, {detail}, {event}. Üresen kikapcsol.",
         events: "Miről szóljunk",
         eventsHint: "Kizárólag a saját letöltéseidről. Ha semmi nincs bepipálva, nem küld semmit — és ugyanez igaz üres webhook esetén.",
@@ -350,9 +348,17 @@ export const hu: Messages = {
         pickLanguage: "válassz nyelvet",
         saved: "Mentve.",
         saveFailed: "Ezt nem sikerült elmenteni.",
-        webhookFailed: "A webhookot nem sikerült meghívni.",
         providerOnly: "Ez a fiók az identitásszolgáltatón keresztül lép be, és nincs itt jelszava. Egy adminisztrátor tud neki adni.",
         providerOnlyTheirs: "Ez a fiók az identitásszolgáltatón keresztül lép be, és nincs itt jelszava. A felhasználók listájában a „Jelszó beállítása” ad neki egyet."
+    },
+
+    // mindkét webhook mezőhöz — a telepítésé a Beállítások / Értesítések alatt, mindenki
+    // sajátja a fiókja oldalán —, hogy ugyanaz a gomb ne kapjon kétféle szöveget
+    webhook: {
+        test: "Teszt",
+        testTitle: "Egy üzenet küldése most, arra a címre, ami épp a mezőben van",
+        exampleTitle: "Használd ezt kiindulásnak",
+        failed: "A webhookot nem sikerült meghívni."
     },
 
     watchlistToast: {
@@ -538,7 +544,11 @@ export const hu: Messages = {
         offListFailed: "Nem sikerült levenni a figyelőlistáról: {name}.",
         languageSet: "{name} keresése ezen a nyelven fog menni: {language}.",
         languageAuto: "{name} újra a fiókodat követi — {languages}.",
-        languageFailed: "Nem sikerült nyelvet váltani ehhez: {name}."
+        languageFailed: "Nem sikerült nyelvet váltani ehhez: {name}.",
+        ownerTooltip: "Kinek kell. Ha átadod a sort, minden vele megy, ami még hiányzik belőle — és onnantól azon a nyelven keressük, amit az új tulajdonos fiókja kér.",
+        ownerSet: "{name} mostantól {user} figyelőlistáján van.",
+        ownerTaken: "{user} figyelőlistáján már szerepel: {name}, két listát pedig nem lehet eggyé olvasztani.",
+        ownerFailed: "Nem sikerült átadni: {name}."
     },
 
     libraryPage: {
@@ -599,6 +609,13 @@ export const hu: Messages = {
         deleteNote: "A torrent és a fájljai is törlődnek a qBittorrentből, és nem fog újra letöltődni. Ez nem vonható vissza.",
         markConfirm: "Megjelölés törlésre",
         deleteConfirm: "Törlés a fájlokkal",
+        watchersNobody: "senki",
+        watchersTooltip: "Ki kérte — kattints az átírásához. Ők kapnak róla értesítést, és az ő figyelőlistájukra kerül vissza, ha a letöltés nem sikerül.",
+        watchersTooltipNobody: "Senki nincs feltüntetve kérőként, így senki nem kap róla értesítést, és hiba esetén sem kerül vissza egyetlen figyelőlistára sem. Kattints, és add meg, kinek kellett.",
+        watchersQuestion: "Ki kérte ezt: {name}?",
+        watchersNote: "Ők kapnak értesítést, amikor megjön vagy elmegy, az ő figyelőlistájukra kerül vissza, ha a letöltés nem sikerül, és az ő főoldalukon jelenik meg. Az app abból állítja össze, hogy ki várta akkor — a kézzel indított letöltés pedig azé, aki megnyomta a gombot, szóval itt igazítható, amit ez nem tudott.",
+        watchersToast: "{name} kérője mostantól: {users}.",
+        watchersNoneToast: "{name} mostantól senki kérése.",
         keepDaysValue: "{n} nap",
         keepTooltip: "Meddig marad a befejezés után. Magára hagyva ez {n} nap — kattints, ha átírnád.",
         keepQuestion: "Meddig maradjon ez: {name}?",

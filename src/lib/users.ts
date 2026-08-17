@@ -38,6 +38,20 @@ export const listUsers = async () => {
     return users.map(toUserItem);
 };
 
+/**
+ * The accounts behind a list of ids, for whoever was handed one to write down. Fewer rows
+ * than were asked for is the answer to "does this id exist" — a caller writing somebody
+ * onto a download or a watchlist row compares the counts and refuses on a mismatch, rather
+ * than storing a number that names nobody.
+ */
+export const usersByIds = async (ids: number[]) => {
+    return await prisma.user.findMany({
+        where: { id: { in: [ ...new Set(ids) ] } },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" }
+    });
+};
+
 const otherAdmins = async (exceptId: number) => {
     return await prisma.user.count({
         where: { role: UserRole.ADMIN, disabled: false, id: { not: exceptId } }

@@ -19,6 +19,7 @@ import { useSession } from "@/context/session";
 import { useWatchlist } from "@/context/watchlist";
 import { MessageKey, Translate } from "@/i18n";
 import { languageLabel, useLanguageOptions } from "@/lib/language-labels";
+import { userName, useUserOptions } from "@/lib/user-options";
 import { WatchlistRowItem, WatchlistStatus } from "@/types/watchlist";
 
 type Column = {
@@ -110,6 +111,9 @@ export function WatchlistTable() {
     const { isAdmin } = useSession();
     const { locale, t, tOr } = useLocale();
     const languageOptions = useLanguageOptions();
+    // empty for anybody who is not an administrator, and then the owner column is the
+    // name it has always been
+    const userOptions = useUserOptions();
     const [ items, setItems ] = useState<WatchlistRowItem[]>();
     // the whole house by default: this table is where somebody goes to see what the app
     // is looking for, and half of that is other people's. The server is what decides
@@ -185,6 +189,35 @@ export function WatchlistTable() {
             toast(axios.isAxiosError(err) && err.response?.data?.message || t("watchlistPage.languageFailed", { name }));
         }
 
+        await load();
+    };
+
+    /**
+     * Whose row this is. The app learns who wanted something from whoever pressed the
+     * button, and that is not always who it was for — so an administrator can hand a row
+     * over, with everything still to be found on it.
+     *
+     * Both lists have to be reloaded: the row may have just left or joined the watchlist
+     * of the person looking at the table, and every poster in the app is badged from that.
+     */
+    const moveTo = async (item: WatchlistRowItem, userId: string) => {
+        const name = item.media?.name || `TMDB #${ item.tmdbId }`;
+        const user = userName(userOptions, userId);
+
+        try {
+            await axios.patch(`/api/watchlist/${ item.id }`, { userId: Number(userId) });
+
+            toast(t("watchlistPage.ownerSet", { name, user }));
+
+        } catch(err) {
+            console.error(err);
+
+            toast(axios.isAxiosError(err) && err.response?.data?.conflict
+                ? t("watchlistPage.ownerTaken", { name, user })
+                : t("watchlistPage.ownerFailed", { name }));
+        }
+
+        await refresh();
         await load();
     };
 
@@ -302,7 +335,22 @@ export function WatchlistTable() {
             label: t("watchlistPage.columns.owner"),
             everybody: true,
             value: item => item.owner.name.toLowerCase(),
-            render: item => <span className="text-muted-foreground">{ item.owner.name }</span>
+            // a name for everybody, a dropdown for an administrator. Until the accounts
+            // have arrived it is the name as well, rather than a select whose own value
+            // is not on its list yet
+            render: item => userOptions.length === 0
+                ? <span className="text-muted-foreground">{ item.owner.name }</span>
+                : (
+                    <div className="min-w-[10rem]" title={t("watchlistPage.ownerTooltip")}>
+                        <OptionSelect
+                            value={String(item.owner.id)}
+                            onChange={(next) => moveTo(item, next)}
+                            options={userOptions}
+                            // the table container clips, so this one hangs off the viewport
+                            float
+                        />
+                    </div>
+                )
         },
         {
             key: "type",

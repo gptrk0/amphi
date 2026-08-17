@@ -141,10 +141,12 @@ export const SETTINGS: SettingDef[] = [
     { key: "BLOCKED_RELEASE_TTL_DAYS", group: "Content check", label: "Retry a stalled release after (days)", type: "number", default: "30", help: "0 = never. A fake payload is blocked for good regardless." },
 
     // Notifications
-    { key: "TELEGRAM_BOT_TOKEN", group: "Notifications", label: "Telegram bot token", type: "string", secret: true, help: "From @BotFather." },
-    { key: "TELEGRAM_CHAT_ID", group: "Notifications", label: "Chat id", type: "string", help: "Message the bot once, then read it from /getUpdates. Negative for a group, and it changes if Telegram turns that group into a supergroup." },
-    { key: "TELEGRAM_EVENTS", group: "Notifications", label: "Events to send", type: "list", options: NOTIFY_EVENTS, default: "ready,started,dropped,deleted", help: "This chat is the install's, so every message says whose download it was about. Nothing ticked sends nothing." },
-    { key: "TELEGRAM_API_URL", group: "Notifications", label: "Bot API URL", type: "string", default: "https://api.telegram.org", help: "Only for a self hosted Bot API server." },
+    // The install's own channel, and it is a webhook URL for the same reason a person's is:
+    // naming a service — a bot token, a chat id, a bot api url — was three fields that only
+    // Telegram could ever use. A URL is one field that Telegram, Discord and anything else
+    // can all be. See `callWebhook` in src/lib/webhook.ts for what the URL decides.
+    { key: "NOTIFY_WEBHOOK_URL", group: "Notifications", label: "The install's webhook", type: "string", secret: true, placeholder: "https://…", help: "Where this install's own notifications go — everything the app does, whoever it was for. A placeholder like {message} in it and the text goes into the URL as a GET; without one it is posted as JSON (content), which is what a Discord webhook wants. {title}, {detail}, {event} and {who} are the others. Empty turns it off. It is a secret because a Telegram URL has the bot token in it: the log names this setting, never quotes it." },
+    { key: "NOTIFY_EVENTS", group: "Notifications", label: "Events to send", type: "list", options: NOTIFY_EVENTS, default: "ready,started,dropped,deleted", help: "This channel is the install's, so every message says whose download it was about. Nothing ticked sends nothing." },
     { key: "NOTIFY_WEBHOOK_ALLOW_PRIVATE", group: "Notifications", label: "Allow webhooks inside your network", type: "boolean", default: "0", help: "Everybody here can set a webhook of their own on their account page, and the server is what calls it — so by default it refuses addresses only the server can reach (localhost, 10.x, 192.168.x). Turn this on only if somebody genuinely has a receiver on the same network." },
 
     // Download dialog

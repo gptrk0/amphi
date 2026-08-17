@@ -12,7 +12,16 @@ export type TagOption = {
     label: string;
     // other spellings that should find it: an alias, another code, a native name
     keywords?: string[];
+    /**
+     * The small grey text beside the label, which is the stored value itself unless this
+     * says otherwise. `hun` next to "Hungarian" is worth reading; a user's row id is not,
+     * so the sets whose values are ids pass `""` and show the name alone.
+     */
+    hint?: string;
 };
+
+/** What is shown beside the label — the value, unless the option named something else. */
+export const optionHint = (option: TagOption) => option.hint === undefined ? option.value : option.hint;
 
 const namesOf = (option: TagOption) => [ option.value, option.label, ...(option.keywords || []) ];
 

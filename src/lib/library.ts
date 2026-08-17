@@ -536,6 +536,27 @@ export const cancelDelete = async (id: number) => {
 };
 
 /**
+ * Who this download was for, corrected by hand.
+ *
+ * The app fills the list in from whose units the grab carried off, and that is only ever
+ * as right as the watchlists were at that moment: something downloaded from a details page
+ * belongs to whoever pressed the button, however many people it was really for. So this is
+ * an administrator's, and it is not cosmetic — the list is who is told when the download
+ * lands or goes, whose watchlist it returns to if it never lands, and whose home page it
+ * appears on. It is also what makes the scanner treat this edition as *had* for them, and
+ * that is the half worth thinking twice about: adding somebody stops it being searched for
+ * on their behalf.
+ *
+ * Nobody is a real answer and stays possible: rows from before any of this existed have it.
+ */
+export const setWatchedBy = async (id: number, userIds: number[]) => {
+    return await prisma.library.update({
+        where: { id },
+        data: { watchedBy: [ ...new Set(userIds) ] }
+    });
+};
+
+/**
  * Carries the deletion out — the one action in the app that cannot be undone. The torrent
  * goes from the client and **its files go with it**, every time: a row removed from the
  * library without its files was the worst of the two outcomes, because nothing in the app
@@ -776,7 +797,10 @@ const toDownload = (torrent: TorrentStatus): WatchlistDownload => ({
 });
 
 export const toLibraryEntry = (item: LibraryRow, names: Map<number, string> = new Map()): LibraryEntry => ({
-    watchers: item.watchedBy.map(id => names.get(id)).filter((name): name is string => !! name),
+    // the two lists are cut from the same pass, so a deleted account drops out of both
+    // rather than turning up as a name-less id in a dropdown
+    watchers: item.watchedBy.filter(id => names.has(id)).map(id => names.get(id)!),
+    watcherIds: item.watchedBy.filter(id => names.has(id)),
     id: item.id,
     tmdbId: item.tmdbId,
     type: toMediaType(item.type),

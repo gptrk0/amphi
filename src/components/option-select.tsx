@@ -5,7 +5,7 @@ import { ChevronDown } from "lucide-react";
 import classNames from "classnames";
 
 import { useLocale } from "@/context/locale";
-import { matchOptions, TagOption } from "@/lib/options";
+import { matchOptions, optionHint, TagOption } from "@/lib/options";
 
 /**
  * Exactly one value out of a closed set, searchable — the single-value twin of the
@@ -159,7 +159,9 @@ export function OptionSelect({ value, onChange, options, float = false }: Props)
                     { chosen ? chosen.label : (value ? t("input.notOnList", { value }) : t("input.pick")) }
                 </span>
 
-                {chosen && <span className="text-muted-foreground text-xs">{ chosen.value }</span>}
+                {chosen && optionHint(chosen) && (
+                    <span className="text-muted-foreground text-xs">{ optionHint(chosen) }</span>
+                )}
 
                 <ChevronDown className="ml-auto size-4 shrink-0 opacity-50" />
             </button>
@@ -205,7 +207,7 @@ export function OptionSelect({ value, onChange, options, float = false }: Props)
                             >
                                 { option.label }
 
-                                <span className="text-muted-foreground ml-auto text-xs">{ option.value }</span>
+                                <span className="text-muted-foreground ml-auto text-xs">{ optionHint(option) }</span>
                             </button>
                         ))}
                     </div>

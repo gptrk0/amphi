@@ -854,10 +854,10 @@ export const startScheduler = async () => {
     }
 
     if (isNotifyConfigured()) {
-        await log("telegram notifications are on");
+        await log("the install's notifications are on");
 
     } else {
-        await log("telegram notifications are OFF: fill in the token, the chat id and the events under Settings / Notifications", LogLevel.WARN);
+        await log("the install's notifications are OFF: fill in the webhook url and the events under Settings / Notifications", LogLevel.WARN);
     }
 
     /**

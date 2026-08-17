@@ -2,8 +2,8 @@ import { User } from "../../prisma/generated/client";
 import { prisma } from "@/lib/prisma";
 import { LANGUAGE_DEFAULTS, parseLanguageList } from "@/lib/language";
 import { logInfo } from "@/lib/log";
-import { webhookFields } from "@/lib/notify";
-import { callWebhook, webhookProblem } from "@/lib/webhook";
+import { testWebhookUrl } from "@/lib/notify";
+import { webhookProblem } from "@/lib/webhook";
 import { cleanLanguageList } from "@/types/language";
 import { NOTIFY_EVENT_VALUES } from "@/types/notify";
 
@@ -126,16 +126,14 @@ export const saveAccountSettings = async (id: number, body: unknown): Promise<st
 };
 
 /**
- * Calls the webhook once, now, and says what happened.
- *
- * Worth doing at all because the alternative is finding out weeks later that the URL had
- * a typo — the real ones only fire when a download lands, and a webhook that silently
- * fails looks exactly like one that was never going to be needed.
+ * Calls this person's webhook once, now, and says what happened. The sending and the
+ * wording are `testWebhookUrl`'s — the settings page tests the install's own the same way,
+ * and one of the two asking it differently would be a difference nobody meant.
  *
  * `typed` is the field as it is on screen, so it can be tried before it is saved; empty
  * falls back to the stored one. `byAdmin` is the address of somebody testing on another
  * person's behalf, which the log says out loud: a test message arriving in a stranger's
- * Telegram should be traceable to whoever pressed the button.
+ * chat should be traceable to whoever pressed the button.
  */
 export const testWebhook = async (user: { id: number, name: string }, typed: string, byAdmin?: string) => {
     const stored = (await prisma.user.findUnique({ where: { id: user.id } }))?.webhookUrl || "";
@@ -145,20 +143,13 @@ export const testWebhook = async (user: { id: number, name: string }, typed: str
         return { ok: false, status: 400, message: "There is no webhook to test yet." };
     }
 
-    const result = await callWebhook(url, webhookFields("ready", "A test from Amphi", "if you can read this, it works"));
-    const said = result.ok ? "it went through" : `it failed: ${ result.error }`;
+    const result = await testWebhookUrl(url);
 
     await logInfo(
         "notify",
         byAdmin ? `${ user.name }'s webhook was tested` : `${ user.name } tested their webhook`,
-        byAdmin ? `${ said } — by ${ byAdmin }` : said
+        byAdmin ? `${ result.said } — by ${ byAdmin }` : result.said
     );
 
-    return {
-        ok: result.ok,
-        status: result.ok ? 200 : 502,
-        message: result.ok
-            ? "Sent — go and look."
-            : `It did not go through: ${ result.error }`
-    };
+    return { ok: result.ok, status: result.status, message: result.message };
 };

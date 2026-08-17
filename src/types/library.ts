@@ -41,6 +41,9 @@ export type LibraryEntry = {
     deleteRequested: boolean;
     // who was waiting for this, by name. The library is shared; the wanting was not
     watchers: string[];
+    // the same people by id, index for index, so an administrator can correct the list.
+    // Both are built from the accounts that still exist, which is why they cannot disagree
+    watcherIds: number[];
 };
 
 /**

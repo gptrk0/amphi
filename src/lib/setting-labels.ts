@@ -119,16 +119,14 @@ const HU: Record<string, Text> = {
         label: "Beragadt release újrapróbálása (nap)",
         help: "0 = soha. Egy hamis tartalom ettől függetlenül végleg tiltásra kerül."
     },
-    TELEGRAM_BOT_TOKEN: { label: "Telegram bot token", help: "A @BotFather-től." },
-    TELEGRAM_CHAT_ID: {
-        label: "Chat id",
-        help: "Írj egyszer a botnak, aztán olvasd ki a /getUpdates-ből. Csoportnál negatív, és megváltozik, ha a Telegram szupercsoporttá alakítja a csoportot."
+    NOTIFY_WEBHOOK_URL: {
+        label: "A telepítés webhookja",
+        help: "Ide mennek a telepítés saját értesítései — minden, amit az app tesz, akárkinek. Ha van benne placeholder (pl. {message}), a szöveg az URL-be kerül és GET lesz; ha nincs, JSON törzsben megy (content), amit a Discord webhook kér. A többi placeholder: {title}, {detail}, {event}, {who}. Üresen kikapcsol. Titokként kezeljük, mert egy Telegram URL-ben benne van a bot token: a napló megnevezi ezt a beállítást, de nem idézi."
     },
-    TELEGRAM_EVENTS: {
+    NOTIFY_EVENTS: {
         label: "Küldendő események",
-        help: "Ez a chat a telepítésé, ezért minden üzenet megmondja, kinek a letöltéséről volt szó. Ha semmi nincs bepipálva, nem küld semmit."
+        help: "Ez a csatorna a telepítésé, ezért minden üzenet megmondja, kinek a letöltéséről volt szó. Ha semmi nincs bepipálva, nem küld semmit."
     },
-    TELEGRAM_API_URL: { label: "Bot API URL", help: "Csak saját üzemeltetésű Bot API szerverhez." },
     NOTIFY_WEBHOOK_ALLOW_PRIVATE: {
         label: "Hálózaton belüli webhookok engedélyezése",
         help: "Itt mindenki beállíthat magának saját webhookot, és a szerver az, ami meghívja — ezért alapból elutasítja azokat a címeket, amiket csak a szerver ér el (localhost, 10.x, 192.168.x). Csak akkor kapcsold be, ha valakinek tényleg ugyanezen a hálózaton van a fogadója."

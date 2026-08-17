@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { TagInput } from "@/components/tag-input";
+import { WebhookExamples } from "@/components/webhook-examples";
 import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
 import { useLanguageOptions } from "@/lib/language-labels";
@@ -35,18 +36,6 @@ type Account = {
     languageFirst: boolean;
     acceptAnyLanguage: boolean;
 };
-
-// what to paste, for the two services anybody actually uses
-const EXAMPLES = [
-    {
-        name: "Telegram",
-        url: "https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT>&text={message}"
-    },
-    {
-        name: "Discord",
-        url: "https://discord.com/api/webhooks/<id>/<token>"
-    }
-];
 
 /**
  * The settings that are somebody's rather than the install's. The admin page decides how
@@ -146,7 +135,7 @@ export function AccountSettings({ userId }: { userId?: number }) {
             toast(res.data.message);
 
         } catch(err) {
-            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || t("account.webhookFailed"));
+            toast((axios.isAxiosError(err) ? err.response?.data?.message : null) || t("webhook.failed"));
 
         } finally {
             setTesting(false);
@@ -230,7 +219,7 @@ export function AccountSettings({ userId }: { userId?: number }) {
                         >
                             <Loader2 className={classNames("animate-spin", { "hidden": ! isTesting })} />
                             <Send className={classNames({ "hidden": isTesting })} />
-                            { t("account.test") }
+                            { t("webhook.test") }
                         </Button>
                     </div>
 
@@ -239,22 +228,7 @@ export function AccountSettings({ userId }: { userId?: number }) {
                         reads as a placeholder without a `<code>` around it */}
                     <p className="text-xs text-muted-foreground">{ t("account.webhookHint") }</p>
 
-                    <div className="space-y-1 rounded-md border p-3">
-                        {EXAMPLES.map(example => (
-                            <div key={example.name} className="flex flex-wrap items-baseline gap-2 text-xs">
-                                <span className="w-16 shrink-0 font-medium">{ example.name }</span>
-
-                                <button
-                                    type="button"
-                                    className="cursor-pointer break-all text-left font-mono text-muted-foreground hover:text-foreground"
-                                    onClick={() => setWebhook(example.url)}
-                                    title={t("account.exampleTitle")}
-                                >
-                                    { example.url }
-                                </button>
-                            </div>
-                        ))}
-                    </div>
+                    <WebhookExamples onPick={setWebhook} />
                 </div>
 
                 <div className="space-y-2">

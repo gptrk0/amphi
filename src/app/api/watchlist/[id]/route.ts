@@ -1,17 +1,24 @@
-import { currentUser, refuseUnlessSignedIn, withActor } from "@/lib/auth";
+import { currentUser, refuseUnlessAdmin, refuseUnlessSignedIn, withActor } from "@/lib/auth";
 import { logInfo } from "@/lib/log";
-import { getWatchlistItem, setRequestedLanguage, stopWatching, toMediaType } from "@/lib/watchlist";
+import {
+    getWatchlistItem,
+    getWatchlistItemByTmdbId,
+    setOwner,
+    setRequestedLanguage,
+    stopWatching,
+    toMediaType
+} from "@/lib/watchlist";
+import { usersByIds } from "@/lib/users";
 import { resolveLanguage } from "@/types/language";
 
 type Params = { params: Promise<{ id: string }> };
 
 /**
- * The language this one title is wanted in. Empty gives it back to the account's rule,
- * which is where every row starts.
+ * Two things about one row: the language it is wanted in, and whose want it is.
  *
- * A row belongs to somebody, and this is their answer to "what do you want" — so the
- * owner sets it, plus an administrator, who is already the one person who can take a row
- * off somebody else's list.
+ * The language is the owner's answer to "what do you want", so the owner sets it, plus an
+ * administrator, who is already the one person who can take a row off somebody else's list.
+ * The owner is a different matter and is administrators only — see `setOwner`.
  */
 export async function PATCH(req: Request, { params }: Params) {
     const refusal = await refuseUnlessSignedIn();
@@ -30,15 +37,64 @@ export async function PATCH(req: Request, { params }: Params) {
 
     try {
         const body = await req.json().catch(() => null);
-
-        if (typeof body?.language !== "string") {
-            return Response.json({ success: false, message: 'Nothing to change.' }, { status: 400 });
-        }
-
         const item = await getWatchlistItem(watchlistId);
 
         if (! item || (item.userId !== me.id && ! me.isAdmin)) {
             return Response.json({ success: false, message: 'Watchlist item not found!' }, { status: 404 });
+        }
+
+        // whose list this row is on. It is the whole row that moves, off one person and
+        // onto another, so neither of them can be the one asking for it
+        if (body?.userId !== undefined) {
+            const forbidden = await refuseUnlessAdmin();
+
+            if (forbidden) {
+                return forbidden;
+            }
+
+            const userId = Number(body.userId);
+
+            if (! Number.isInteger(userId) || userId <= 0) {
+                return Response.json({ success: false, message: 'Invalid user id!' }, { status: 400 });
+            }
+
+            const [ target ] = await usersByIds([ userId ]);
+
+            if (! target) {
+                return Response.json({ success: false, message: 'That account does not exist.' }, { status: 400 });
+            }
+
+            // one row per person per title, and merging two of them is not a thing this
+            // app can decide: they have their own units, their own history and their own
+            // language. So the answer is that there is nothing to move it to
+            const clash = await getWatchlistItemByTmdbId(userId, item.tmdbId, item.type);
+
+            if (clash && clash.id !== item.id) {
+                return Response.json({
+                    success: false,
+                    // the caller words this one itself, in the reader's language
+                    conflict: true,
+                    message: `${ target.name } already has this on their watchlist.`
+                }, { status: 409 });
+            }
+
+            const result = await setOwner(watchlistId, userId);
+            const name = result?.media?.name || `TMDB #${ item.tmdbId }`;
+
+            await logInfo(
+                "watchlist",
+                `${ name } is on ${ target.name }'s watchlist now`,
+                withActor(
+                    item.userId === userId ? "it already was" : `off ${ item.user.name }'s list, with everything still to be found on it`,
+                    me
+                )
+            );
+
+            return Response.json({ success: true, result });
+        }
+
+        if (typeof body?.language !== "string") {
+            return Response.json({ success: false, message: 'Nothing to change.' }, { status: 400 });
         }
 
         const asked = body.language.trim();

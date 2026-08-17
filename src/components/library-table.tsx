@@ -19,6 +19,7 @@ import {
     DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -35,6 +36,7 @@ import {
     toGroups,
     unique
 } from "@/lib/library-view";
+import { userName, useUserOptions } from "@/lib/user-options";
 import { KeepRange, LibraryItem } from "@/types/library";
 
 type Column = {
@@ -145,12 +147,19 @@ export function LibraryTable() {
     const { refresh } = useWatchlist();
     const { isAdmin } = useSession();
     const { locale, t } = useLocale();
+    // empty for anybody who is not an administrator, and then the requesters are the
+    // names they have always been
+    const userOptions = useUserOptions();
     const [ items, setItems ] = useState<LibraryItem[]>();
     const [ filter, setFilter ] = useState<"ALL" | "DOWNLOADING" | "AVAILABLE">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "startedAt", direction: "desc" });
     const [ deleting, setDeleting ] = useState<LibraryItem | null>(null);
     const [ keeping, setKeeping ] = useState<LibraryItem | null>(null);
     const [ keepInput, setKeepInput ] = useState("");
+    // which download's requesters are being edited, and the ids ticked so far — the same
+    // comma separated shape every other closed list in the app is edited in
+    const [ asking, setAsking ] = useState<LibraryItem | null>(null);
+    const [ askedFor, setAskedFor ] = useState("");
     // which titles are open. Null until somebody opens or closes one: until then a title
     // with something still downloading is open on its own, so the percentages are visible
     // without a click
@@ -254,6 +263,45 @@ export function LibraryTable() {
         setKeepInput(String(item.keepDays));
         setKeeping(item);
     };
+
+    /**
+     * Who this download was for. The app fills it in from whose watchlists the grab
+     * emptied, and a download started from a details page is credited to whoever pressed
+     * the button — so the one thing it cannot know is who else it was really for.
+     *
+     * Not cosmetic: this list is who is told when it lands or goes, and whose watchlist it
+     * returns to if it never lands. Per download rather than per title, for the same reason
+     * the retention is: a Hungarian copy and an English one of the same film are two rows
+     * because they answer two different people.
+     */
+    const setWatchers = async (item: LibraryItem, ids: number[]) => {
+        setAsking(null);
+
+        try {
+            await axios.patch(`/api/library/${ item.id }`, { watchedBy: ids });
+
+            toast(ids.length === 0
+                ? t("libraryPage.watchersNoneToast", { name: name(item) })
+                : t("libraryPage.watchersToast", {
+                    name: name(item),
+                    users: ids.map(id => userName(userOptions, id)).join(", ")
+                }));
+
+        } catch(err) {
+            console.error(err);
+            toast(t("libraryPage.updateFailed", { name: name(item) }));
+
+        } finally {
+            await load();
+        }
+    };
+
+    const askWatchers = (item: LibraryItem) => {
+        setAskedFor(item.watcherIds.join(","));
+        setAsking(item);
+    };
+
+    const askedIds = askedFor.split(",").map(Number).filter(Boolean);
 
     const wantedDays = Number(keepInput);
     const keepValid = Number.isInteger(wantedDays) && wantedDays >= range.min && wantedDays <= range.max;
@@ -391,16 +439,35 @@ export function LibraryTable() {
             label: t("libraryPage.columns.watchers"),
             value: item => item.watchers.join(", ").toLowerCase(),
             // the file is the household's, the wanting was not: this is the only place
-            // that still says whose download it was, once the watchlist rows are gone
-            render: item => item.watchers.length === 0
-                ? <span className="text-xs text-muted-foreground">—</span>
-                : <span
-                    className="block max-w-[12rem] truncate text-xs"
-                    title={item.watchers.join(", ")}
-                >
-                    { item.watchers.join(", ") }
-                </span>,
-            // everybody who wanted any part of this title, each named once
+            // that still says whose download it was, once the watchlist rows are gone.
+            // Editable, because the app only ever guessed it — but an administrator's,
+            // since it decides who hears about somebody else's download
+            render: item => {
+                const text = item.watchers.join(", ");
+
+                if (userOptions.length === 0) {
+                    return text
+                        ? <span className="block max-w-[12rem] truncate text-xs" title={text}>{ text }</span>
+                        : <span className="text-xs text-muted-foreground">—</span>;
+                }
+
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className={classNames("h-7 max-w-[12rem] cursor-pointer px-2 text-xs font-normal", { "text-muted-foreground": ! text })}
+                        title={text ? t("libraryPage.watchersTooltip") : t("libraryPage.watchersTooltipNobody")}
+                        onClick={() => askWatchers(item)}
+                    >
+                        <Pencil className="size-3 shrink-0" />
+
+                        <span className="truncate">{ text || t("libraryPage.watchersNobody") }</span>
+                    </Button>
+                );
+            },
+            // everybody who wanted any part of this title, each named once — and read only,
+            // like the retention beside it: a title's downloads answer different people, so
+            // there is no one list here to write
             groupValue: group => unique(group.items.flatMap(item => item.watchers)).join(", ").toLowerCase(),
             groupRender: group => {
                 const watchers = unique(group.items.flatMap(item => item.watchers));
@@ -815,6 +882,46 @@ export function LibraryTable() {
                             disabled={! keepValid}
                             onClick={() => keep(keeping!, wantedDays)}
                         >
+                            { t("common.save") }
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* ticked rather than typed, and nobody is a valid answer: rows from before any
+                of this existed have no requester at all */}
+            <Dialog open={asking !== null} onOpenChange={(open) => { if (! open) { setAsking(null); } }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>
+                            { t("libraryPage.watchersQuestion", { name: asking ? name(asking) : t("libraryPage.thisOne") }) }
+                        </DialogTitle>
+
+                        <DialogDescription>{ t("libraryPage.watchersNote") }</DialogDescription>
+                    </DialogHeader>
+
+                    {/* a household is a handful of accounts, but the dialog must not grow
+                        past the window on an install that is not */}
+                    <div className="max-h-[50vh] overflow-auto">
+                        <OptionCheckboxes
+                            value={askedFor}
+                            onChange={setAskedFor}
+                            options={userOptions.map(option => ({
+                                value: option.value,
+                                label: option.label,
+                                // two people with the same name are told apart by the
+                                // address, which is the one place there is room for it
+                                help: option.keywords?.[0]
+                            }))}
+                        />
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="cursor-pointer" onClick={() => setAsking(null)}>
+                            { t("common.cancel") }
+                        </Button>
+
+                        <Button className="cursor-pointer" onClick={() => setWatchers(asking!, askedIds)}>
                             { t("common.save") }
                         </Button>
                     </DialogFooter>
