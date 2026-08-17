@@ -2022,6 +2022,28 @@ A felület szerver oldala is mérve: `/releases?q=silo&profile=0` egy eldobható
 
 **Amit nem néztem meg:** hogy néz ki és hogyan kattintható. A böngészőben egyetlen letöltés sem indult el innen — az valódi torrentet tenne a kliensbe, és ez az egy dolog, amit egy ellenőrzés nem tehet meg helyetted.
 
+#### Bejelentés: a teljes Malcolm in the Middle nem volt letölthető a kézi keresésből (2026-08-17) ✅
+
+**Tünet:** „ezt akarnám letölteni manual searchel, de nem engedi" —
+`Malcolm.in.the.Middle.S01-S07.COMPLETE.READ.NFO.576p.NF.WEBRip.DD5.1.x264.HUN.ENG-pcroland`.
+
+**Két különböző dolog volt benne, és mindkettő igaz.**
+
+**1. A név nem volt beazonosítható, tehát nem volt letöltés gomb.** A PTT a `S01-S07 COMPLETE READ NFO`-t **a címben hagyja**, mert a szezon-markert nem a név vége követi, hanem a `READ.NFO` — a `releaseTitleOf` pedig csak a *záró* markert vágja le. Így a TMDB-t erre kérdeztük:
+
+```
+subject:  "Malcolm in the Middle S01-S07 COMPLETE READ NFO"  →  TMDB: NOTHING
+cut:      "Malcolm in the Middle"                            →  TMDB: tv 2004 Malcolm in the Middle
+```
+
+Beazonosítás nélkül nincs hova iktatni a letöltést (a library TMDB id-ra kulcsolt), ezért a sor ott volt a listában, de gomb nélkül. A javítás a `releaseSubject`-ben egy erősebb vágás (`SEASON_ONWARDS`): a **markertől a név végéig** minden lekerül, nem csak a záró marker. Ez szándékosan **csak a kézi keresés útján** él — a `matchesTarget` a maga szűkebb szabályával marad, mert az az egy ellenőrzés, amin egy hamis release-név nem tud átjutni, és a lazítása pont ott lenne kár. Ha a vágás semmit hagyna (a név *maga* egy marker), a teljes név megy tovább.
+
+**Regresszió lemérve** tizenhat néven: minden korábban helyes olvasat változatlan (`Ted Lasso S01` → pack `[1]`, `Foundation.S01-S02.COMPLETE` → `[1,2]`, `Severance 2x03` → `[2]/[3]`, `A.baranyok.hallgatnak.1991` → film 1991), és a szándékosan gonoszak sem sérültek: `Se7en`, `Season.of.the.Witch`, `Ocean's.Eleven` és `S1m0ne` címe mind épen jön ki, mert a vágás elválasztójelet kér a marker előtt — a cím első szavában lévő `s`+szám tehát nem marker. (A `parseNumbering` viszont a `S1m0ne`-t továbbra is „első évadnak" olvassa; ez régi és a scannert is érinti, a következménye itt annyi, hogy egy ilyen film sorozatként keresődik ki a TMDB-ből és beazonosítás nélkül marad. Nem nyúltam hozzá.)
+
+**Élő ellenőrzés a valódi indexereken:** a `Malcolm in the Middle` keresés 10 találata közül a bejelentett release most `tv 2004 Malcolm in the Middle — covers 151, poster=true` — vagyis a hét évad összes lement epizódját lefedi, és letölthető. Mellékesen kiderült, hogy a magyar nevű release is helyére kerül: a `Már megint Malcolm - Az élet még mindig igazságtalan S01` a TMDB magyar címén át a 2025-es sorozatra (279471) azonosítódik be.
+
+**2. Ez a release 576p, tehát a minőségi profil felbontás miatt eldobja.** Bekapcsolt szűrővel a sor nem is látszik, kikapcsolttal ott van, sárgán, „nem kért felbontás" jelöléssel — és letölthető. Ez nem hiba, hanem pont az, amiért a szűrő gomb van; a `QUALITY_RESOLUTIONS`-ben nincs `576p`, és ezen nem változtattam, mert az a scanner szabálya is.
+
 #### „Nincs találat" — a figyelőlista kérdés lett, nem javaslat (2026-08-17-i kérés) ✅ a kódban
 
 A kérés: ha a letöltés gombra nyomva nincs találat, ne kerüljön automatikusan a figyelőlistára, hanem kérdezze meg.

@@ -164,19 +164,38 @@ const releaseTitleOf = (title: string, parsed: { title?: string }) => {
 export type ReleaseSubject = { name: string, year: string | null };
 
 /**
- * What a release name claims to be about, in the two words a catalogue can be searched
- * with: the title with the release noise and any trailing season marker taken off, and
- * the year if the name carries one.
+ * The season marker and **everything after it**, rather than only a trailing one.
  *
- * The same reading `matchesTarget` does below, made available on its own — there it
- * answers "is this the title we asked for", and a manual search has no title to ask
- * about and has to work out what it is looking at from the name alone.
+ * `releaseTitleOf` above cuts a marker that ends the title and nothing more, because that
+ * is all `matchesTarget` needs — and cutting further there would loosen the one check a
+ * faked release name cannot get past. Reading a name on its own is the opposite problem:
+ * past the season marker there is only release noise, and whatever the noise happens to be
+ * decides whether the title comes out usable.
+ *
+ * `Malcolm.in.the.Middle.S01-S07.COMPLETE.READ.NFO.576p…` is what made this necessary
+ * (reported 2026-08-17): the `READ.NFO` sits between the marker and the end, so the
+ * trailing rule does not fire, PTT reports the title as "Malcolm in the Middle S01-S07
+ * COMPLETE READ NFO", and no catalogue has ever heard of that. The whole complete series
+ * was on an indexer and could not be downloaded, because nothing could say what it was of.
+ */
+const SEASON_ONWARDS = new RegExp(`[\\s._-]+(?:${ SEASON_MARKER })(?![a-z0-9]).*$`, "i");
+
+/**
+ * What a release name claims to be about, in the two things a catalogue can be searched
+ * with: the title, and the year if the name carries one.
+ *
+ * Only the manual search asks this, and it is deliberately more aggressive than the
+ * matching above: there is no title here to be careful about, only a name to be placed.
+ * The cut is dropped rather than trusted when it leaves nothing at all — a name that is
+ * *only* a season marker is better asked in full than not asked.
  */
 export const releaseSubject = (title: string): ReleaseSubject => {
     const parsed = PTT.parse(title) as { title?: string, year?: number };
+    const full = releaseTitleOf(title, parsed);
+    const cut = full.replace(SEASON_ONWARDS, "");
 
     return {
-        name: releaseTitleOf(title, parsed),
+        name: (cut || full).replace(/[._]+/g, " ").replace(/\s+/g, " ").trim(),
         year: parsed.year ? String(parsed.year) : null
     };
 };
