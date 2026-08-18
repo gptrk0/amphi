@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Amphi — compose generator</title>
+    <meta name="description" content="Builds a docker-compose.yml for Amphi around the services you already run.">
+    <style>
+        /* The same tokens the app itself uses, so the page and the app look like one thing.
+           No toggle here: a page with two buttons on it can follow the system. */
+        :root {
+            color-scheme: light;
+            --background: oklch(1 0 0);
+            --foreground: oklch(0.13 0.028 261.692);
+            --card: oklch(1 0 0);
+            --muted: oklch(0.967 0.003 264.542);
+            --muted-foreground: oklch(0.551 0.027 264.364);
+            --primary: oklch(0.21 0.034 264.665);
+            --primary-foreground: oklch(0.985 0.002 247.839);
+            --border: oklch(0.928 0.006 264.531);
+            --destructive: oklch(0.577 0.245 27.325);
+            --radius: 0.625rem;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                color-scheme: dark;
+                --background: oklch(0.13 0.028 261.692);
+                --foreground: oklch(0.985 0.002 247.839);
+                --card: oklch(0.21 0.034 264.665);
+                --muted: oklch(0.278 0.033 256.848);
+                --muted-foreground: oklch(0.707 0.022 261.325);
+                --primary: oklch(0.928 0.006 264.531);
+                --primary-foreground: oklch(0.21 0.034 264.665);
+                --border: oklch(1 0 0 / 12%);
+                --destructive: oklch(0.704 0.191 22.216);
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--background);
+            color: var(--foreground);
+            font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+
+        a { color: inherit; }
+
+        code, pre, .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 28px 24px;
+        }
+
+        header .wrap { max-width: 1180px; margin: 0 auto; }
+
+        h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+
+        header p { margin: 0; color: var(--muted-foreground); max-width: 72ch; }
+
+        main {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 24px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 24px;
+            align-items: start;
+        }
+
+        @media (max-width: 940px) {
+            main { grid-template-columns: minmax(0, 1fr); }
+            .out { position: static !important; }
+        }
+
+        section {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--card);
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        section > h2 { font-size: 15px; margin: 0 0 4px; }
+
+        section > .hint { margin: 0 0 14px; }
+
+        .hint { color: var(--muted-foreground); font-size: 13px; }
+
+        label.check, label.radio {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 8px 10px;
+            border-radius: calc(var(--radius) - 2px);
+            cursor: pointer;
+        }
+
+        label.check:hover, label.radio:hover { background: var(--muted); }
+
+        label.check input, label.radio input { margin: 3px 0 0; accent-color: var(--foreground); }
+
+        label .d { display: block; color: var(--muted-foreground); font-size: 13px; }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 140px;
+            gap: 12px;
+            align-items: center;
+            padding: 7px 0;
+        }
+
+        .row.wide { grid-template-columns: 1fr; gap: 4px; }
+
+        .pair { display: flex; gap: 8px; }
+
+        .pair button { flex: none; }
+
+        .row .lbl { font-size: 14px; }
+
+        .row .lbl small { display: block; color: var(--muted-foreground); font-size: 12px; }
+
+        input[type=text], input[type=number] {
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
+            background: var(--background);
+            color: var(--foreground);
+            font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        input:focus-visible, button:focus-visible {
+            outline: 2px solid var(--muted-foreground);
+            outline-offset: 1px;
+        }
+
+        .nested {
+            margin: 0 0 6px 34px;
+            padding-left: 12px;
+            border-left: 2px solid var(--border);
+        }
+
+        button {
+            font: inherit;
+            font-size: 13px;
+            padding: 7px 12px;
+            border-radius: calc(var(--radius) - 2px);
+            border: 1px solid var(--border);
+            background: var(--background);
+            color: var(--foreground);
+            cursor: pointer;
+        }
+
+        button:hover { background: var(--muted); }
+
+        button.primary {
+            background: var(--primary);
+            color: var(--primary-foreground);
+            border-color: var(--primary);
+        }
+
+        button.primary:hover { opacity: 0.9; }
+
+        .out { position: sticky; top: 24px; }
+
+        .out .bar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .out .bar .spacer { flex: 1; }
+
+        pre {
+            margin: 0;
+            padding: 14px;
+            background: var(--muted);
+            border-radius: calc(var(--radius) - 2px);
+            font-size: 12.5px;
+            line-height: 1.5;
+            overflow: auto;
+            max-height: 60vh;
+        }
+
+        ol.steps { margin: 0; padding-left: 18px; }
+
+        ol.steps li { margin-bottom: 9px; }
+
+        code.k {
+            background: var(--muted);
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-size: 12.5px;
+            word-break: break-all;
+        }
+
+        .warn {
+            border: 1px solid var(--destructive);
+            color: var(--destructive);
+            border-radius: calc(var(--radius) - 2px);
+            padding: 10px 12px;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .warn ul { margin: 4px 0 0; padding-left: 18px; }
+
+        .hidden { display: none; }
+
+        footer {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 0 24px 40px;
+            color: var(--muted-foreground);
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="wrap">
+            <h1>Amphi — compose generator</h1>
+            <p>Tick what already runs on the machine and it stays out of the file; whatever is missing
+                is installed next to Amphi. Nothing leaves the browser — the file is put together
+                here.</p>
+        </div>
+    </header>
+
+    <main>
+        <div>
+            <section>
+                <h2>What already runs here</h2>
+                <p class="hint">A ticked service is not installed a second time; Amphi is pointed at
+                    the one you have. <span class="mono">host.docker.internal</span> is the machine
+                    itself as seen from inside a container, and the file adds the line that makes that
+                    name resolve on Linux too. If the service is in another compose project, its own
+                    container name works just as well once the two share a network.</p>
+
+                <label class="check"><input type="checkbox" id="have-jackett"><span>Jackett<span class="d">indexer
+                            manager, port 9117</span></span></label>
+                <div class="nested hidden" id="have-jackett-box">
+                    <div class="row wide"><span class="lbl">Its URL, as the Amphi container sees it</span>
+                        <input type="text" id="url-jackett" value="http://host.docker.internal:9117">
+                    </div>
+                </div>
+
+                <label class="check"><input type="checkbox" id="have-prowlarr"><span>Prowlarr<span class="d">the other
+                            indexer manager, port 9696</span></span></label>
+                <div class="nested hidden" id="have-prowlarr-box">
+                    <div class="row wide"><span class="lbl">Its URL, as the Amphi container sees it</span>
+                        <input type="text" id="url-prowlarr" value="http://host.docker.internal:9696">
+                    </div>
+                </div>
+
+                <label class="check"><input type="checkbox" id="have-qbittorrent"><span>qBittorrent<span class="d">the
+                            download client, web UI on 8080</span></span></label>
+                <div class="nested hidden" id="have-qbittorrent-box">
+                    <div class="row wide"><span class="lbl">Its URL, as the Amphi container sees it</span>
+                        <input type="text" id="url-qbittorrent" value="http://host.docker.internal:8080">
+                    </div>
+                </div>
+
+                <label class="check"><input type="checkbox" id="have-flaresolverr"><span>FlareSolverr<span class="d">what
+                            gets an indexer past a Cloudflare page</span></span></label>
+                <div class="nested hidden" id="have-flaresolverr-box">
+                    <div class="row wide"><span class="lbl">Its URL, as the indexer manager sees it</span>
+                        <input type="text" id="url-flaresolverr" value="http://host.docker.internal:8191">
+                    </div>
+                </div>
+
+                <label class="check"><input type="checkbox" id="have-postgres"><span>A PostgreSQL server<span
+                            class="d">17 or newer, with an empty database for Amphi</span></span></label>
+                <div class="nested hidden" id="have-postgres-box">
+                    <div class="row wide"><span class="lbl">Connection string<small>the <span
+                                    class="mono">?schema=public</span> at the end is not optional</small></span>
+                        <input type="text" id="url-postgres"
+                            value="postgresql://amphi:amphi@host.docker.internal:5432/amphi?schema=public">
+                    </div>
+                </div>
+            </section>
+
+            <section>
+                <h2>What gets installed</h2>
+                <p class="hint" id="install-summary"></p>
+
+                <div id="indexer-choice">
+                    <label class="radio"><input type="radio" name="indexer" value="jackett" checked>
+                        <span>Jackett<span class="d">one process, one page, an api key on it — the shorter
+                                road</span></span></label>
+                    <label class="radio"><input type="radio" name="indexer" value="prowlarr">
+                        <span>Prowlarr<span class="d">manages the same indexers for other apps as well, and
+                                keeps them in sync</span></span></label>
+                </div>
+
+                <label class="check" id="flare-choice"><input type="checkbox" id="add-flaresolverr">
+                    <span>Add FlareSolverr<span class="d">only worth it if one of your trackers answers with a
+                            Cloudflare check</span></span></label>
+            </section>
+
+            <section>
+                <h2>Ports</h2>
+                <p class="hint">The left half of each mapping: what the port is called on the machine.
+                    Only what this file publishes is listed.</p>
+                <div id="ports"></div>
+            </section>
+
+            <section>
+                <h2>Volumes</h2>
+                <p class="hint">Everything an install remembers is under these paths, where you can see
+                    it and back it up with the rest of the machine. The database folder is the one that
+                    has to survive an upgrade.</p>
+
+                <div class="row wide"><span class="lbl">Base folder<small>each service gets a folder of its
+                            own under it, created on the first start</small></span>
+                    <input type="text" id="base-path" value="/opt/apps/amphi">
+                </div>
+                <p class="hint" id="path-preview"></p>
+
+                <div id="downloads-box">
+                    <div class="row wide"><span class="lbl">Downloads folder on the machine<small>where the files
+                                actually land. It is mounted on <span class="mono">/downloads</span>, which is where
+                                qBittorrent saves on its own — no path has to be named anywhere else</small></span>
+                        <input type="text" id="dl-host" value="/srv/downloads/amphi">
+                    </div>
+                </div>
+            </section>
+
+            <section>
+                <h2>The rest</h2>
+                <div class="row"><span class="lbl">Timezone<small>the log and the notifications; UTC without
+                            it</small></span>
+                    <input type="text" id="tz" value="Europe/Budapest">
+                </div>
+                <div class="row"><span class="lbl">Amphi image tag<small><span class="mono">latest</span> follows the
+                            head; a version pins it</small></span>
+                    <input type="text" id="tag" value="latest">
+                </div>
+                <div class="row" id="ids-row"><span class="lbl">PUID : PGID<small>who owns the files the download
+                            client writes</small></span>
+                    <input type="text" id="puid" value="1000:1000">
+                </div>
+                <div class="row wide" id="pw-row"><span class="lbl">Database password<small>drawn here, in the
+                            browser, and written into both halves of the file</small></span>
+                    <div class="pair">
+                        <input type="text" id="dbpass">
+                        <button type="button" id="regen">Another</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="out">
+            <div class="bar">
+                <strong class="mono">docker-compose.yml</strong>
+                <span class="spacer"></span>
+                <button id="copy" class="primary">Copy</button>
+                <button id="download">Download</button>
+            </div>
+            <div id="warnings"></div>
+            <pre id="yaml"></pre>
+
+            <section style="margin-top:18px">
+                <h2>After <span class="mono">docker compose up -d</span></h2>
+                <ol class="steps" id="steps"></ol>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        Amphi is on <a href="https://github.com/gptrk0/amphi">GitHub</a>, and the install is described
+        in its <a href="https://github.com/gptrk0/amphi#install">README</a>. This page only writes the
+        file.
+    </footer>
+
+    <script>
+        "use strict";
+
+        const $ = (id) => document.getElementById(id);
+        const IND = 4;
+        const pad = (n) => " ".repeat(n * IND);
+
+        // What the app calls each of these, and what the port is inside the container — which is
+        // not the port that gets published. Amphi reaches a container it shares a network with by
+        // name, on the inner port, whatever the machine calls it outside.
+        const PORTS = [
+            { id: "amphi", label: "Amphi", def: 26744, when: () => true, hint: "the app's own page. Inside the container it is 3000 whatever this says" },
+            { id: "jackett", label: "Jackett", def: 9117, when: (s) => s.install.indexer === "jackett" },
+            { id: "prowlarr", label: "Prowlarr", def: 9696, when: (s) => s.install.indexer === "prowlarr" },
+            { id: "qbweb", label: "qBittorrent web UI", def: 8080, when: (s) => s.install.qbittorrent },
+            { id: "qbtorrent", label: "qBittorrent torrent port", def: 6881, when: (s) => s.install.qbittorrent, hint: "tcp and udp, forwarded on the router if you can" },
+            { id: "flaresolverr", label: "FlareSolverr", def: 8191, when: (s) => s.install.flaresolverr },
+        ];
+
+        const portValues = {};
+        for (const p of PORTS) portValues[p.id] = p.def;
+
+        // 24 characters out of 64, drawn from the browser's own generator: 144 bits, and the
+        // alphabet is the one that survives a URL untouched, since the password goes into the
+        // connection string as it is. Nothing here is ever sent anywhere.
+        function newPassword() {
+            const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            const bytes = new Uint8Array(24);
+            crypto.getRandomValues(bytes);
+            return Array.from(bytes, (b) => alphabet[b & 63]).join("");
+        }
+
+        function readState() {
+            const have = {
+                jackett: $("have-jackett").checked,
+                prowlarr: $("have-prowlarr").checked,
+                qbittorrent: $("have-qbittorrent").checked,
+                flaresolverr: $("have-flaresolverr").checked,
+                postgres: $("have-postgres").checked,
+            };
+            const chosen = document.querySelector("input[name=indexer]:checked").value;
+            const install = {
+                // an install has one indexer manager, never two: whichever is already there wins,
+                // and only a machine with neither gets to pick
+                indexer: have.jackett || have.prowlarr ? null : chosen,
+                qbittorrent: !have.qbittorrent,
+                flaresolverr: !have.flaresolverr && $("add-flaresolverr").checked,
+                postgres: !have.postgres,
+            };
+            const [puid, pgid] = ($("puid").value || "1000:1000").split(":");
+            return {
+                have, install,
+                url: {
+                    jackett: $("url-jackett").value.trim(),
+                    prowlarr: $("url-prowlarr").value.trim(),
+                    qbittorrent: $("url-qbittorrent").value.trim(),
+                    flaresolverr: $("url-flaresolverr").value.trim(),
+                    postgres: $("url-postgres").value.trim(),
+                },
+                port: Object.assign({}, portValues),
+                base: ($("base-path").value.trim() || "/opt/apps/amphi").replace(/\/+$/, ""),
+                dlHost: $("dl-host").value.trim() || "/srv/downloads/amphi",
+                // not a field: what the folder is called inside the container is nobody's
+                // business but the compose file's, and the settings page only has to be told
+                // the one name
+                dlContainer: "/downloads",
+                tz: $("tz").value.trim(),
+                tag: $("tag").value.trim() || "latest",
+                puid: (puid || "1000").trim(),
+                pgid: (pgid || puid || "1000").trim(),
+                dbpass: $("dbpass").value.trim() || newPassword(),
+            };
+        }
+
+        // Every service keeps what it remembers in a folder of its own under the base path.
+        const cfg = (s, name) => s.base + "/" + name;
+        const dbVol = (s) => s.base + "/db";
+
+        const databaseUrl = (s) =>
+            s.install.postgres
+                ? "postgresql://amphi:" + s.dbpass + "@amphi-db:5432/amphi?schema=public"
+                : s.url.postgres;
+
+        // The two addresses that go into the settings page once the app is up.
+        const indexerUrl = (s) =>
+            s.have.jackett ? s.url.jackett
+                : s.have.prowlarr ? s.url.prowlarr
+                    : s.install.indexer === "prowlarr" ? "http://prowlarr:9696" : "http://jackett:9117";
+
+        const torrentUrl = (s) =>
+            s.have.qbittorrent ? s.url.qbittorrent : "http://qbittorrent:" + s.port.qbweb;
+
+        const flareUrl = (s) =>
+            s.have.flaresolverr ? s.url.flaresolverr : "http://flaresolverr:" + s.port.flaresolverr;
+
+        // `host.docker.internal` is a name Docker Desktop invents and Linux does not, so a
+        // container that has to reach the machine itself gets the mapping written out for it.
+        const needsHostGateway = (url) => /host\.docker\.internal/.test(url || "");
+
+        function buildYaml(s) {
+            const L = [];
+            const out = (depth, text) => L.push(text === "" ? "" : pad(depth) + text);
+            const blank = () => L.push("");
+
+            L.push("# Amphi. Generated by https://gptrk0.github.io/amphi/ — save it as docker-compose.yml,");
+            L.push("# run `docker compose up -d`, and open http://localhost:" + s.port.amphi + ".");
+            L.push("#");
+            L.push("# The first person to open a fresh install becomes its administrator, so do that before");
+            L.push("# the port is reachable from anywhere you do not trust. Everything else — the TMDB key,");
+            L.push("# the indexers, qBittorrent, the quality profile — is set on the /settings page in the");
+            L.push("# browser. There is nothing else to edit here.");
+            blank();
+            L.push("services:");
+
+            // Amphi
+            out(1, "amphi:");
+            out(2, "image: ghcr.io/gptrk0/amphi:" + s.tag);
+            out(2, "container_name: amphi");
+            out(2, "restart: unless-stopped");
+            out(2, "ports:");
+            out(3, '- "' + s.port.amphi + ':3000"');
+            out(2, "environment:");
+            out(3, "# the only setting that has to be known before the database can be read, which is");
+            out(3, "# why it is the only one that lives out here");
+            out(3, "DATABASE_URL: " + databaseUrl(s));
+            blank();
+            out(3, "# timestamps in the log and in the notifications; UTC without it");
+            out(3, "TZ: " + (s.tz || "UTC"));
+            blank();
+            out(3, "# the emergency brake. 1 = the background scanner does not start at all, so nothing");
+            out(3, "# is searched or downloaded on its own. Deliberately not a setting in the database:");
+            out(3, "# a brake must not live somewhere the app can talk itself out of it.");
+            out(3, '# SCAN_DISABLED: "1"');
+
+            const amphiExternal = [
+                !s.install.postgres && databaseUrl(s),
+                (s.have.jackett || s.have.prowlarr) && indexerUrl(s),
+                s.have.qbittorrent && torrentUrl(s),
+            ].filter(Boolean);
+            if (amphiExternal.some(needsHostGateway)) {
+                out(2, "extra_hosts:");
+                out(3, "# what the machine itself is called from in here. Docker Desktop knows the name on");
+                out(3, "# its own; on Linux this line is what invents it.");
+                out(3, '- "host.docker.internal:host-gateway"');
+            }
+
+            if (s.install.postgres) {
+                out(2, "depends_on:");
+                out(3, "amphi-db:");
+                out(4, "condition: service_healthy");
+            }
+
+            // Postgres
+            if (s.install.postgres) {
+                blank();
+                out(1, "amphi-db:");
+                out(2, "image: postgres:17.7");
+                out(2, "container_name: amphi-db");
+                out(2, "restart: unless-stopped");
+                out(2, "environment:");
+                out(3, "POSTGRES_USER: amphi");
+                out(3, "# this database has no published port: it is reachable from the app container and");
+                out(3, "# from nowhere else. The password below was drawn when this file was written, and");
+                out(3, "# it stands in two places — here and in DATABASE_URL above — so one never changes");
+                out(3, "# without the other.");
+                out(3, "POSTGRES_PASSWORD: " + s.dbpass);
+                out(3, "POSTGRES_DB: amphi");
+                out(2, "volumes:");
+                out(3, "# everything the install remembers is in here: the accounts, the watchlists, the");
+                out(3, "# library, the settings and the log. Nothing is kept in the container itself, so");
+                out(3, "# an upgrade is `docker compose pull && docker compose up -d` and nothing else,");
+                out(3, "# and this folder is the one thing that has to survive it.");
+                out(3, "- " + dbVol(s) + ":/var/lib/postgresql/data");
+                out(2, "healthcheck:");
+                out(3, "# the container is up long before postgres is listening, and on a first run it");
+                out(3, "# restarts itself once while it creates the cluster");
+                out(3, 'test: [ "CMD-SHELL", "pg_isready -U amphi -d amphi" ]');
+                out(3, "interval: 5s");
+                out(3, "timeout: 5s");
+                out(3, "retries: 12");
+            }
+
+            // Jackett / Prowlarr
+            if (s.install.indexer === "jackett" || s.install.indexer === "prowlarr") {
+                const isJackett = s.install.indexer === "jackett";
+                const name = isJackett ? "jackett" : "prowlarr";
+                const inner = isJackett ? 9117 : 9696;
+                blank();
+                out(1, name + ":");
+                out(2, "image: lscr.io/linuxserver/" + name + ":latest");
+                out(2, "container_name: " + name);
+                out(2, "restart: unless-stopped");
+                out(2, "ports:");
+                out(3, '- "' + (isJackett ? s.port.jackett : s.port.prowlarr) + ":" + inner + '"');
+                out(2, "environment:");
+                out(3, "PUID: " + s.puid);
+                out(3, "PGID: " + s.pgid);
+                out(3, "TZ: " + (s.tz || "UTC"));
+                if (isJackett) out(3, "AUTO_UPDATE: " + '"true"');
+                out(2, "volumes:");
+                out(3, "# the indexer definitions, the api key, and the cookies a tracker login leaves");
+                out(3, "- " + cfg(s, name) + ":/config");
+                if (s.have.flaresolverr && needsHostGateway(s.url.flaresolverr)) {
+                    out(2, "extra_hosts:");
+                    out(3, '- "host.docker.internal:host-gateway"');
+                }
+            }
+
+            // FlareSolverr
+            if (s.install.flaresolverr) {
+                blank();
+                out(1, "flaresolverr:");
+                out(2, "# a browser that answers the Cloudflare page for the indexer manager. Nothing");
+                out(2, "# talks to it directly: its address goes into the manager, on the indexers that");
+                out(2, "# need it.");
+                out(2, "image: ghcr.io/flaresolverr/flaresolverr:latest");
+                out(2, "container_name: flaresolverr");
+                out(2, "restart: unless-stopped");
+                out(2, "ports:");
+                out(3, '- "' + s.port.flaresolverr + ':8191"');
+                out(2, "environment:");
+                out(3, "LOG_LEVEL: info");
+                out(3, "TZ: " + (s.tz || "UTC"));
+            }
+
+            // qBittorrent
+            if (s.install.qbittorrent) {
+                blank();
+                out(1, "qbittorrent:");
+                out(2, "image: lscr.io/linuxserver/qbittorrent:latest");
+                out(2, "container_name: qbittorrent");
+                out(2, "restart: unless-stopped");
+                out(2, "ports:");
+                out(3, "# the web UI. qBittorrent checks the port in the Host header against its own, so");
+                out(3, "# the two halves of this mapping have to stay equal — WEBUI_PORT below is the");
+                out(3, "# same number for that reason.");
+                out(3, '- "' + s.port.qbweb + ":" + s.port.qbweb + '"');
+                out(3, "# what the swarm connects back on. Worth forwarding on the router.");
+                out(3, '- "' + s.port.qbtorrent + ":" + s.port.qbtorrent + '"');
+                out(3, '- "' + s.port.qbtorrent + ":" + s.port.qbtorrent + '/udp"');
+                out(2, "environment:");
+                out(3, "PUID: " + s.puid);
+                out(3, "PGID: " + s.pgid);
+                out(3, "TZ: " + (s.tz || "UTC"));
+                out(3, "WEBUI_PORT: " + '"' + s.port.qbweb + '"');
+                out(3, "TORRENTING_PORT: " + '"' + s.port.qbtorrent + '"');
+                out(2, "volumes:");
+                out(3, "- " + cfg(s, "qbittorrent") + ":/config");
+                out(3, "# the files themselves, on the inside path qBittorrent downloads to on its own, so");
+                out(3, "# nothing has to name a save path anywhere for them to land here. Amphi never reads");
+                out(3, "# them either: what has been downloaded is its own answer, kept in its own database.");
+                out(3, "- " + s.dlHost + ":" + s.dlContainer);
+            }
+
+            // No `volumes:` block: every path in here is a folder on the machine, so there is
+            // nothing left for docker to name and keep somewhere of its own.
+            return L.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
+        }
+
+        function buildSteps(s) {
+            const li = [];
+            const c = (t) => '<code class="k">' + t + "</code>";
+
+            li.push("Open " + c("http://localhost:" + s.port.amphi) + " and make the first account. The window closes the moment one account exists — whoever gets there first is the administrator.");
+            li.push("<strong>Settings → General</strong>: a <a href=\"https://www.themoviedb.org/settings/api\">TMDB API key</a>. Nothing can be shown without it.");
+
+            if (s.install.qbittorrent) {
+                li.push("qBittorrent sets itself a temporary password on the first start and prints it in its log: " + c("docker logs qbittorrent") + ". Log in at " + c("http://localhost:" + s.port.qbweb) + " and change it before anything else.");
+            }
+            if (s.install.indexer) {
+                const which = s.install.indexer === "jackett" ? "Jackett" : "Prowlarr";
+                const port = s.install.indexer === "jackett" ? s.port.jackett : s.port.prowlarr;
+                li.push("Add your trackers in " + which + " at " + c("http://localhost:" + port) + " and copy its api key from that page.");
+            }
+            if (s.install.flaresolverr || s.have.flaresolverr) {
+                li.push("In the indexer manager, the FlareSolverr address is " + c(flareUrl(s)) + " — set it only on the indexers that ask for it.");
+            }
+
+            li.push("<strong>Settings → Indexer</strong>: the URL is " + c(indexerUrl(s)) + ", plus that api key. The button next to the indexer list fills in what the manager has; the order you leave them in is the priority.");
+            li.push("<strong>Settings → Download client</strong>: the URL is " + c(torrentUrl(s)) + ", with the qBittorrent user and password.");
+
+            li.push("<strong>Settings → Quality / Language</strong>: what a good release looks like to you. The defaults prefer 1080p, then 720p, and Hungarian over English — both are lists you reorder.");
+
+            const folder = s.install.qbittorrent ? s.dlHost : "the folder qBittorrent downloads into";
+            li.push("<strong>Plex or Jellyfin</strong>, if there is one: give its container the same folder, read only — " +
+                c((s.install.qbittorrent ? s.dlHost : "/srv/downloads/amphi") + ":/media/amphi:ro") +
+                " in its own compose file — and add " + c("/media/amphi") + " as a library. Films and episodes land in " +
+                (s.install.qbittorrent ? c(folder) : folder) +
+                " together, which Jellyfin takes as one mixed library and Plex would rather have split in two. Amphi is not told about any of it: what has been downloaded is its own answer, kept in its own database, and a download still goes when its retention is up whether a media server is watching the folder or not.");
+
+            return li.map((t) => "<li>" + t + "</li>").join("");
+        }
+
+        function buildWarnings(s) {
+            const w = [];
+
+            const published = [];
+            for (const p of PORTS) {
+                if (!p.when(s)) continue;
+                published.push([p.label, s.port[p.id]]);
+            }
+            const seen = new Map();
+            for (const [label, port] of published) {
+                if (seen.has(port)) w.push("Port " + port + " is published twice — " + seen.get(port) + " and " + label + ". One of the two has to move.");
+                else seen.set(port, label);
+            }
+
+            for (const key of ["jackett", "prowlarr", "qbittorrent", "flaresolverr", "postgres"]) {
+                if (s.have[key] && !s.url[key]) w.push("The address of the " + key + " you already run is empty, so the file cannot point at it.");
+            }
+            if (s.have.jackett && s.have.prowlarr) {
+                w.push("Both indexer managers are ticked. Amphi talks to one — Jackett's address is the one used below.");
+            }
+            if (!s.install.postgres && !/\?schema=/.test(s.url.postgres)) {
+                w.push("The connection string has no ?schema=public on it. Prisma needs it.");
+            }
+            if (!/^([\/~]|\.\.?\/)/.test(s.base)) {
+                w.push("The base folder has to be an absolute path, or start with ./ — anything else is read as the name of a volume instead of a folder.");
+            }
+            if (s.install.qbittorrent && !/^([\/~]|\.\.?\/)/.test(s.dlHost)) {
+                w.push("The downloads folder has to be an absolute path, or start with ./");
+            }
+
+            if (!w.length) return "";
+            return '<div class="warn">' + (w.length === 1 ? "One thing:" : "A few things:") +
+                "<ul>" + w.map((t) => "<li>" + t + "</li>").join("") + "</ul></div>";
+        }
+
+        function renderPorts(s) {
+            const box = $("ports");
+            box.innerHTML = "";
+            for (const p of PORTS) {
+                if (!p.when(s)) continue;
+                const row = document.createElement("div");
+                row.className = "row";
+                row.innerHTML = '<span class="lbl">' + p.label +
+                    (p.hint ? "<small>" + p.hint + "</small>" : "") + "</span>";
+                const input = document.createElement("input");
+                input.type = "number";
+                input.min = "1";
+                input.max = "65535";
+                input.value = String(portValues[p.id]);
+                input.addEventListener("input", (e) => {
+                    // the listener on `document` would redraw these rows from scratch and take
+                    // the focus out of the field being typed in
+                    e.stopPropagation();
+                    portValues[p.id] = parseInt(input.value, 10) || p.def;
+                    render(true);
+                });
+                row.appendChild(input);
+                box.appendChild(row);
+            }
+        }
+
+        const summary = (s) => {
+            const parts = ["Amphi itself"];
+            if (s.install.postgres) parts.push("its database");
+            if (s.install.indexer) parts.push(s.install.indexer === "jackett" ? "Jackett" : "Prowlarr");
+            if (s.install.flaresolverr) parts.push("FlareSolverr");
+            if (s.install.qbittorrent) parts.push("qBittorrent");
+            const list = parts.length > 1
+                ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
+                : parts[0];
+            return list + " — " + parts.length + (parts.length === 1 ? " container." : " containers.");
+        };
+
+        // `keepPorts` is for the port inputs redrawing themselves out from under the cursor: they
+        // only need rebuilding when the set of services changes, not on every keystroke.
+        function render(keepPorts) {
+            const s = readState();
+
+            for (const key of ["jackett", "prowlarr", "qbittorrent", "flaresolverr", "postgres"]) {
+                $("have-" + key + "-box").classList.toggle("hidden", !s.have[key]);
+            }
+            $("indexer-choice").classList.toggle("hidden", !s.install.indexer);
+            $("flare-choice").classList.toggle("hidden", s.have.flaresolverr);
+            $("downloads-box").classList.toggle("hidden", !s.install.qbittorrent);
+            $("ids-row").classList.toggle("hidden", !(s.install.qbittorrent || s.install.indexer));
+            $("pw-row").classList.toggle("hidden", !s.install.postgres);
+            $("install-summary").textContent = summary(s);
+
+            const folders = [];
+            if (s.install.postgres) folders.push([dbVol(s), "the whole install: accounts, watchlists, library, settings, log"]);
+            if (s.install.indexer) folders.push([cfg(s, s.install.indexer), "the indexers and the api key"]);
+            if (s.install.qbittorrent) folders.push([cfg(s, "qbittorrent"), "the client's settings and its running torrents"]);
+            $("path-preview").innerHTML = folders.length
+                ? folders.map(([p, why]) => '<span class="mono">' + p + "</span> — " + why).join("<br>")
+                : "Nothing to keep here: everything in this file is a service you already run.";
+
+            if (!keepPorts) renderPorts(s);
+            $("yaml").textContent = buildYaml(s);
+            $("steps").innerHTML = buildSteps(s);
+            $("warnings").innerHTML = buildWarnings(s);
+        }
+
+        document.addEventListener("input", () => render(false));
+        document.addEventListener("change", () => render(false));
+
+        $("regen").addEventListener("click", () => {
+            $("dbpass").value = newPassword();
+            render(false);
+        });
+
+        $("copy").addEventListener("click", async () => {
+            const text = $("yaml").textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch {
+                // clipboard access is denied outside a secure context, and a file:// copy of this
+                // page is exactly that
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                ta.remove();
+            }
+            const b = $("copy");
+            b.textContent = "Copied";
+            setTimeout(() => { b.textContent = "Copy"; }, 1400);
+        });
+
+        $("download").addEventListener("click", () => {
+            const blob = new Blob([$("yaml").textContent], { type: "text/yaml" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "docker-compose.yml";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        });
+
+        $("dbpass").value = newPassword();
+        render(false);
+    </script>
+</body>
+
+</html>

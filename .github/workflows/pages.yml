@@ -1,0 +1,47 @@
+# The compose generator, published on GitHub Pages. It is one static file with no build step
+# and no dependencies, so this job only uploads `docs/` and hands it to Pages.
+#
+# Needs one thing set by hand, once: Settings → Pages → Source = GitHub Actions. Without it
+# the deploy step fails with a 404 and nothing else explains why.
+
+name: pages
+
+on:
+    push:
+        branches: [ master ]
+        paths:
+            - "docs/**"
+            - ".github/workflows/pages.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pages: write
+    # what `deploy-pages` signs its upload with — no secret to keep
+    id-token: write
+
+# a queued run waits for the running one rather than cancelling it: whichever push is last
+# is the one that should end up live
+concurrency:
+    group: pages
+    cancel-in-progress: false
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+        environment:
+            name: github-pages
+            url: ${{ steps.deploy.outputs.page_url }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/configure-pages@v5
+
+            - uses: actions/upload-pages-artifact@v3
+              with:
+                  path: docs
+
+            - id: deploy
+              uses: actions/deploy-pages@v4

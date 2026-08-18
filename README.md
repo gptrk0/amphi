@@ -20,6 +20,12 @@ docker compose up -d
 
 Then open <http://localhost:3000>.
 
+That file is the app and its database and nothing else: it takes for granted that an indexer
+manager and qBittorrent are already running somewhere it can be pointed at. If they are not,
+or the ports and the folders have to be different on this machine, the [compose
+generator](https://gptrk0.github.io/amphi/) writes a file with whatever is missing in it —
+tick what you already run and it stays out.
+
 1. **The first person to open a fresh install becomes its administrator.** The window closes
    the moment one account exists, so do this before the port is reachable from anywhere you
    do not trust.
