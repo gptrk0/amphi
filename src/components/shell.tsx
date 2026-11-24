@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 
 import { ThemeProvider } from "@/components/providers/theme-provider";
+import { ServiceWorker } from "@/components/providers/service-worker";
 import { AppSidebar } from "@/components/app-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@radix-ui/react-separator";
@@ -42,6 +43,11 @@ export function Shell({ locale, children }: { locale: Locale, children: React.Re
             disableTransitionOnChange
         >
             <LocaleProvider initial={locale}>
+                {/* outside the bare check on purpose: the login page is a perfectly good
+                    place to install the app from, and the worker it registers is the
+                    same one either way */}
+                <ServiceWorker />
+
                 {bare && <>
                     { children }
                     <Toaster />
@@ -53,8 +59,8 @@ export function Shell({ locale, children }: { locale: Locale, children: React.Re
                             <SidebarProvider>
                                 <AppSidebar />
 
-                                <SidebarInset>
-                                    <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+                                <SidebarInset className="pb-[env(safe-area-inset-bottom)]">
+                                    <header className="flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b px-4 pt-[env(safe-area-inset-top)]">
                                         <SidebarTrigger className="-ml-1" />
 
                                         <Separator

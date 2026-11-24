@@ -317,7 +317,7 @@ export const hu: Messages = {
     notify: {
         ready: { label: "Megnézhető", help: "egy letöltés befejeződött, meg lehet nézni" },
         started: { label: "Letöltés indult", help: "a scanner elvitt valamit, vagy valaki kézzel kérte" },
-        dropped: { label: "Release eldobva", help: "egy letöltés hamisnak vagy halottnak bizonyult, és visszakerült a keresésbe" },
+        dropped: { label: "Eldobva", help: "egy letöltés hamisnak vagy halottnak bizonyult, és visszakerült a keresésbe" },
         deleted: { label: "Törölve", help: "egy letöltés elhagyta a gyűjteményt, kézzel vagy mert lejárt az ideje" }
     },
 
@@ -359,6 +359,23 @@ export const hu: Messages = {
         testTitle: "Egy üzenet küldése most, arra a címre, ami épp a mezőben van",
         exampleTitle: "Használd ezt kiindulásnak",
         failed: "A webhookot nem sikerült meghívni."
+    },
+
+    push: {
+        title: "Értesítés ezen az eszközön",
+        hint: "Értesítés erre a telefonra vagy böngészőre, magától az apptól, külön telepítenivaló nélkül. Az eszközhöz tartozik és nem a fiókhoz: minden telefonon külön kell bekapcsolni, azon a telefonon.",
+        on: "be",
+        off: "ki",
+        enable: "Bekapcsolom",
+        disable: "Kikapcsolom",
+        test: "Teszt",
+        testTitle: "Egy értesítés küldése most, minden bekapcsolt eszközödre",
+        devices: "A fiókodhoz bekapcsolt eszközök: {count}",
+        unsupported: "Ez a böngésző nem tud értesítést fogadni. iPhone-on előbb ki kell tenni az oldalt a kezdőképernyőre; máshol ahhoz kell, hogy az app https-en legyen elérhető.",
+        denied: "Ez a böngésző elutasítja az értesítéseket ehhez az oldalhoz. A böngésző saját beállításaiban kell újra engedélyezni — ha egyszer elutasították, innen kérni hiába.",
+        failed: "Az értesítéseket nem sikerült bekapcsolni.",
+        turnedOn: "Ezen az eszközön bekapcsoltad az értesítéseket.",
+        turnedOff: "Ezen az eszközön kikapcsoltad az értesítéseket."
     },
 
     watchlistToast: {

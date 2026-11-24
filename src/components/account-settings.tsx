@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { OptionCheckboxes } from "@/components/option-checkboxes";
 import { TagInput } from "@/components/tag-input";
+import { PushToggle } from "@/components/push-toggle";
 import { WebhookExamples } from "@/components/webhook-examples";
 import { useLocale } from "@/context/locale";
 import { useSession } from "@/context/session";
@@ -230,6 +231,10 @@ export function AccountSettings({ userId }: { userId?: number }) {
 
                     <WebhookExamples onPick={setWebhook} />
                 </div>
+
+                {/* only your own: a subscription is a permission one browser gave, and
+                    nobody can turn it on for somebody else's phone from here */}
+                {isMine && <PushToggle />}
 
                 <div className="space-y-2">
                     <label className="text-sm font-medium">{ t("account.events") }</label>

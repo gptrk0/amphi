@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { logDebug, logWarn } from "@/lib/log";
 import { loadSettings, settingList, settingText } from "@/lib/settings";
 import { callWebhook, WebhookFields } from "@/lib/webhook";
+import { pushToUser } from "@/lib/push";
 import { NotifyEvent } from "@/types/notify";
 
 /**
@@ -165,23 +166,58 @@ export const forWhom = async (userIds: number[]) => {
 };
 
 /**
+ * Where a notification lands when it is tapped. Not the title itself — the callers have
+ * a name and a release, not a tmdb id — but the page that title would be on, which is
+ * one tap from the thing either way and a great deal better than the front page.
+ */
+const LANDS_ON: Record<NotifyEvent, string> = {
+    ready: "/library",
+    deleted: "/library",
+    started: "/watchlist",
+    dropped: "/watchlist"
+};
+
+/**
  * The people who asked for this one thing. Nobody is told about somebody else's
  * download — that is the whole reason a watchlist belongs to a person now.
  *
- * Nothing in the settings gates this: a webhook is the user's own address and needs
- * no bot token, so somebody can have notifications working on an install where the
- * operator never set one up.
+ * **Two channels, one rule.** A webhook if they have set one, a push to every device
+ * they have turned on, and both if both — the same honest double the administrator gets
+ * when the install has a webhook and so do they. Which events they want is one answer
+ * for both, because "tell me when something is ready" is a thing to want and not a thing
+ * to want per transport.
+ *
+ * Nothing in the settings gates any of it: a webhook is the user's own address and a
+ * subscription is their own phone, so somebody can have notifications working on an
+ * install where the operator never set one up.
  */
-export const notifyUsers = async (userIds: number[], event: NotifyEvent, title: string, detail?: string) => {
+export const notifyUsers = async (
+    userIds: number[],
+    event: NotifyEvent,
+    title: string,
+    detail?: string,
+    /**
+     * The part of `detail` a person should read, when there is one.
+     *
+     * `detail` is the release name — `Silo.S03E07.1080p.WEB.H264-GRP` — and that is an
+     * answer to "which copy did it take", which is a question whoever runs the box asks
+     * and whoever asked for the episode does not. So the push leaves it out, and the one
+     * case where the detail says something a person needs — why a release was dropped —
+     * passes that half on its own.
+     */
+    reason?: string
+) => {
     await loadSettings();
 
     if (userIds.length === 0) {
         return 0;
     }
 
+    // no longer only the ones with a webhook: a person whose phone is subscribed has
+    // nothing in that column and still asked to be told
     const users = await prisma.user.findMany({
-        where: { id: { in: userIds }, disabled: false, webhookUrl: { not: null } },
-        select: { name: true, webhookUrl: true, notifyEvents: true }
+        where: { id: { in: userIds }, disabled: false },
+        select: { id: true, name: true, webhookUrl: true, notifyEvents: true }
     });
 
     const fields = webhookFields(event, title, detail);
@@ -192,16 +228,39 @@ export const notifyUsers = async (userIds: number[], event: NotifyEvent, title: 
             continue;
         }
 
-        const result = await callWebhook(user.webhookUrl!, fields);
+        if (user.webhookUrl) {
+            const result = await callWebhook(user.webhookUrl, fields);
 
-        if (result.ok) {
-            sent++;
+            if (result.ok) {
+                sent++;
 
-            await logDebug("notify", `webhook → ${ user.name }: ${ PREFIX[event] } — ${ title }`, detail);
+                await logDebug("notify", `webhook → ${ user.name }: ${ PREFIX[event] } — ${ title }`, detail);
 
-        } else {
-            // the message is lost, the download is not
-            await logWarn("notify", `${ user.name }'s webhook did not take the message about ${ title }`, result.error);
+            } else {
+                // the message is lost, the download is not
+                await logWarn("notify", `${ user.name }'s webhook did not take the message about ${ title }`, result.error);
+            }
+        }
+
+        // and every phone of theirs, which is a separate answer to the same question and
+        // not a fallback: somebody with both gets both, deliberately, the way an
+        // administrator with an install webhook and one of their own hears twice
+        const pushed = await pushToUser(user.id, {
+            // the title is already the readable thing — the name from TMDB and, for an
+            // episode, which one — so the two lines are "what" and "what happened to it"
+            // and the app's own name is not worth a line of them
+            title,
+            body: [ PREFIX[event], reason ].filter(Boolean).join(" — "),
+            url: LANDS_ON[event],
+            // one title replaces its own earlier notifications rather than stacking:
+            // started, then ready, is one story and not two
+            tag: title
+        });
+
+        if (pushed > 0) {
+            sent += pushed;
+
+            await logDebug("push", `push → ${ user.name }: ${ PREFIX[event] } — ${ title }`, detail);
         }
     }
 

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Amphi">
+    <!--
+        The mark, and the only copy of it: every png beside this file is rendered from here.
+        An amphitheatre seen from the front — two tiers of seating around a solid stage, which
+        is the one shape the name already carries and the one that still reads at 48 pixels.
+
+        The colours are the app's own, taken from globals.css: oklch(0.13 0.028 261.692) and
+        oklch(0.985 0.002 247.839), written out in hex because a manifest and an svg that a
+        browser renders before any stylesheet exists cannot ask a css variable what it is.
+
+        Everything sits inside a circle of radius 188 around the centre, which is what makes
+        one drawing serve as both the plain icon and the maskable one: android's safe zone is
+        the middle 80% (radius 205), and a launcher may crop anything outside it.
+    -->
+    <rect width="512" height="512" fill="#030712"/>
+
+    <g fill="none" stroke="#f9fafb" stroke-width="26" stroke-linecap="round">
+        <path d="M 356 340 A 100 100 0 0 0 156 340"/>
+        <path d="M 411 340 A 155 155 0 0 0 101 340"/>
+    </g>
+
+    <path d="M 302 340 A 46 46 0 0 0 210 340 Z" fill="#f9fafb"/>
+</svg>

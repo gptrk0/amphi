@@ -88,8 +88,9 @@ model User {
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
 
-  sessions   Session[]
-  watchlists Watchlist[]
+  sessions    Session[]
+  watchlists  Watchlist[]
+  pushDevices PushDevice[]
 }
 
 /// A signed in browser. The cookie carries a random token, this table holds its
@@ -107,6 +108,42 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// A phone that has asked to be told. One row per browser **and per installation** of
+/// it: the same person with the app on the home screen and the same site open in a tab
+/// is two of these, because a push subscription belongs to a service worker and not to
+/// an account.
+///
+/// `endpoint` is a URL at Apple, Google or Mozilla — whoever made the browser — and it
+/// is both the address and the identity: there is nothing else to recognise a device by,
+/// which is why it is the unique column. `p256dh` and `auth` are the keys the browser
+/// generated, and the message is encrypted to them before it is handed over, so the push
+/// service carries a sealed envelope it cannot read. What it does learn is that this
+/// install sent something to this device at this moment, and that is the part worth
+/// knowing about before turning this on.
+///
+/// Rows are deleted rather than kept: a subscription that answers 404 or 410 is gone for
+/// good — the app was removed from the home screen, the browser's storage was cleared —
+/// and there is nothing to retry and nobody to tell.
+model PushDevice {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
+  /// What the person would recognise it by, taken from the user agent at subscribe
+  /// time. Only ever shown back to its owner, and only so that "this one is my phone"
+  /// is answerable at all.
+  label String?
+
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 /// A setting edited from the admin page. One row per key that was actually changed:

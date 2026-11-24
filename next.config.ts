@@ -9,16 +9,21 @@ const nextConfig: NextConfig = {
     // bundle it anyway — `Module not found: Can't resolve 'fs'` from inside pg-connection-string,
     // by way of the prisma adapter that instrumentation.ts pulls in at boot. Listed here it
     // stays a plain require at run time, which is the only thing it can be.
-    serverExternalPackages: [ "pg", "@prisma/adapter-pg" ],
+    // `web-push` is here for a milder reason than the driver: it is a plain CommonJS
+    // module over node's crypto and https, and there is nothing to gain from compiling it
+    serverExternalPackages: [ "pg", "@prisma/adapter-pg", "web-push" ],
     // and the same chain a second time, for the runtime it can never run in. Because a
     // middleware exists, next compiles instrumentation.ts for the edge as well, and from
     // there the imports lead to the postgres driver — which wants `fs`, `net`, `string_decoder`
     // and half of node besides. The code is unreachable there (`register()` returns unless
     // NEXT_RUNTIME is nodejs), so the driver is resolved to nothing rather than chased through
     // a list of shims that would only ever be dead weight.
+    //
+    // `web-push` arrives along the same chain — the scheduler notifies, and a notification
+    // can now be a push — and wants `https` and `crypto` for the same unreachable reason.
     webpack: (config, { nextRuntime }) => {
         if (nextRuntime === "edge") {
-            config.resolve.alias = { ...config.resolve.alias, pg: false, "pg-native": false };
+            config.resolve.alias = { ...config.resolve.alias, pg: false, "pg-native": false, "web-push": false };
         }
 
         return config;

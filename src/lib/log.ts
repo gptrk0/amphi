@@ -31,7 +31,10 @@ export type LogSource =
     | "tmdb"
     | "indexer"
     | "torrent"
-    | "notify";
+    | "notify"
+    // its own rather than part of "notify": the question somebody brings to the log is
+    // "why did my phone not buzz", and a device that stopped existing is not a webhook
+    | "push";
 
 // worst first is what a level filter means: "warnings" includes errors
 export const LOG_LEVELS = [ LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR ];

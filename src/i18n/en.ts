@@ -371,6 +371,26 @@ export const en = {
         failed: "The webhook could not be called."
     },
 
+    // The push toggle on the account page. It is the only thing on that page which is
+    // about the browser in front of you rather than about the account, and most of these
+    // sentences are working to make that clear.
+    push: {
+        title: "Notifications on this device",
+        hint: "A notification on this phone or browser, from the app itself, with nothing else to install. It belongs to the device rather than to the account: every phone you want to be told on has to be turned on here, on that phone.",
+        on: "on",
+        off: "off",
+        enable: "Turn on",
+        disable: "Turn off",
+        test: "Test",
+        testTitle: "Send one notification now, to every device you have turned on",
+        devices: "Devices turned on for your account: {count}",
+        unsupported: "This browser cannot receive notifications. On an iPhone the page has to be added to the home screen first; everywhere else the app has to be reached over https.",
+        denied: "This browser is refusing notifications for this site. It has to be allowed again in the browser's own settings — once it has been refused, asking from here does nothing.",
+        failed: "Notifications could not be turned on.",
+        turnedOn: "Notifications are on for this device.",
+        turnedOff: "Notifications are off for this device."
+    },
+
     watchlistToast: {
         added: "{name} added to your watchlist!",
         addFailed: "Could not add {name} to your watchlist.",

@@ -148,6 +148,17 @@ export const SETTINGS: SettingDef[] = [
     { key: "NOTIFY_WEBHOOK_URL", group: "Notifications", label: "The install's webhook", type: "string", secret: true, placeholder: "https://…", help: "Where this install's own notifications go — everything the app does, whoever it was for. A placeholder like {message} in it and the text goes into the URL as a GET; without one it is posted as JSON (content), which is what a Discord webhook wants. {title}, {detail}, {event} and {who} are the others. Empty turns it off. It is a secret because a Telegram URL has the bot token in it: the log names this setting, never quotes it." },
     { key: "NOTIFY_EVENTS", group: "Notifications", label: "Events to send", type: "list", options: NOTIFY_EVENTS, default: "ready,started,dropped,deleted", help: "This channel is the install's, so every message says whose download it was about. Nothing ticked sends nothing." },
     { key: "NOTIFY_WEBHOOK_ALLOW_PRIVATE", group: "Notifications", label: "Allow webhooks inside your network", type: "boolean", default: "0", help: "Everybody here can set a webhook of their own on their account page, and the server is what calls it — so by default it refuses addresses only the server can reach (localhost, 10.x, 192.168.x). Turn this on only if somebody genuinely has a receiver on the same network." },
+    // The key pair a web push is signed with. Generated on its own the first time
+    // somebody turns notifications on for a device, never asked of anybody — there is
+    // nothing to decide about it, and no account anywhere to register it with: a VAPID
+    // key is simply how Apple, Google and Mozilla know that two messages came from the
+    // same sender. They are here rather than in a file because this is where everything
+    // install specific lives, and because resetting them has a meaning worth having a
+    // button for: every device on the install goes quiet until its owner turns it back
+    // on, which is the only way to revoke a subscription from this side.
+    { key: "PUSH_VAPID_PUBLIC", group: "Notifications", label: "Push signing key (public)", type: "string", help: "Generated. Every browser that subscribes is handed this one, so it is not a secret. Clearing it clears the private half too and every device has to be enabled again." },
+    { key: "PUSH_VAPID_PRIVATE", group: "Notifications", label: "Push signing key (private)", type: "string", secret: true, help: "Generated, and the half that never leaves this machine. Nothing to fill in by hand." },
+
 
     // Download dialog
     { key: "DOWNLOAD_OPTION_COUNT", group: "Download dialog", label: "Releases to offer", type: "number", default: "5" },

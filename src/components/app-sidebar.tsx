@@ -130,7 +130,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
     return (
         <Sidebar {...props}>
-            <SidebarHeader className="px-5 pt-4 pb-2">
+            <SidebarHeader className="px-5 pt-[calc(1rem+env(safe-area-inset-top))] pb-2">
                 {/* the name at the top of a page is a way home everywhere else on the web */}
                 <Link href="/" className={classNames(teko.className, "text-5xl text-center")} onClick={leave}>
                     Amphi
@@ -163,7 +163,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarContent>
 
             {/* At the bottom, because it is set once and then never again */}
-            <SidebarFooter>
+            <SidebarFooter className="pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
                 <LanguagePicker />
             </SidebarFooter>
 

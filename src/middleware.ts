@@ -51,7 +51,14 @@ export function middleware(req: NextRequest) {
 
 export const config = {
     matcher: [
-        // everything except next's own assets and the files in public/
-        "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"
+        // everything except next's own assets and the files in public/ — and the three
+        // files the home screen app is made of, each of which is reached without a
+        // session by definition: a manifest is fetched by the browser without
+        // credentials and never carries the cookie, a worker is installed from the
+        // login page as readily as from anywhere else, and the offline page is shown
+        // precisely when there is no server to ask about a session at all. Answering
+        // any of the three with a redirect to /login is an install with no name and no
+        // icon, and it fails silently.
+        "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|offline.html|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"
     ]
 };

@@ -390,7 +390,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.BAD_PAYLOAD, payload.reason);
             await notify("dropped", label, `${ payload.reason } — ${ torrent.name }`, await forWhom(item.watchedBy));
-            await notifyUsers(item.watchedBy, "dropped", label, `${ payload.reason } — ${ torrent.name }`);
+            await notifyUsers(item.watchedBy, "dropped", label, `${ payload.reason } — ${ torrent.name }`, payload.reason);
 
             await removeTorrent(hash, payloadDeleteFiles());
             forgetStall(hash);
@@ -429,7 +429,7 @@ export const syncDownloads = async (preloaded?: TorrentStatus[]) => {
 
             await blockRelease(normalizeTitle(torrent.name), BlockReason.STALLED, stalled);
             await notify("dropped", label, `${ stalled } — ${ torrent.name }`, await forWhom(item.watchedBy));
-            await notifyUsers(item.watchedBy, "dropped", label, `${ stalled } — ${ torrent.name }`);
+            await notifyUsers(item.watchedBy, "dropped", label, `${ stalled } — ${ torrent.name }`, stalled);
 
             await removeTorrent(hash, stallDeleteFiles());
             forgetStall(hash);

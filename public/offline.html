@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex">
+    <title>Amphi</title>
+
+    <!--
+        The one page the worker keeps, so it has to stand entirely on its own: no stylesheet,
+        no font, no image file. Anything it referenced would be fetched over the connection
+        that is by definition not there, and the page would arrive unstyled at the worst
+        possible moment.
+
+        Two things it cannot do, and both are deliberate. It cannot read the app's chosen
+        theme, which is a class the application sets on `<html>` once it is running — so it
+        follows the system preference instead, which is what the app's own default does. And
+        it is not translated through `src/i18n`: that dictionary is typescript inside the
+        bundle. The locale cookie is readable from here though, and these are two sentences,
+        so they are written out twice below rather than shown in a language nobody chose.
+    -->
+
+    <style>
+        :root {
+            color-scheme: light dark;
+            --background: #ffffff;
+            --foreground: #030712;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background: #030712;
+                --foreground: #f9fafb;
+                --muted: #9ca3af;
+                --border: #1f2937;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100dvh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: calc(2rem + env(safe-area-inset-top)) 1.5rem calc(2rem + env(safe-area-inset-bottom));
+            background: var(--background);
+            color: var(--foreground);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        main {
+            width: 100%;
+            max-width: 26rem;
+            text-align: center;
+        }
+
+        svg { width: 72px; height: 72px; }
+
+        h1 {
+            margin: 1.5rem 0 0.5rem;
+            font-size: 1.375rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.9375rem;
+            line-height: 1.6;
+        }
+
+        button {
+            margin-top: 1.75rem;
+            padding: 0.625rem 1.25rem;
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            font-size: 0.9375rem;
+            cursor: pointer;
+        }
+
+        button:hover { border-color: var(--muted); }
+    </style>
+</head>
+<body>
+    <main>
+        <svg viewBox="0 0 512 512" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="26" stroke-linecap="round">
+                <path d="M 356 340 A 100 100 0 0 0 156 340"/>
+                <path d="M 411 340 A 155 155 0 0 0 101 340"/>
+            </g>
+            <path d="M 302 340 A 46 46 0 0 0 210 340 Z" fill="currentColor"/>
+        </svg>
+
+        <h1 id="title"></h1>
+        <p id="body"></p>
+
+        <button id="retry" type="button" onclick="location.reload()"></button>
+    </main>
+
+    <script>
+        var WORDS = {
+            en: {
+                title: "No connection",
+                body: "Amphi runs on a machine of your own, and this phone cannot reach it from here. Nothing is lost — it carries on downloading without you, and the moment you are back on a network that can see it, so are you.",
+                retry: "Try again"
+            },
+            hu: {
+                title: "Nincs kapcsolat",
+                body: "Az Amphi a saját gépeden fut, és a telefon innen nem éri el. Semmi nem veszett el — nélküled is tölti tovább, és amint újra olyan hálózaton vagy, ahonnan látszik, te is ott vagy.",
+                retry: "Újra"
+            }
+        };
+
+        // the same cookie the application is rendered from, and the browser's own
+        // preference behind it for a phone that has never been signed in here
+        var match = document.cookie.match(/(?:^|;\s*)amphi_locale=([^;]*)/);
+        var chosen = match ? decodeURIComponent(match[1]) : "";
+        var locale = WORDS[chosen] ? chosen
+            : (navigator.language || "").toLowerCase().indexOf("hu") === 0 ? "hu"
+            : "en";
+
+        document.documentElement.lang = locale;
+        document.getElementById("title").textContent = WORDS[locale].title;
+        document.getElementById("body").textContent = WORDS[locale].body;
+        document.getElementById("retry").textContent = WORDS[locale].retry;
+    </script>
+</body>
+</html>
