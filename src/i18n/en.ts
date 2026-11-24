@@ -559,7 +559,51 @@ export const en = {
         ownerTooltip: "Whose want this is. Hand the row over and everything still to be found on it goes with it — and it is looked for in whatever the new owner's account asks for.",
         ownerSet: "{name} is on {user}'s watchlist now.",
         ownerTaken: "{user} already has {name} on their watchlist, and two lists cannot be merged into one.",
-        ownerFailed: "Could not hand {name} over."
+        ownerFailed: "Could not hand {name} over.",
+        diagnoseTitle: "Check the search — ask the indexers again and show every check each release was put through"
+    },
+
+    // "nothing found" is the same sentence whether the indexers answered nothing or
+    // answered plenty and the profile refused all of it, and those are not the same
+    // problem. This is the search run again with the reasoning left in.
+    diagnosis: {
+        title: "Why nothing was found for {name}",
+        description: "The scanner's own search, run again just now: everything the indexers answered with, and every check each release was put through. Nothing is downloaded and nothing on the watchlist changes.",
+        running: "Asking your indexers...",
+        failed: "Could not check the search.",
+        close: "Close",
+        titles: "Names a release may use",
+        titlesHint: "Underneath each one is what the match actually compares — a release name is reduced the same way, and two of these are the same title only if those two lines are identical.",
+        language: "Language it insists on",
+        languageAny: "any",
+        imdb: "IMDb id",
+        imdbNone: "none, so the indexers are asked by name",
+        query: "Asked for: {query}",
+        found: "{n} came back",
+        foundNone: "nothing came back",
+        accepted: "{n} got through every check",
+        acceptedNone: "none of them got through",
+        shown: "showing the first {n}",
+        skipped: "{n} more episodes are waiting and were not searched, so this stays one round of your indexers rather than one per episode.",
+        empty: "Nothing on this row is being looked for right now — it is all either downloaded already or not out yet.",
+        // the questions, in the order they are put
+        steps: {
+            numbering: "Is it this episode?",
+            link: "Is there anything to download?",
+            blocked: "Tried once before?",
+            seeders: "Seeders",
+            maxSize: "Size ceiling",
+            keywords: "Excluded keywords",
+            title: "Is it this title?",
+            languageExcluded: "A language you ruled out?",
+            languageRequired: "The language you asked for?",
+            resolution: "Resolution",
+            minSize: "Size floor"
+        },
+        passed: "Passed every check — it would have scored {score}",
+        failedAt: "Thrown away by: {steps}",
+        showSteps: "Show the checks",
+        hideSteps: "Hide the checks"
     },
 
     libraryPage: {

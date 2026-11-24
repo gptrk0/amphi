@@ -4,6 +4,7 @@ import { getIndexerIds, IndexerResult } from "@/lib/indexer";
 import { isReleaseBlocked } from "@/lib/blocklist";
 import { LanguageProfile } from "@/lib/language";
 import { settingList, settingNumber, settingText } from "@/lib/settings";
+import { CheckStep, ReleaseTrace } from "@/types/diagnosis";
 import { RejectionCode } from "@/types/download";
 import { LANGUAGES } from "@/types/language";
 
@@ -144,8 +145,44 @@ export const parseCodec = (title: string): string | null => {
     return match ? match[1].toLowerCase().replace(/[^a-z0-9]/g, "") : null;
 };
 
+/**
+ * The letters with no decomposition of their own, spelled out because `NFD` cannot help
+ * with them: `ø` is one character and always was, and so are `đ`, `ł` and `ß`. A Danish
+ * or a Polish title has exactly the Hungarian problem below, and a letter silently
+ * deleted is the whole failure this is here to stop.
+ */
+const FOLDED: Record<string, string> = {
+    "ø": "o", "đ": "d", "ð": "d", "ł": "l", "ß": "ss", "æ": "ae", "œ": "oe", "þ": "th", "ħ": "h", "ı": "i"
+};
+
+/**
+ * Two names are the same name when nothing but punctuation and accents separates them.
+ *
+ * The accents are the part that was missing, and it was not a near miss: `[^a-z0-9]`
+ * removes an accented letter *whole*, because `ü` is not in `a-z`. So "A nemzet hülyéje"
+ * normalised to `anemzethlyje` — a word no release has ever been named — while every
+ * release of it on nCore is `A.nemzet.hulyeje.S01E02...`, which normalises to
+ * `anemzethulyeje`. The two could never be equal, so `matchesTarget` refused all seven
+ * releases of the show with "title mismatch" and the scanner reported that it had found
+ * nothing (reported 2026-11-24). Every accented title was in the same position: the more
+ * Hungarian the name, the more certainly it could not be downloaded.
+ *
+ * `NFD` splits `ü` into `u` and a combining mark, and the mark is in a range the sweep
+ * below was already removing — so the decomposition is what makes the sweep drop the
+ * accent instead of the letter.
+ *
+ * One thing shifts underfoot: the blocklist is keyed by this function's output, so a
+ * release blocked under the old spelling of an accented name is no longer recognised by
+ * the new one. It gets one more chance and is blocked again under the new key, which is
+ * the cheapest possible migration for a table that heals itself.
+ */
 export const normalizeTitle = (title: string) => {
-    return title.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return title
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[øđðłßæœþħı]/g, (letter) => FOLDED[letter] || letter)
+        .replace(/[^a-z0-9]+/g, "");
 };
 
 /**
@@ -489,74 +526,214 @@ const score = (release: IndexerResult, resolution: string | null, profile: Quali
     return tiers * TAIL_SPAN + Math.min(release.seeders, SEEDER_CAP) + codecBonus;
 };
 
+/**
+ * What a release turns out to be, worked out once and handed to every check below.
+ *
+ * Each of these costs a `PTT.parse` of the name, and the checks ask for the same three
+ * answers between them — so they are read here rather than per question, which is also
+ * what the single pass through the list used to do by hand.
+ */
+export type ReleaseFacts = {
+    resolution: string | null;
+    language: LanguageRating;
+    // what the name counts as, untagged releases included — see `effectiveLanguages`
+    languages: string[];
+};
+
+export const releaseFacts = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ReleaseFacts => ({
+    resolution: parseResolution(release.title),
+    language: rateLanguage(release.title, profile, target),
+    languages: effectiveLanguages(release.title, profile)
+});
+
+/**
+ * What one question put to a release came back with. `detail` is what the check *saw*
+ * whichever way it went — the seeder count, the resolution, the name it read — and
+ * `rejection` is the sentence for the log, null when the release got past it.
+ */
+export type CheckOutcome = { detail: string, rejection: string | null };
+
+const passed = (detail: string): CheckOutcome => ({ detail, rejection: null });
+const refused = (reason: string): CheckOutcome => ({ detail: reason, rejection: reason });
+
+/**
+ * Every check a release is put through, in the order it is put through them.
+ *
+ * **Why this is a list and not a run of `if`s.** The scanner only ever wants the first
+ * refusal: it is throwing the release away, and the remaining questions are moot. Somebody
+ * asking *why nothing was found* wants the opposite — every question and every answer,
+ * the passes included, because "it is the right show, in the right language, and the size
+ * floor took it" is a different problem from "this was never that show at all", and the
+ * first refusal alone cannot tell them apart.
+ *
+ * Two readers, one list. `rateRelease` walks it and stops at the first `rejection`;
+ * `traceRelease` walks all of it and writes down what each one said. Nothing can drift
+ * between the two, and a check added here is a check the diagnosis can already explain —
+ * which matters, because a filter nobody can be told about is a filter nobody can fix.
+ *
+ * `step` is what the check is called and `code` is what it refuses *with*: the two
+ * language rules are one refusal to a reader ("not in a language you want") and two
+ * entirely different questions to anybody debugging one.
+ */
+export type ReleaseCheck = {
+    step: CheckStep;
+    code: RejectionCode;
+    run: (release: IndexerResult, profile: QualityProfile, facts: ReleaseFacts, target?: ReleaseTarget) => CheckOutcome;
+};
+
+export const RELEASE_CHECKS: ReleaseCheck[] = [
+    {
+        step: "link",
+        code: "no-link",
+        run: (release) => release.link ? passed("has a download link") : refused("no download link")
+    },
+    {
+        // it was grabbed once already and had to be thrown away: it either stood still
+        // until it was given up on, or what came down was not the release at all
+        step: "blocked",
+        code: "blocked",
+        run: (release) => isReleaseBlocked(normalizeTitle(release.title))
+            ? refused("already tried and dropped")
+            : passed("not on the blocklist")
+    },
+    {
+        step: "seeders",
+        code: "seeders",
+        run: (release, profile) => release.seeders < profile.minSeeders
+            ? refused(`${ release.seeders } seeders`)
+            : passed(`${ release.seeders } seeders, at least ${ profile.minSeeders } wanted`)
+    },
+    {
+        step: "maxSize",
+        code: "too-big",
+        run: (release, profile) => {
+            if (profile.maxSizeGb <= 0) {
+                return passed("no size ceiling");
+            }
+
+            return release.size > profile.maxSizeGb * GB
+                ? refused(`${ (release.size / GB).toFixed(1) }GB is over the limit`)
+                : passed(`${ (release.size / GB).toFixed(1) }GB, ceiling ${ profile.maxSizeGb }GB`);
+        }
+    },
+    {
+        step: "keywords",
+        code: "excluded",
+        run: (release, profile) => {
+            const excluded = profile.excludeKeywords.find(keyword => hasKeyword(release.title, keyword));
+
+            return excluded ? refused(`excluded keyword: ${ excluded }`) : passed("no excluded keyword in the name");
+        }
+    },
+    {
+        step: "title",
+        code: "mismatch",
+        run: (release, profile, facts, target) => {
+            if (! target) {
+                return passed("no title to match against");
+            }
+
+            const mismatch = matchesTarget(release.title, target);
+
+            return mismatch
+                ? refused(mismatch)
+                : passed(`reads as ${ target.titles.join(" / ") || "the requested title" }`);
+        }
+    },
+    {
+        step: "languageExcluded",
+        code: "language",
+        run: (release, profile, facts) => facts.language.excluded
+            ? refused(`language ${ facts.language.excluded } not wanted`)
+            : passed(`${ facts.languages.join("/") }, none of them excluded`)
+    },
+    {
+        // the unattended path: the wrong language is not a worse release here, it is a
+        // different film to this person, and taking it would end their search for the one
+        // they actually asked for
+        step: "languageRequired",
+        code: "language",
+        run: (release, profile, facts) => {
+            if (profile.requireLanguages.length === 0) {
+                return passed("no language is required of it");
+            }
+
+            return facts.languages.some(language => profile.requireLanguages.includes(language))
+                ? passed(`${ facts.languages.join("/") }, ${ profile.requireLanguages.join(" or ") } wanted`)
+                : refused(`not in ${ profile.requireLanguages.join(" or ") }`);
+        }
+    },
+    {
+        // an unwanted resolution is dropped, an unknown one stays as a last resort
+        step: "resolution",
+        code: "resolution",
+        run: (release, profile, facts) => {
+            if (! facts.resolution) {
+                return passed("no resolution in the name, kept as a last resort");
+            }
+
+            return profile.resolutions.includes(facts.resolution)
+                ? passed(`${ facts.resolution }, wanted`)
+                : refused(`resolution ${ facts.resolution } not wanted`);
+        }
+    },
+    {
+        step: "minSize",
+        code: "too-small",
+        run: (release, profile, facts, target) => {
+            const floor = minSizeGb(facts.resolution, profile, target);
+
+            if (floor <= 0) {
+                return passed("no size floor");
+            }
+
+            return release.size < floor * GB
+                ? refused(`${ (release.size / GB).toFixed(2) }GB is too small for ${ facts.resolution || "unknown resolution" } (min ${ floor }GB)`)
+                : passed(`${ (release.size / GB).toFixed(2) }GB, floor ${ floor }GB`);
+        }
+    }
+];
+
 export const rateRelease = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ScoredRelease | RejectedRelease => {
-    if (! release.link) {
-        return { release, code: "no-link", reason: "no download link" };
-    }
+    const facts = releaseFacts(release, profile, target);
 
-    // it was grabbed once already and had to be thrown away: it either stood still
-    // until it was given up on, or what came down was not the release at all
-    if (isReleaseBlocked(normalizeTitle(release.title))) {
-        return { release, code: "blocked", reason: "already tried and dropped" };
-    }
+    for (const check of RELEASE_CHECKS) {
+        const { rejection } = check.run(release, profile, facts, target);
 
-    if (release.seeders < profile.minSeeders) {
-        return { release, code: "seeders", reason: `${ release.seeders } seeders` };
-    }
-
-    if (profile.maxSizeGb > 0 && release.size > profile.maxSizeGb * GB) {
-        return { release, code: "too-big", reason: `${ (release.size / GB).toFixed(1) }GB is over the limit` };
-    }
-
-    const excluded = profile.excludeKeywords.find(keyword => hasKeyword(release.title, keyword));
-
-    if (excluded) {
-        return { release, code: "excluded", reason: `excluded keyword: ${ excluded }` };
-    }
-
-    if (target) {
-        const mismatch = matchesTarget(release.title, target);
-
-        if (mismatch) {
-            return { release, code: "mismatch", reason: mismatch };
+        if (rejection) {
+            return { release, code: check.code, reason: rejection };
         }
     }
 
-    const language = rateLanguage(release.title, profile, target);
+    return { release, resolution: facts.resolution, score: score(release, facts.resolution, profile, facts.language.rank) };
+};
 
-    if (language.excluded) {
-        return { release, code: "language", reason: `language ${ language.excluded } not wanted` };
-    }
+/**
+ * The same walk, written down instead of stopped at — see `RELEASE_CHECKS`. Every check
+ * runs whatever the ones before it said, because a release with three things wrong with it
+ * is worth knowing about as three things: fixing the first would only uncover the second.
+ */
+export const traceRelease = (release: IndexerResult, profile: QualityProfile, target?: ReleaseTarget): ReleaseTrace => {
+    const facts = releaseFacts(release, profile, target);
 
-    // the unattended path: the wrong language is not a worse release here, it is a
-    // different film to this person, and taking it would end their search for the one
-    // they actually asked for
-    if (profile.requireLanguages.length > 0) {
-        const languages = effectiveLanguages(release.title, profile);
+    const steps = RELEASE_CHECKS.map(check => {
+        const { detail, rejection } = check.run(release, profile, facts, target);
 
-        if (! languages.some(language => profile.requireLanguages.includes(language))) {
-            return { release, code: "language", reason: `not in ${ profile.requireLanguages.join(" or ") }` };
-        }
-    }
+        return { step: check.step, code: check.code, ok: ! rejection, detail };
+    });
 
-    const resolution = parseResolution(release.title);
+    const accepted = steps.every(step => step.ok);
 
-    // an unwanted resolution is dropped, an unknown one stays as a last resort
-    if (resolution && ! profile.resolutions.includes(resolution)) {
-        return { release, code: "resolution", reason: `resolution ${ resolution } not wanted` };
-    }
-
-    const floor = minSizeGb(resolution, profile, target);
-
-    if (floor > 0 && release.size < floor * GB) {
-        return {
-            release,
-            code: "too-small",
-            reason: `${ (release.size / GB).toFixed(2) }GB is too small for ${ resolution || "unknown resolution" } (min ${ floor }GB)`
-        };
-    }
-
-    return { release, resolution, score: score(release, resolution, profile, language.rank) };
+    return {
+        title: release.title,
+        indexer: release.indexerId,
+        seeders: release.seeders,
+        size: release.size,
+        resolution: facts.resolution,
+        languages: facts.languages,
+        steps,
+        score: accepted ? score(release, facts.resolution, profile, facts.language.rank) : null
+    };
 };
 
 export const isScored = (value: ScoredRelease | RejectedRelease): value is ScoredRelease => {
@@ -641,6 +818,21 @@ export const filterSeasonReleases = (releases: IndexerResult[], season: number):
     });
 };
 
+/**
+ * The profile a whole season is judged by: both limits are per episode, so a pack is
+ * allowed to be that much bigger. The pack ceiling is on by default — without one a
+ * single "grab the whole season" decision can pull in a 200GB remux.
+ *
+ * Its own function because the diagnosis has to judge a pack by exactly what the scanner
+ * judged it by, and a second copy of this arithmetic would be a second answer.
+ */
+export const packProfile = (profile: QualityProfile, episodeCount: number): QualityProfile => {
+    const episodes = Math.max(episodeCount, 1);
+    const caps = [ profile.maxSizeGb, profile.maxPackSizeGb ].filter(v => v > 0).map(v => v * episodes);
+
+    return { ...profile, maxSizeGb: caps.length > 0 ? Math.min(...caps) : 0 };
+};
+
 export const selectSeasonRelease = (
     releases: IndexerResult[],
     season: number,
@@ -649,18 +841,7 @@ export const selectSeasonRelease = (
     titles: string[] = [],
     originalLanguage?: string | null
 ): ReleaseSelection => {
-    // both limits are per episode, so a pack is allowed to be that much bigger. the
-    // pack ceiling is on by default: without one a single "grab the whole season"
-    // decision can pull in a 200GB remux
-    const episodes = Math.max(episodeCount, 1);
-    const caps = [ profile.maxSizeGb, profile.maxPackSizeGb ].filter(v => v > 0).map(v => v * episodes);
-
-    const packProfile: QualityProfile = {
-        ...profile,
-        maxSizeGb: caps.length > 0 ? Math.min(...caps) : 0
-    };
-
-    return selectRelease(filterSeasonReleases(releases, season), packProfile, {
+    return selectRelease(filterSeasonReleases(releases, season), packProfile(profile, episodeCount), {
         titles,
         kind: "pack",
         episodeCount,

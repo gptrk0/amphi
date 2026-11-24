@@ -548,7 +548,47 @@ export const hu: Messages = {
         ownerTooltip: "Kinek kell. Ha átadod a sort, minden vele megy, ami még hiányzik belőle — és onnantól azon a nyelven keressük, amit az új tulajdonos fiókja kér.",
         ownerSet: "{name} mostantól {user} figyelőlistáján van.",
         ownerTaken: "{user} figyelőlistáján már szerepel: {name}, két listát pedig nem lehet eggyé olvasztani.",
-        ownerFailed: "Nem sikerült átadni: {name}."
+        ownerFailed: "Nem sikerült átadni: {name}.",
+        diagnoseTitle: "Keresés ellenőrzése — újrakérdezi az indexereket, és megmutatja, melyik release milyen ellenőrzéseken ment át"
+    },
+
+    diagnosis: {
+        title: "Miért nem talált semmit ehhez: {name}",
+        description: "Ugyanaz a keresés, amit a szkenner futtat, most újra lefuttatva: minden, amit az indexerek válaszoltak, és minden ellenőrzés, amin az egyes release-ek átmentek. Semmi nem töltődik le, és a figyelőlistán sem változik semmi.",
+        running: "Kérdezzük az indexereket...",
+        failed: "Nem sikerült ellenőrizni a keresést.",
+        close: "Bezárás",
+        titles: "Nevek, amiken a release szerepelhet",
+        titlesHint: "Mindegyik alatt az áll, amit az összehasonlítás ténylegesen néz — a release nevéből is ugyanígy lesz ilyen sor, és két cím csak akkor ugyanaz, ha ez a két sor betűre egyezik.",
+        language: "Megkövetelt nyelv",
+        languageAny: "bármelyik",
+        imdb: "IMDb azonosító",
+        imdbNone: "nincs, ezért név alapján kérdezzük az indexereket",
+        query: "Amit kerestünk: {query}",
+        found: "{n} találat jött vissza",
+        foundNone: "semmi nem jött vissza",
+        accepted: "ebből {n} ment át minden ellenőrzésen",
+        acceptedNone: "egy sem ment át",
+        shown: "az első {n} látszik",
+        skipped: "Még {n} rész vár, ezeket nem kerestük — így ez egyetlen indexer-kör marad, nem részenként egy.",
+        empty: "Ezen a soron most semmit nem keresünk — vagy megvan már, vagy még nem jelent meg.",
+        steps: {
+            numbering: "Ez az a rész?",
+            link: "Van egyáltalán mit letölteni?",
+            blocked: "Próbáltuk már egyszer?",
+            seeders: "Seederek",
+            maxSize: "Méretplafon",
+            keywords: "Kizárt kulcsszavak",
+            title: "Ez az a cím?",
+            languageExcluded: "Olyan nyelv, amit kizártál?",
+            languageRequired: "A kért nyelv?",
+            resolution: "Felbontás",
+            minSize: "Méret alsó határ"
+        },
+        passed: "Minden ellenőrzésen átment — {score} pontot ért volna el",
+        failedAt: "Kiesett ezen: {steps}",
+        showSteps: "Ellenőrzések mutatása",
+        hideSteps: "Ellenőrzések elrejtése"
     },
 
     libraryPage: {

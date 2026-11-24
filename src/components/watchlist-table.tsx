@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, BookmarkX, ChevronsUpDown, Loader2, RefreshCw, Stethoscope } from "lucide-react";
 import classNames from "classnames";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { OptionSelect } from "@/components/option-select";
+import { SearchDiagnosis } from "@/components/search-diagnosis";
 import { useLocale } from "@/context/locale";
 import { WatchlistBadge } from "@/components/watchlist-badge";
 import { useSession } from "@/context/session";
@@ -123,6 +124,9 @@ export function WatchlistTable() {
     const [ status, setStatus ] = useState<WatchlistStatus | "ALL">("ALL");
     const [ sort, setSort ] = useState<{ key: string, direction: "asc" | "desc" }>({ key: "addedAt", direction: "desc" });
     const [ isScanning, setScanning ] = useState(false);
+    // the row an administrator is asking "why did this find nothing" about, and the whole
+    // state of that dialog: it searches on open and holds nothing between opens
+    const [ diagnosing, setDiagnosing ] = useState<WatchlistRowItem | null>(null);
     const [ nextScanAt, setNextScanAt ] = useState<number | null>(null);
     const [ now, setNow ] = useState(() => Date.now());
     const request = useRef(0);
@@ -401,15 +405,30 @@ export function WatchlistTable() {
             label: "",
             className: "text-right",
             render: item => (
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    className="cursor-pointer"
-                    title={t("watchlistPage.stopWatchingTitle")}
-                    onClick={() => stopWatching(item)}
-                >
-                    <BookmarkX />
-                </Button>
+                <div className="flex justify-end">
+                    {/* next to "Scan now" and an administrator's for the same reasons:
+                        it queries every indexer at once and it reads a row that is
+                        usually somebody else's */}
+                    {isAdmin && <Button
+                        variant="ghost"
+                        size="sm"
+                        className="cursor-pointer"
+                        title={t("watchlistPage.diagnoseTitle")}
+                        onClick={() => setDiagnosing(item)}
+                    >
+                        <Stethoscope />
+                    </Button>}
+
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="cursor-pointer"
+                        title={t("watchlistPage.stopWatchingTitle")}
+                        onClick={() => stopWatching(item)}
+                    >
+                        <BookmarkX />
+                    </Button>
+                </div>
             )
         }
     ];
@@ -546,6 +565,12 @@ export function WatchlistTable() {
                     ))}
                 </TableBody>
             </Table>}
+
+            <SearchDiagnosis
+                watchlistId={diagnosing?.id || null}
+                name={diagnosing?.media?.name || `TMDB #${ diagnosing?.tmdbId }`}
+                onClose={() => setDiagnosing(null)}
+            />
         </div>
     );
 }
