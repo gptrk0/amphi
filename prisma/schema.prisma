@@ -131,7 +131,16 @@ model PushDevice {
   userId Int
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  endpoint String @unique
+  /// What this browser calls itself, kept in its own storage and sent with every
+  /// registration. **It and not the endpoint is the identity**, because the endpoint
+  /// moves: a browser may renew a subscription with nobody asking, and a device keyed by
+  /// the address it happened to have would go silent the moment it did.
+  deviceKey String @unique
+
+  /// Where the push service will take a message for it. Indexed but no longer unique —
+  /// one browser whose storage was cleared arrives with a new key and the same endpoint,
+  /// and the newest claim on an endpoint is the true one.
+  endpoint String
   p256dh   String
   auth     String
 
@@ -144,6 +153,7 @@ model PushDevice {
   lastSeenAt DateTime @default(now())
 
   @@index([userId])
+  @@index([endpoint])
 }
 
 /// A setting edited from the admin page. One row per key that was actually changed:

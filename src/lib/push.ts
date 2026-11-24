@@ -162,9 +162,22 @@ export const describeDevice = (userAgent: string) => {
  * row is ever created, which is what makes forgetting a device from another one mean
  * something: see `refreshDevice` for the half that cannot create.
  */
-export const rememberDevice = async (userId: number, subscription: Subscription, userAgent?: string) => {
+export const rememberDevice = async (
+    userId: number,
+    deviceKey: string,
+    subscription: Subscription,
+    userAgent?: string
+) => {
+    // any other row holding this endpoint is the same browser under a key it has since
+    // lost — storage cleared, a different profile restored. One endpoint is one device,
+    // and the claim being made now is the true one.
+    await prisma.pushDevice.deleteMany({
+        where: { endpoint: subscription.endpoint, deviceKey: { not: deviceKey } }
+    });
+
     const data = {
         userId,
+        deviceKey,
         endpoint: subscription.endpoint,
         p256dh: subscription.keys.p256dh,
         auth: subscription.keys.auth,
@@ -172,9 +185,9 @@ export const rememberDevice = async (userId: number, subscription: Subscription,
     };
 
     await prisma.pushDevice.upsert({
-        where: { endpoint: subscription.endpoint },
+        where: { deviceKey },
         // the owner is updated too: a shared phone that somebody else signs into keeps
-        // the same endpoint, and it must stop being the first person's
+        // the same browser and the same key, and it must stop being the first person's
         update: { ...data, lastSeenAt: new Date() },
         create: data
     });
@@ -186,27 +199,54 @@ export const rememberDevice = async (userId: number, subscription: Subscription,
  *
  * It only ever updates a row that exists. The reason is the device list: forgetting a
  * phone from a laptop has to stick, and it would not if the phone re-created itself the
- * next time somebody opened the app on it. So an unknown endpoint is left unknown, the
- * page reads itself as off, and turning it back on is a thing its owner does on purpose.
+ * next time somebody opened the app on it. So an unknown device is left unknown, the page
+ * reads itself as off, and turning it back on is a thing its owner does on purpose.
  *
- * The cost is honest and small: a browser that silently renews a subscription behind
- * everybody's back — which browsers do — goes quiet until the switch is pressed again.
- * The answer to that is `pushsubscriptionchange` in the worker, which is a later job and
- * not this one.
+ * **Two ways to be known**, and the second one is what makes a renewed subscription
+ * survive. The key is the identity and is tried first. Failing that, a row of this
+ * person's carrying the very endpoint the browser is holding is the same device under a
+ * key the row predates or the browser has lost, and it is adopted. Neither can resurrect
+ * a device that was forgotten, because forgetting deletes the row and there is then
+ * nothing to match on at all.
  */
-export const refreshDevice = async (userId: number, subscription: Subscription) => {
-    const { count } = await prisma.pushDevice.updateMany({
-        // scoped to the owner: the same browser signed into as somebody else is that
-        // person's device to turn on, not this one's to keep
-        where: { userId, endpoint: subscription.endpoint },
-        data: {
-            p256dh: subscription.keys.p256dh,
-            auth: subscription.keys.auth,
-            lastSeenAt: new Date()
+export const refreshDevice = async (userId: number, deviceKey: string, subscription: Subscription) => {
+    const seen = {
+        p256dh: subscription.keys.p256dh,
+        auth: subscription.keys.auth,
+        lastSeenAt: new Date()
+    };
+
+    if (deviceKey) {
+        const { count } = await prisma.pushDevice.updateMany({
+            // scoped to the owner: the same browser signed into as somebody else is that
+            // person's device to turn on, not this one's to keep
+            where: { userId, deviceKey },
+            // the endpoint too: this is the renewal, arriving as an ordinary page load
+            data: { ...seen, endpoint: subscription.endpoint }
+        });
+
+        if (count > 0) {
+            return true;
         }
+    }
+
+    const byEndpoint = await prisma.pushDevice.findFirst({
+        where: { userId, endpoint: subscription.endpoint },
+        select: { id: true }
     });
 
-    return count > 0;
+    if (! byEndpoint) {
+        return false;
+    }
+
+    // one row at a time, by id: `deviceKey` is unique, and a blind `updateMany` over an
+    // endpoint that somehow carried two rows would try to give them both the same one
+    await prisma.pushDevice.update({
+        where: { id: byEndpoint.id },
+        data: deviceKey ? { ...seen, deviceKey } : seen
+    });
+
+    return true;
 };
 
 /** By id from the list, or by endpoint from the browser turning itself off. */
@@ -233,7 +273,7 @@ export const forgetDevice = async (userId: number, which: { id?: number, endpoin
  */
 export const listDevices = async (userId: number) => await prisma.pushDevice.findMany({
     where: { userId },
-    select: { id: true, label: true, endpoint: true, createdAt: true, lastSeenAt: true },
+    select: { id: true, label: true, deviceKey: true, endpoint: true, createdAt: true, lastSeenAt: true },
     orderBy: { lastSeenAt: "desc" }
 });
 

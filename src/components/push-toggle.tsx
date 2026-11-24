@@ -84,6 +84,48 @@ const payloadOf = (subscription: PushSubscription) => {
     };
 };
 
+const STORAGE_KEY = "amphi_push_device";
+
+let onlyForThisPage = "";
+
+/**
+ * What this browser calls itself, made once and kept.
+ *
+ * **It exists because the endpoint moves.** A browser may renew a push subscription with
+ * nobody asking, and since the page is deliberately not allowed to create a row on a
+ * plain load — that is what makes forgetting a device from another one stick — a device
+ * known only by its address would go quiet the moment its address changed. The event the
+ * specification offers for this, `pushsubscriptionchange`, is no use here: Chrome only
+ * began firing it in 138 and iOS does not have it at all, which is the platform the whole
+ * feature is for.
+ *
+ * A private window, or site data the browser refuses to keep, falls back to a key that
+ * lasts as long as the page does. That is not as bad as it sounds: the row is then found
+ * by its endpoint instead and adopts whatever key arrived with it.
+ */
+const deviceKey = () => {
+    try {
+        const kept = localStorage.getItem(STORAGE_KEY);
+
+        if (kept) {
+            return kept;
+        }
+
+        const made = crypto.randomUUID();
+
+        localStorage.setItem(STORAGE_KEY, made);
+
+        return made;
+
+    } catch {
+        if (! onlyForThisPage) {
+            onlyForThisPage = crypto.randomUUID();
+        }
+
+        return onlyForThisPage;
+    }
+};
+
 const dateLocale = (locale: Locale) => locale === "hu" ? "hu-HU" : "en-GB";
 
 export function PushToggle() {
@@ -108,7 +150,11 @@ export function PushToggle() {
      * the mere existence of a subscription in this browser.
      */
     const refresh = useCallback(async (subscription: PushSubscription) => {
-        const res = await axios.post("/api/push", { subscription: payloadOf(subscription), refresh: true });
+        const res = await axios.post("/api/push", {
+            subscription: payloadOf(subscription),
+            deviceKey: deviceKey(),
+            refresh: true
+        });
 
         setDevices(res.data.result?.devices ?? []);
 
@@ -133,7 +179,7 @@ export function PushToggle() {
                 }
 
                 const res = await axios.get("/api/push", {
-                    params: subscription ? { endpoint: subscription.endpoint } : undefined
+                    params: { deviceKey: deviceKey(), endpoint: subscription?.endpoint }
                 });
 
                 setDevices(res.data.result?.devices ?? []);
@@ -193,7 +239,10 @@ export function PushToggle() {
             applicationServerKey: toBytes(key)
         });
 
-        const res = await axios.post("/api/push", { subscription: payloadOf(subscription) });
+        const res = await axios.post("/api/push", {
+            subscription: payloadOf(subscription),
+            deviceKey: deviceKey()
+        });
 
         setDevices(res.data.result?.devices ?? []);
         setState("on");

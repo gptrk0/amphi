@@ -30,14 +30,23 @@ import {
  * that endpoint in the question — and learns nothing about the others beyond a name it
  * chose to send and two dates.
  */
-const visible = (devices: Awaited<ReturnType<typeof listDevices>>, mine: string) =>
+const visible = (devices: Awaited<ReturnType<typeof listDevices>>, mine: Holding) =>
     devices.map(device => ({
         id: device.id,
         label: device.label,
         createdAt: device.createdAt,
         lastSeenAt: device.lastSeenAt,
-        current: !! mine && device.endpoint === mine
+        current: isMine(device, mine)
     }));
+
+/** What the browser asking is holding, which is how it finds itself in the list. */
+type Holding = { deviceKey?: string, endpoint?: string };
+
+// the key first, because that is the identity; the endpoint as well, for the one load on
+// which a renewed subscription has not been written back to the row yet
+const isMine = (device: { deviceKey: string, endpoint: string }, mine: Holding) =>
+    (!! mine.deviceKey && device.deviceKey === mine.deviceKey)
+    || (!! mine.endpoint && device.endpoint === mine.endpoint);
 
 /**
  * The public half of the signing key, which every browser needs before it can subscribe,
@@ -57,7 +66,11 @@ export async function GET(req: NextRequest) {
 
     const me = (await currentUser())!;
     const keys = await vapidKeys();
-    const mine = req.nextUrl.searchParams.get("endpoint") || "";
+    const mine: Holding = {
+        deviceKey: req.nextUrl.searchParams.get("deviceKey") || "",
+        endpoint: req.nextUrl.searchParams.get("endpoint") || ""
+    };
+
     const devices = await listDevices(me.id);
 
     return Response.json({
@@ -66,7 +79,7 @@ export async function GET(req: NextRequest) {
             publicKey: keys.publicKey,
             devices: visible(devices, mine),
             // whether *this* browser is one of them, which is the switch's own state
-            known: !! mine && devices.some(device => device.endpoint === mine)
+            known: devices.some(device => isMine(device, mine))
         }
     });
 }
@@ -97,15 +110,24 @@ export async function POST(req: NextRequest) {
     }
 
     const subscription = body.subscription;
+
+    // what the browser calls itself, and the thing a row is keyed by. A hundred
+    // characters is room for a uuid and not for a payload.
+    const deviceKey = typeof body.deviceKey === "string" ? body.deviceKey.trim().slice(0, 100) : "";
+
     let known: boolean;
 
     if (body.refresh) {
-        known = await refreshDevice(me.id, subscription);
+        known = await refreshDevice(me.id, deviceKey, subscription);
 
     } else {
+        if (! deviceKey) {
+            return Response.json({ success: false, message: "That request did not say which device it is." }, { status: 400 });
+        }
+
         // the user agent of this very request, never anything the page made up about
         // itself: it is the one description the browser has already sent
-        await rememberDevice(me.id, subscription, req.headers.get("user-agent") || "");
+        await rememberDevice(me.id, deviceKey, subscription, req.headers.get("user-agent") || "");
         await logInfo("push", `${ me.name } turned notifications on for a device`);
 
         known = true;
@@ -115,7 +137,7 @@ export async function POST(req: NextRequest) {
 
     return Response.json({
         success: true,
-        result: { known, devices: visible(devices, subscription.endpoint) }
+        result: { known, devices: visible(devices, { deviceKey, endpoint: subscription.endpoint }) }
     });
 }
 
@@ -150,6 +172,6 @@ export async function DELETE(req: NextRequest) {
 
     return Response.json({
         success: true,
-        result: { removed, devices: visible(devices, endpoint || "") }
+        result: { removed, devices: visible(devices, { endpoint }) }
     });
 }
