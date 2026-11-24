@@ -168,7 +168,7 @@ export function AccountSettings({ userId }: { userId?: number }) {
     }
 
     return (
-        <div className="max-w-2xl p-4 md:p-8">
+        <div className="max-w-3xl p-4 md:p-8">
             { back }
 
             <div className="space-y-1">
