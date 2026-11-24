@@ -59,7 +59,12 @@ model User {
   /// its own in the settings — that one hears about everything, this one only about
   /// what its owner asked for.
   webhookUrl   String?
-  notifyEvents String  @default("ready")
+  /// What they want to hear about, as a comma separated list of `NOTIFY_EVENTS` values.
+  /// Two of the four by default: that something is ready, and that it has started — the
+  /// second one is what makes the first one expected rather than a surprise, and on a
+  /// slow release the gap between them is where somebody would otherwise wonder whether
+  /// anything is happening at all.
+  notifyEvents String  @default("ready,started")
 
   /// The language rules belong to the person, not to the install: two people who want
   /// the same film in different languages get two downloads, two library rows and two

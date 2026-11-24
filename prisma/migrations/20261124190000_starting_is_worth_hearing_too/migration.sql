@@ -1,0 +1,13 @@
+-- A new account now asks to hear that a download started, as well as that it finished.
+--
+-- "Ready to watch" alone is a notification with no context: a release can take hours, and
+-- in the meantime nothing says the app ever saw the thing that was put on the watchlist.
+-- The pair reads as a story — it started, then it was ready — and it is the gap between
+-- them that the one on its own leaves somebody wondering about.
+--
+-- **The accounts that already exist are left alone.** A stored value is a stored value:
+-- the account page writes whatever is ticked, so there is no telling apart a row somebody
+-- chose from one nobody has looked at, and quietly deciding on their behalf which it was
+-- is not a migration's job. Anybody who wants the second one ticks it, which is where it
+-- would have come from anyway.
+ALTER TABLE "User" ALTER COLUMN "notifyEvents" SET DEFAULT 'ready,started';
