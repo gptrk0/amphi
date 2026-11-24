@@ -375,7 +375,12 @@ export const hu: Messages = {
         denied: "Ez a böngésző elutasítja az értesítéseket ehhez az oldalhoz. A böngésző saját beállításaiban kell újra engedélyezni — ha egyszer elutasították, innen kérni hiába.",
         failed: "Az értesítéseket nem sikerült bekapcsolni.",
         turnedOn: "Ezen az eszközön bekapcsoltad az értesítéseket.",
-        turnedOff: "Ezen az eszközön kikapcsoltad az értesítéseket."
+        turnedOff: "Ezen az eszközön kikapcsoltad az értesítéseket.",
+        thisDevice: "ez az",
+        unknownDevice: "Egy böngésző",
+        lastSeen: "legutóbb itt: {when}",
+        forget: "Eszköz elfelejtése",
+        forgotten: "Az az eszköz többé nem kap értesítést."
     },
 
     watchlistToast: {

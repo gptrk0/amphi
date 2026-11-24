@@ -116,18 +116,59 @@ export const isSubscription = (value: unknown): value is Subscription => {
 };
 
 /**
- * Remembering a device, and remembering it again. The client re-registers on every load
- * rather than asking whether it is known: the endpoint is the identity, so saying it
- * twice is free, and it is what makes a device whose subscription was restored from a
- * backup — or a database that was — quietly correct itself instead of going silent.
+ * The user agent, cut down to something its owner would recognise in a list. It is a
+ * guess and it is allowed to be: nothing depends on it being right, and "iPhone · Safari"
+ * answers "which of these is the one in my hand" far better than the hundred and forty
+ * characters it was cut from. Whatever cannot be read falls back to the string itself.
+ *
+ * The order matters more than the patterns do. Every browser on a phone claims to be
+ * Safari and most claim to be Chrome as well, so the specific names have to be tried
+ * before the ones they impersonate.
  */
-export const rememberDevice = async (userId: number, subscription: Subscription, label?: string) => {
+const PLATFORMS: [ RegExp, string ][] = [
+    [ /iPhone/i, "iPhone" ],
+    [ /iPad/i, "iPad" ],
+    [ /Android/i, "Android" ],
+    [ /Macintosh|Mac OS X/i, "Mac" ],
+    [ /Windows/i, "Windows" ],
+    [ /Linux/i, "Linux" ]
+];
+
+const BROWSERS: [ RegExp, string ][] = [
+    [ /Edg\//i, "Edge" ],
+    [ /OPR\/|Opera/i, "Opera" ],
+    [ /Firefox\//i, "Firefox" ],
+    [ /Chrome\//i, "Chrome" ],
+    [ /Safari\//i, "Safari" ]
+];
+
+const firstMatch = (patterns: [ RegExp, string ][], text: string) =>
+    patterns.find(([ pattern ]) => pattern.test(text))?.[1];
+
+export const describeDevice = (userAgent: string) => {
+    const clean = (userAgent || "").trim();
+
+    if (! clean) {
+        return "";
+    }
+
+    const parts = [ firstMatch(PLATFORMS, clean), firstMatch(BROWSERS, clean) ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(" · ") : clean.slice(0, 120);
+};
+
+/**
+ * Turning it on, here, deliberately — the switch and nothing else. This is the only way a
+ * row is ever created, which is what makes forgetting a device from another one mean
+ * something: see `refreshDevice` for the half that cannot create.
+ */
+export const rememberDevice = async (userId: number, subscription: Subscription, userAgent?: string) => {
     const data = {
         userId,
         endpoint: subscription.endpoint,
         p256dh: subscription.keys.p256dh,
         auth: subscription.keys.auth,
-        label: label?.slice(0, 120) || null
+        label: describeDevice(userAgent || "") || null
     };
 
     await prisma.pushDevice.upsert({
@@ -139,11 +180,65 @@ export const rememberDevice = async (userId: number, subscription: Subscription,
     });
 };
 
-export const forgetDevice = async (userId: number, endpoint: string) => {
-    return (await prisma.pushDevice.deleteMany({ where: { userId, endpoint } })).count;
+/**
+ * "Still here", which the page says on every load, and which is **not** the same sentence
+ * as the switch.
+ *
+ * It only ever updates a row that exists. The reason is the device list: forgetting a
+ * phone from a laptop has to stick, and it would not if the phone re-created itself the
+ * next time somebody opened the app on it. So an unknown endpoint is left unknown, the
+ * page reads itself as off, and turning it back on is a thing its owner does on purpose.
+ *
+ * The cost is honest and small: a browser that silently renews a subscription behind
+ * everybody's back — which browsers do — goes quiet until the switch is pressed again.
+ * The answer to that is `pushsubscriptionchange` in the worker, which is a later job and
+ * not this one.
+ */
+export const refreshDevice = async (userId: number, subscription: Subscription) => {
+    const { count } = await prisma.pushDevice.updateMany({
+        // scoped to the owner: the same browser signed into as somebody else is that
+        // person's device to turn on, not this one's to keep
+        where: { userId, endpoint: subscription.endpoint },
+        data: {
+            p256dh: subscription.keys.p256dh,
+            auth: subscription.keys.auth,
+            lastSeenAt: new Date()
+        }
+    });
+
+    return count > 0;
 };
 
+/** By id from the list, or by endpoint from the browser turning itself off. */
+export const forgetDevice = async (userId: number, which: { id?: number, endpoint?: string }) => {
+    if (! which.id && ! which.endpoint) {
+        return 0;
+    }
+
+    const { count } = await prisma.pushDevice.deleteMany({
+        where: {
+            userId,
+            ...(which.id ? { id: which.id } : {}),
+            ...(which.endpoint ? { endpoint: which.endpoint } : {})
+        }
+    });
+
+    return count;
+};
+
+/**
+ * What the account page lists. The endpoint comes along because the page has to be able
+ * to say which row is the browser reading it — it is that browser's own endpoint, so it
+ * learns nothing it did not hand over — and the route drops it again before answering.
+ */
+export const listDevices = async (userId: number) => await prisma.pushDevice.findMany({
+    where: { userId },
+    select: { id: true, label: true, endpoint: true, createdAt: true, lastSeenAt: true },
+    orderBy: { lastSeenAt: "desc" }
+});
+
 export const deviceCount = async (userId: number) => await prisma.pushDevice.count({ where: { userId } });
+
 
 /**
  * Sends it, to every device one person has, and never throws — the contract the

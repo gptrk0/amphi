@@ -3,16 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, Send } from "lucide-react";
+import { ChevronDown, Loader2, Send, X } from "lucide-react";
 import classNames from "classnames";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useLocale } from "@/context/locale";
+import { Locale } from "@/i18n";
 
 /**
- * Notifications on the device you are holding.
+ * Notifications on the device you are holding, and the list of every other one.
  *
  * **It is not an account setting and it cannot be made into one.** Everything else on the
  * account page is a row in a table that an administrator could fill in for somebody; this
@@ -20,16 +21,33 @@ import { useLocale } from "@/context/locale";
  * can create it. So the switch is only ever drawn on your own page, it says "this device"
  * everywhere, and the same person on a phone and a laptop has to press it twice.
  *
+ * **The list is the part that matters most, and it is not a convenience.** A subscription
+ * is invisible and it does not expire: a phone that was lent out, a borrowed laptop signed
+ * into once, a handset that was lost — each goes on being told, forever, and the switch
+ * that would stop it is on the device nobody has any more. So every device is listed and
+ * every one of them can be forgotten from here. What makes that mean anything is on the
+ * server: the page says "still here" on load with `refresh`, which updates a row and
+ * cannot create one, so a device forgotten here does not quietly re-create itself the
+ * next time somebody opens the app on it.
+ *
  * **The three dead ends are worth naming rather than hiding.** Without a secure context
  * there is no `PushManager` at all — which is most self hosted installs, reached as a
  * plain address on the house network. In an iOS tab there is none either until the page
  * is on the home screen. And a permission that was once refused cannot be asked for
  * again from here, by either platform's rules: the browser's own settings are the only
- * way back. A switch that silently does nothing in all three cases would be the worst
+ * way back. A switch that silently did nothing in all three cases would be the worst
  * possible version of this.
  */
 
 type State = "loading" | "unsupported" | "denied" | "off" | "on";
+
+type Device = {
+    id: number;
+    label: string | null;
+    createdAt: string;
+    lastSeenAt: string;
+    current: boolean;
+};
 
 /**
  * The key the browser wants as bytes, and the server has as the base64url a json response
@@ -66,24 +84,35 @@ const payloadOf = (subscription: PushSubscription) => {
     };
 };
 
+const dateLocale = (locale: Locale) => locale === "hu" ? "hu-HU" : "en-GB";
+
 export function PushToggle() {
-    const { t } = useLocale();
+    const { t, locale } = useLocale();
 
     const [ state, setState ] = useState<State>("loading");
-    const [ devices, setDevices ] = useState(0);
+    const [ devices, setDevices ] = useState<Device[]>([]);
+    const [ isOpen, setOpen ] = useState(false);
     const [ isBusy, setBusy ] = useState(false);
     const [ isTesting, setTesting ] = useState(false);
 
-    /**
-     * Tells the server about a subscription every time the page loads, not only when the
-     * switch is pressed. A browser may renew a subscription on its own, and a database
-     * restored from a backup has rows that no longer exist — in both cases the device
-     * goes quiet forever unless something says it again, and this is that something.
-     */
-    const remember = useCallback(async (subscription: PushSubscription) => {
-        const res = await axios.post("/api/push", { subscription: payloadOf(subscription) });
+    const mine = async () => {
+        const registration = await navigator.serviceWorker.ready;
 
-        setDevices(res.data.result?.devices ?? 0);
+        return await registration.pushManager.getSubscription();
+    };
+
+    /**
+     * "Still here", said on every load. It updates the row and cannot make one, so a
+     * browser whose device was forgotten elsewhere reads itself as off — which is the
+     * whole point, and also why the state comes back from the server rather than from
+     * the mere existence of a subscription in this browser.
+     */
+    const refresh = useCallback(async (subscription: PushSubscription) => {
+        const res = await axios.post("/api/push", { subscription: payloadOf(subscription), refresh: true });
+
+        setDevices(res.data.result?.devices ?? []);
+
+        return !! res.data.result?.known;
     }, []);
 
     useEffect(() => {
@@ -97,18 +126,17 @@ export function PushToggle() {
 
         (async () => {
             try {
-                const registration = await navigator.serviceWorker.ready;
-                const subscription = await registration.pushManager.getSubscription();
+                const subscription = await mine();
 
                 if (! alive) {
                     return;
                 }
 
-                // the count comes from the account and the state from this browser: "on
-                // somewhere else" and "on here" are two different sentences
-                const res = await axios.get("/api/push");
+                const res = await axios.get("/api/push", {
+                    params: subscription ? { endpoint: subscription.endpoint } : undefined
+                });
 
-                setDevices(res.data.result?.devices ?? 0);
+                setDevices(res.data.result?.devices ?? []);
 
                 if (Notification.permission === "denied") {
                     setState("denied");
@@ -117,8 +145,7 @@ export function PushToggle() {
                 }
 
                 if (subscription && Notification.permission === "granted") {
-                    await remember(subscription);
-                    setState("on");
+                    setState(await refresh(subscription) ? "on" : "off");
 
                     return;
                 }
@@ -135,7 +162,7 @@ export function PushToggle() {
         })();
 
         return () => { alive = false; };
-    }, [ remember ]);
+    }, [ refresh ]);
 
     const turnOn = async () => {
         // from inside the click and nowhere else: both platforms refuse a permission
@@ -155,6 +182,9 @@ export function PushToggle() {
             throw new Error("no signing key");
         }
 
+        // an existing subscription comes back as it is, which is the case that matters
+        // after this device was forgotten from somewhere else: the browser never asked
+        // again, and this is what puts the row back
         const subscription = await registration.pushManager.subscribe({
             // the promise that every push becomes something the person can see. It is
             // not optional on any browser that matters, and breaking it is how a
@@ -163,24 +193,24 @@ export function PushToggle() {
             applicationServerKey: toBytes(key)
         });
 
-        await remember(subscription);
+        const res = await axios.post("/api/push", { subscription: payloadOf(subscription) });
 
+        setDevices(res.data.result?.devices ?? []);
         setState("on");
         toast(t("push.turnedOn"));
     };
 
     const turnOff = async () => {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
+        const subscription = await mine();
 
         if (subscription) {
-            // the browser first, then us: a row we kept for a subscription the browser
-            // has dropped would be a message sent into nothing every time
+            // the browser first, then us: a row kept for a subscription the browser has
+            // dropped would be a message sent into nothing every time
             await subscription.unsubscribe().catch(() => {});
 
             const res = await axios.delete("/api/push", { params: { endpoint: subscription.endpoint } });
 
-            setDevices(res.data.result?.devices ?? 0);
+            setDevices(res.data.result?.devices ?? []);
         }
 
         setState("off");
@@ -192,6 +222,32 @@ export function PushToggle() {
 
         try {
             await (wanted ? turnOn() : turnOff());
+
+        } catch(err) {
+            console.error(err);
+
+            toast((axios.isAxiosError(err) && err.response?.data?.message) || t("push.failed"));
+
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    /** Forgetting one from the list. This browser is the same gesture as the switch. */
+    const forget = async (device: Device) => {
+        setBusy(true);
+
+        try {
+            if (device.current) {
+                await turnOff();
+
+                return;
+            }
+
+            const res = await axios.delete("/api/push", { params: { id: device.id } });
+
+            setDevices(res.data.result?.devices ?? []);
+            toast(t("push.forgotten"));
 
         } catch(err) {
             console.error(err);
@@ -218,6 +274,9 @@ export function PushToggle() {
             setTesting(false);
         }
     };
+
+    const when = (value: string) =>
+        new Date(value).toLocaleDateString(dateLocale(locale), { day: "numeric", month: "short" });
 
     const blocked = state === "unsupported" || state === "denied" || state === "loading";
 
@@ -246,7 +305,7 @@ export function PushToggle() {
                     size="sm"
                     className="ml-auto shrink-0 cursor-pointer"
                     onClick={test}
-                    disabled={isTesting || devices === 0}
+                    disabled={isTesting || devices.length === 0}
                     title={t("push.testTitle")}
                 >
                     <Loader2 className={classNames("animate-spin", { "hidden": ! isTesting })} />
@@ -260,7 +319,49 @@ export function PushToggle() {
             {state === "unsupported" && <p className="text-xs text-muted-foreground">{ t("push.unsupported") }</p>}
             {state === "denied" && <p className="text-xs text-muted-foreground">{ t("push.denied") }</p>}
 
-            {devices > 0 && <p className="text-xs text-muted-foreground">{ t("push.devices", { count: devices }) }</p>}
+            {devices.length > 0 && <div className="rounded-md border">
+                <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-1 px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => setOpen(open => ! open)}
+                    aria-expanded={isOpen}
+                >
+                    <ChevronDown className={classNames("size-3.5 transition-transform", { "-rotate-90": ! isOpen })} />
+                    { t("push.devices", { count: devices.length }) }
+                </button>
+
+                {isOpen && <ul className="border-t">
+                    {devices.map(device => (
+                        <li key={device.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+                            <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="truncate font-medium">
+                                        { device.label || t("push.unknownDevice") }
+                                    </span>
+
+                                    {device.current && <Badge variant="outline">{ t("push.thisDevice") }</Badge>}
+                                </div>
+
+                                <span className="text-muted-foreground">
+                                    { t("push.lastSeen", { when: when(device.lastSeenAt) }) }
+                                </span>
+                            </div>
+
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="shrink-0 cursor-pointer"
+                                onClick={() => forget(device)}
+                                disabled={isBusy}
+                                title={t("push.forget")}
+                                aria-label={t("push.forget")}
+                            >
+                                <X />
+                            </Button>
+                        </li>
+                    ))}
+                </ul>}
+            </div>}
         </div>
     );
 }

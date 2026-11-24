@@ -2,7 +2,14 @@ import { NextRequest } from "next/server";
 
 import { currentUser, refuseUnlessSignedIn } from "@/lib/auth";
 import { logInfo } from "@/lib/log";
-import { deviceCount, forgetDevice, isSubscription, rememberDevice, vapidKeys } from "@/lib/push";
+import {
+    forgetDevice,
+    isSubscription,
+    listDevices,
+    refreshDevice,
+    rememberDevice,
+    vapidKeys
+} from "@/lib/push";
 
 /**
  * The devices one person has asked to be told on.
@@ -16,14 +23,32 @@ import { deviceCount, forgetDevice, isSubscription, rememberDevice, vapidKeys } 
  */
 
 /**
- * The public half of the signing key, which every browser needs before it can subscribe.
+ * The list the account page shows, with the endpoints taken back out.
  *
- * **A GET that writes**, the first time: the pair does not exist until somebody wants it,
- * and the alternative — a key generated at install time, for a feature most installs
+ * An endpoint is a capability: anybody holding one can push to that phone until it is
+ * revoked. The browser asking gets to know which row is *itself*, because it supplied
+ * that endpoint in the question — and learns nothing about the others beyond a name it
+ * chose to send and two dates.
+ */
+const visible = (devices: Awaited<ReturnType<typeof listDevices>>, mine: string) =>
+    devices.map(device => ({
+        id: device.id,
+        label: device.label,
+        createdAt: device.createdAt,
+        lastSeenAt: device.lastSeenAt,
+        current: !! mine && device.endpoint === mine
+    }));
+
+/**
+ * The public half of the signing key, which every browser needs before it can subscribe,
+ * and the list of devices this account has turned on.
+ *
+ * **A GET that writes**, the first time: the key pair does not exist until somebody wants
+ * it, and the alternative — a key generated at install time, for a feature most installs
  * cannot use because they have no certificate — is a secret made for nobody. It happens
  * once in the life of an install and is invisible when it does.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
     const refusal = await refuseUnlessSignedIn();
 
     if (refusal) {
@@ -32,23 +57,30 @@ export async function GET() {
 
     const me = (await currentUser())!;
     const keys = await vapidKeys();
+    const mine = req.nextUrl.searchParams.get("endpoint") || "";
+    const devices = await listDevices(me.id);
 
     return Response.json({
         success: true,
         result: {
             publicKey: keys.publicKey,
-            // what this account has anywhere, not what this browser has: the page knows
-            // its own subscription already and this is the other half of the sentence
-            devices: await deviceCount(me.id)
+            devices: visible(devices, mine),
+            // whether *this* browser is one of them, which is the switch's own state
+            known: !! mine && devices.some(device => device.endpoint === mine)
         }
     });
 }
 
 /**
- * Remembers this browser, and is meant to be called on every load rather than once. The
- * endpoint is the identity, so repeating it costs a row update — and it is what lets a
- * device quietly reappear after the browser renewed its subscription behind everybody's
- * back, which is a thing browsers do.
+ * Two sentences through one door, and the difference between them is the whole reason the
+ * device list can be trusted.
+ *
+ * `refresh` is what the page says on every load: *still here*. It updates a row and never
+ * makes one, so a device forgotten from somewhere else stays forgotten instead of
+ * re-creating itself the next time its owner opens the app.
+ *
+ * Without it, the switch: *turn me on*, which is the only thing that creates a row, and
+ * which only ever comes from somebody pressing it.
  */
 export async function POST(req: NextRequest) {
     const refusal = await refuseUnlessSignedIn();
@@ -64,26 +96,35 @@ export async function POST(req: NextRequest) {
         return Response.json({ success: false, message: "That is not a push subscription." }, { status: 400 });
     }
 
-    const known = await deviceCount(me.id);
+    const subscription = body.subscription;
+    let known: boolean;
 
-    // the user agent, shortened to something a person would recognise. Never anything
-    // the browser did not already send with this request.
-    const label = typeof body.label === "string" ? body.label : req.headers.get("user-agent") || "";
+    if (body.refresh) {
+        known = await refreshDevice(me.id, subscription);
 
-    await rememberDevice(me.id, body.subscription, label);
+    } else {
+        // the user agent of this very request, never anything the page made up about
+        // itself: it is the one description the browser has already sent
+        await rememberDevice(me.id, subscription, req.headers.get("user-agent") || "");
+        await logInfo("push", `${ me.name } turned notifications on for a device`);
 
-    const now = await deviceCount(me.id);
-
-    // only the new ones are worth a line: the re-registration on every load would
-    // otherwise write the log full of nothing
-    if (now > known) {
-        await logInfo("push", `${ me.name } turned notifications on for a device`, label || undefined);
+        known = true;
     }
 
-    return Response.json({ success: true, result: { devices: now } });
+    const devices = await listDevices(me.id);
+
+    return Response.json({
+        success: true,
+        result: { known, devices: visible(devices, subscription.endpoint) }
+    });
 }
 
-/** This browser, off. Only ever your own: the endpoint has to be one of yours. */
+/**
+ * One device, off. `id` is the list on the account page; `endpoint` is a browser turning
+ * itself off, which is the only one it can name. Either way it has to be one of yours —
+ * the lookup is scoped to the account, so an id belonging to somebody else matches
+ * nothing and answers the same as an id that never existed.
+ */
 export async function DELETE(req: NextRequest) {
     const refusal = await refuseUnlessSignedIn();
 
@@ -92,17 +133,23 @@ export async function DELETE(req: NextRequest) {
     }
 
     const me = (await currentUser())!;
-    const endpoint = req.nextUrl.searchParams.get("endpoint") || "";
+    const id = Number(req.nextUrl.searchParams.get("id")) || undefined;
+    const endpoint = req.nextUrl.searchParams.get("endpoint") || undefined;
 
-    if (! endpoint) {
+    if (! id && ! endpoint) {
         return Response.json({ success: false, message: "Which device?" }, { status: 400 });
     }
 
-    const removed = await forgetDevice(me.id, endpoint);
+    const removed = await forgetDevice(me.id, { id, endpoint });
 
     if (removed > 0) {
         await logInfo("push", `${ me.name } turned notifications off for a device`);
     }
 
-    return Response.json({ success: true, result: { devices: await deviceCount(me.id) } });
+    const devices = await listDevices(me.id);
+
+    return Response.json({
+        success: true,
+        result: { removed, devices: visible(devices, endpoint || "") }
+    });
 }

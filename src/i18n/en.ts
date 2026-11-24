@@ -388,7 +388,12 @@ export const en = {
         denied: "This browser is refusing notifications for this site. It has to be allowed again in the browser's own settings — once it has been refused, asking from here does nothing.",
         failed: "Notifications could not be turned on.",
         turnedOn: "Notifications are on for this device.",
-        turnedOff: "Notifications are off for this device."
+        turnedOff: "Notifications are off for this device.",
+        thisDevice: "this one",
+        unknownDevice: "A browser",
+        lastSeen: "last here {when}",
+        forget: "Forget this device",
+        forgotten: "That device will not be told any more."
     },
 
     watchlistToast: {
